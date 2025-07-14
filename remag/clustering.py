@@ -234,13 +234,13 @@ def detect_chimeric_contigs(embeddings_df, clusters_df, args):
             'similarity': float(similarity),
             'h1_intra_similarity': float(h1_intra_similarity),
             'h2_intra_similarity': float(h2_intra_similarity),
-            'h1_fragment_count': len(halves['h1']),
-            'h2_fragment_count': len(halves['h2']),
+            'h1_fragment_count': int(len(halves['h1'])),
+            'h2_fragment_count': int(len(halves['h2'])),
             'fragment_ratio': float(fragment_ratio),
-            'cluster_assignment': base_contig_cluster,
+            'cluster_assignment': str(base_contig_cluster) if base_contig_cluster is not None else None,
             'chimera_score': float(chimera_score),
-            'chimera_likelihood': chimera_likelihood,
-            'is_likely_chimeric': chimera_score >= 0.4
+            'chimera_likelihood': str(chimera_likelihood),
+            'is_likely_chimeric': bool(chimera_score >= 0.4)
         }
         
         if chimera_score >= 0.4:
