@@ -167,9 +167,6 @@ def detect_chimeric_contigs(embeddings_df, clusters_df, args):
         h1_mean = h1_embeddings.mean(axis=0)
         h2_mean = h2_embeddings.mean(axis=0)
         
-        # Calculate cosine similarity between half means
-        similarity = cosine_similarity([h1_mean], [h2_mean])[0][0]
-        
         # Calculate intra-half similarity (consistency within each half)
         h1_intra_similarity = 0.0
         h2_intra_similarity = 0.0
@@ -200,61 +197,39 @@ def detect_chimeric_contigs(embeddings_df, clusters_df, args):
         if not cluster_row.empty:
             base_contig_cluster = cluster_row.iloc[0]['cluster']
         
-        # Enhanced chimera scoring
-        # Factor 1: Inter-half similarity (low similarity suggests different sequences)
-        inter_half_score = 0.0
-        similarity_threshold = 0.8
-        if similarity < similarity_threshold:
-            inter_half_score = (similarity_threshold - similarity) / similarity_threshold
+        # Chimera detection based on intra-similarity differences
+        # Real chimeras should have very different intra-similarities in h1 and h2
+        intra_similarity_difference = abs(h1_intra_similarity - h2_intra_similarity)
         
-        # Factor 2: Intra-half consistency (high consistency within halves but low between suggests chimera)
-        min_intra_similarity = min(h1_intra_similarity, h2_intra_similarity)
-        consistency_bonus = 0.0
-        if min_intra_similarity > 0.9 and similarity < 0.7:
-            consistency_bonus = 0.3
-        
-        # Factor 3: Fragment count imbalance (very uneven splits might indicate assembly issues)
+        # Additional check: fragment count balance
         fragment_ratio = min(len(halves['h1']), len(halves['h2'])) / max(len(halves['h1']), len(halves['h2']))
-        balance_penalty = 0.0
-        if fragment_ratio < 0.3:  # Very unbalanced
-            balance_penalty = 0.2
         
-        # Calculate final chimera score
-        chimera_score = min(1.0, inter_half_score + consistency_bonus - balance_penalty)
-        
-        # Determine chimera likelihood
-        if chimera_score >= 0.7:
-            chimera_likelihood = 'high'
-        elif chimera_score >= 0.4:
-            chimera_likelihood = 'medium'
-        else:
-            chimera_likelihood = 'low'
+        # Simple chimera detection: large difference in intra-similarities and reasonable fragment balance
+        is_possible_chimera = (intra_similarity_difference > 0.3 and fragment_ratio > 0.2)
         
         chimera_results[base_contig] = {
-            'similarity': float(similarity),
             'h1_intra_similarity': float(h1_intra_similarity),
             'h2_intra_similarity': float(h2_intra_similarity),
+            'intra_similarity_difference': float(intra_similarity_difference),
             'h1_fragment_count': int(len(halves['h1'])),
             'h2_fragment_count': int(len(halves['h2'])),
             'fragment_ratio': float(fragment_ratio),
             'cluster_assignment': str(base_contig_cluster) if base_contig_cluster is not None else None,
-            'chimera_score': float(chimera_score),
-            'chimera_likelihood': str(chimera_likelihood),
-            'is_likely_chimeric': bool(chimera_score >= 0.4)
+            'is_possible_chimera': bool(is_possible_chimera)
         }
         
-        if chimera_score >= 0.4:
-            logger.info(f"Potential chimeric contig detected: {base_contig} "
-                       f"(inter-half similarity: {similarity:.3f}, score: {chimera_score:.3f}, "
-                       f"h1_intra: {h1_intra_similarity:.3f}, h2_intra: {h2_intra_similarity:.3f})")
+        if is_possible_chimera:
+            logger.info(f"Possible chimeric contig detected: {base_contig} "
+                       f"(h1_intra: {h1_intra_similarity:.3f}, h2_intra: {h2_intra_similarity:.3f}, "
+                       f"difference: {intra_similarity_difference:.3f}, fragment_ratio: {fragment_ratio:.3f})")
     
     # Save results
     results_path = os.path.join(args.output, "chimera_detection_results.json")
     with open(results_path, 'w') as f:
         json.dump(chimera_results, f, indent=2)
     
-    chimeric_count = sum(1 for r in chimera_results.values() if r['is_likely_chimeric'])
-    logger.info(f"Chimera detection complete. Found {chimeric_count} likely chimeric contigs out of {len(chimera_results)} analyzed")
+    chimeric_count = sum(1 for r in chimera_results.values() if r['is_possible_chimera'])
+    logger.info(f"Chimera detection complete. Found {chimeric_count} possible chimeric contigs out of {len(chimera_results)} analyzed")
     logger.info(f"Results saved to {results_path}")
     
     return chimera_results
