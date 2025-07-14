@@ -634,87 +634,83 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
         high_conf_count = sum(1 for s in scores_array if s > 0.95)
         logger.info(f"Eukaryotic classification: {len(eukaryotic_scores)} scored, {high_conf_count} high-confidence (>0.95)")
 
-    # Check if data shows strong 2-cluster structure
+    # Check if data shows strong 2-cluster structure for pre-filtering
     is_good_structure, eukaryotic_cluster = detect_two_cluster_structure(
         norm_data, contig_names, eukaryotic_scores
     )
     
-    if is_good_structure:
-        logger.info("Using K-means clustering (detected well-separated eukaryotic/bacterial structure)")
+    # Always use HDBSCAN clustering, but pre-filter using 2-cluster structure if detected
+    logger.info("Using HDBSCAN clustering")
+    
+    # Apply pre-clustering - either the existing multi-k method or 2-cluster filtering
+    if is_good_structure and eukaryotic_cluster is not None:
+        logger.info("Detected well-separated eukaryotic/bacterial structure - filtering small cluster before HDBSCAN")
         
-        # Use K-means with 2 clusters
+        # Use K-means with 2 clusters to identify and filter out the small cluster
         kmeans = KMeans(n_clusters=2, random_state=42, n_init=10)
         cluster_labels = kmeans.fit_predict(norm_data)
         cluster_dist = np.bincount(cluster_labels)
-        logger.debug(f"K-means result: {cluster_dist.tolist()}")
+        logger.debug(f"K-means pre-filtering result: {cluster_dist.tolist()}")
         
-        # Keep only the eukaryotic cluster, mark others as noise
-        if eukaryotic_cluster is not None:
-            logger.info(f"Keeping eukaryotic cluster {eukaryotic_cluster}, marking cluster {1-eukaryotic_cluster} as noise")
-            formatted_labels = []
-            for label in cluster_labels:
-                if label == eukaryotic_cluster:
-                    formatted_labels.append("bin_0")  # All eukaryotes go to bin_0
-                else:
-                    formatted_labels.append("noise")  # Non-eukaryotes marked as noise
-            final_dist = pd.Series(formatted_labels).value_counts().to_dict()
-            logger.info(f"Final result: {final_dist}")
+        # Keep only the eukaryotic cluster for HDBSCAN
+        eukaryotic_indices = [i for i, label in enumerate(cluster_labels) if label == eukaryotic_cluster]
+        logger.info(f"Keeping eukaryotic cluster {eukaryotic_cluster} ({len(eukaryotic_indices)} contigs) for HDBSCAN, filtering out cluster {1-eukaryotic_cluster} ({cluster_dist[1-eukaryotic_cluster]} contigs)")
+        
+        # Filter data for HDBSCAN
+        filtered_embeddings_df = embeddings_df.iloc[eukaryotic_indices]
+        filtered_contig_names = [contig_names[i] for i in eukaryotic_indices]
+        norm_data = normalize(filtered_embeddings_df.values, norm="l2")
+        working_contig_names = filtered_contig_names
+        working_embeddings_df = filtered_embeddings_df
+        precluster_success = True
+        
+    elif args.enable_preclustering:
+        logger.info("Pre-clustering enabled - attempting bacterial removal...")
+        filtered_embeddings_df, filtered_contig_names, precluster_success = multi_k_bacterial_removal(
+            embeddings_df, contig_names, eukaryotic_scores
+        )
+        
+        if precluster_success:
+            # Update data for HDBSCAN to use only the filtered (eukaryotic) contigs
+            logger.info("Using pre-filtered eukaryotic contigs for HDBSCAN")
+            norm_data = normalize(filtered_embeddings_df.values, norm="l2")
+            working_contig_names = filtered_contig_names
+            working_embeddings_df = filtered_embeddings_df
         else:
-            # Fallback: keep both clusters
-            logger.info("No clear eukaryotic cluster identified, keeping both clusters")
-            formatted_labels = [f"bin_{label}" for label in cluster_labels]
-            final_dist = pd.Series(formatted_labels).value_counts().to_dict()
-            logger.info(f"Final result: {final_dist}")
-        
-    else:
-        logger.info("Using HDBSCAN clustering (complex/mixed population structure)")
-        
-        # Apply pre-clustering if enabled
-        if args.enable_preclustering:
-            logger.info("Pre-clustering enabled - attempting bacterial removal...")
-            filtered_embeddings_df, filtered_contig_names, precluster_success = multi_k_bacterial_removal(
-                embeddings_df, contig_names, eukaryotic_scores
-            )
-            
-            if precluster_success:
-                # Update data for HDBSCAN to use only the filtered (eukaryotic) contigs
-                logger.info("Using pre-filtered eukaryotic contigs for HDBSCAN")
-                norm_data = normalize(filtered_embeddings_df.values, norm="l2")
-                working_contig_names = filtered_contig_names
-                working_embeddings_df = filtered_embeddings_df
-            else:
-                logger.info("Pre-clustering had minimal effect, using original data for HDBSCAN")
-                working_contig_names = contig_names
-                working_embeddings_df = embeddings_df
-        else:
-            logger.debug("Pre-clustering disabled")
+            logger.info("Pre-clustering had minimal effect, using original data for HDBSCAN")
             working_contig_names = contig_names
             working_embeddings_df = embeddings_df
-        
-        # Create HDBSCAN clusterer
-        logger.info(f"Running HDBSCAN on {len(working_contig_names)} contigs (min_cluster_size={args.min_cluster_size}, min_samples={args.min_samples})")
-        clusterer = hdbscan.HDBSCAN(
-            min_cluster_size=args.min_cluster_size,
-            min_samples=args.min_samples,
-            metric="euclidean",
-            cluster_selection_method="eom",
-            cluster_selection_epsilon=0.5,
-            prediction_data=True,
-            core_dist_n_jobs=-1,
-        )
+            precluster_success = False
+    else:
+        logger.debug("Pre-clustering disabled")
+        working_contig_names = contig_names
+        working_embeddings_df = embeddings_df
+        precluster_success = False
+    
+    # Create HDBSCAN clusterer
+    logger.info(f"Running HDBSCAN on {len(working_contig_names)} contigs (min_cluster_size={args.min_cluster_size}, min_samples={args.min_samples})")
+    clusterer = hdbscan.HDBSCAN(
+        min_cluster_size=args.min_cluster_size,
+        min_samples=args.min_samples,
+        metric="euclidean",
+        cluster_selection_method="eom",
+        cluster_selection_epsilon=0.5,
+        prediction_data=True,
+        core_dist_n_jobs=-1,
+    )
 
-        cluster_labels = clusterer.fit_predict(norm_data)
-        n_clusters = len(set(cluster_labels)) - (1 if -1 in cluster_labels else 0)
-        n_noise = sum(1 for label in cluster_labels if label == -1)
-        cluster_sizes = np.bincount(cluster_labels[cluster_labels >= 0]) if n_clusters > 0 else []
-        logger.info(f"HDBSCAN result: {n_clusters} clusters, {n_noise} noise points, sizes: {cluster_sizes.tolist() if hasattr(cluster_sizes, 'tolist') else list(cluster_sizes)}")
-        
-        formatted_labels = [
-            f"bin_{label}" if label != -1 else "noise" for label in cluster_labels
-        ]
+    cluster_labels = clusterer.fit_predict(norm_data)
+    n_clusters = len(set(cluster_labels)) - (1 if -1 in cluster_labels else 0)
+    n_noise = sum(1 for label in cluster_labels if label == -1)
+    cluster_sizes = np.bincount(cluster_labels[cluster_labels >= 0]) if n_clusters > 0 else []
+    logger.info(f"HDBSCAN result: {n_clusters} clusters, {n_noise} noise points, sizes: {cluster_sizes.tolist() if hasattr(cluster_sizes, 'tolist') else list(cluster_sizes)}")
+    
+    formatted_labels = [
+        f"bin_{label}" if label != -1 else "noise" for label in cluster_labels
+    ]
 
     # Create clusters dataframe with original contig names (without .original suffix)
-    if args.enable_preclustering and 'working_contig_names' in locals() and working_contig_names != contig_names:
+    if precluster_success and 'working_contig_names' in locals() and working_contig_names != contig_names:
         # Pre-clustering was used, need to map back to all original contigs
         logger.debug("Mapping pre-clustered results back to all contigs")
         
@@ -790,7 +786,7 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
     logger.debug("Performing UMAP dimensionality reduction for visualization...")
     
     # Determine which embeddings to use for UMAP based on what was actually clustered
-    if args.enable_preclustering and 'working_embeddings_df' in locals() and working_embeddings_df is not embeddings_df:
+    if precluster_success and 'working_embeddings_df' in locals() and working_embeddings_df is not embeddings_df:
         # Pre-clustering was used and successful, use filtered data for UMAP
         umap_embeddings_df = working_embeddings_df
         logger.debug(f"Using pre-filtered data for UMAP: {umap_embeddings_df.shape[0]} contigs")
