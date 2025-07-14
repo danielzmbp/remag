@@ -45,15 +45,24 @@ def detect_chimeric_contigs(embeddings_df, clusters_df, args):
     chimera_results = {}
     
     # Load features data to find h1/h2 fragments for large contigs
-    features_path = os.path.join(args.output, "features.csv")
-    if not os.path.exists(features_path):
-        logger.warning(f"Features file not found at {features_path}, skipping chimera detection")
-        return {}
+    features_parquet_path = os.path.join(args.output, "features.parquet")
+    features_csv_path = os.path.join(args.output, "features.csv")
     
-    try:
-        features_df = pd.read_csv(features_path, index_col=0)
-    except Exception as e:
-        logger.error(f"Error loading features data: {e}")
+    features_df = None
+    if os.path.exists(features_parquet_path):
+        try:
+            features_df = pd.read_parquet(features_parquet_path)
+        except Exception as e:
+            logger.error(f"Error loading features data from parquet: {e}")
+            return {}
+    elif os.path.exists(features_csv_path):
+        try:
+            features_df = pd.read_csv(features_csv_path, index_col=0)
+        except Exception as e:
+            logger.error(f"Error loading features data from csv: {e}")
+            return {}
+    else:
+        logger.warning(f"Features file not found at {features_parquet_path} or {features_csv_path}, skipping chimera detection")
         return {}
     
     # Group h1/h2 fragments by base contig name
