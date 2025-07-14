@@ -101,7 +101,23 @@ def detect_chimeric_contigs(embeddings_df, clusters_df, args):
             if torch.cuda.is_available()
             else "mps" if torch.backends.mps.is_available() else "cpu"
         )
-        model = torch.load(model_path, map_location=device)
+        
+        # Import the model class
+        from .models import SiameseNetwork
+        
+        # Determine feature dimensions (same logic as in train_siamese_network)
+        n_kmer_features = 136
+        total_features = features_df.shape[1]
+        n_coverage_features = total_features - n_kmer_features
+        
+        # Create model instance and load state dict
+        model = SiameseNetwork(
+            n_kmer_features=n_kmer_features, 
+            n_coverage_features=n_coverage_features,
+            embedding_dim=getattr(args, 'embedding_dim', 128)
+        ).to(device)
+        model.load_state_dict(torch.load(model_path, map_location=device))
+        model.eval()  # Set to evaluation mode
     else:
         logger.info("Training new model for chimera detection...")
         model = train_siamese_network(features_df, args)
