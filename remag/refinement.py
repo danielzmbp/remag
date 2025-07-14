@@ -1,0 +1,786 @@
+"""
+Refinement module for REMAG
+"""
+
+import argparse
+import json
+import os
+import pandas as pd
+from tqdm import tqdm
+from loguru import logger
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import normalize
+
+from .utils import extract_base_contig_name
+
+
+def check_core_gene_duplications(clusters_df, fragments_dict, args):
+    """Check for duplicated core genes using miniprot."""
+    db_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "db", "refseq_db.faa.gz"
+    )
+    if not os.path.exists(db_path):
+        logger.warning(
+            "Eukaryotic database not found, skipping core gene duplication check"
+        )
+        clusters_df["has_duplicated_core_genes"] = False
+        return clusters_df
+
+    logger.info("Checking for duplicated core genes using miniprot...")
+
+    # Create temporary directory
+    temp_dir = os.path.join(args.output, "temp_miniprot")
+    os.makedirs(temp_dir, exist_ok=True)
+
+    # Group contigs by cluster (clusters_df is now contig-level)
+    cluster_contig_dict = {}
+    for _, row in clusters_df.iterrows():
+        contig_name = row["contig"]
+        cluster_id = row["cluster"]
+
+        # Find corresponding original header - build lookup dict once outside the loop for O(1) lookup
+        if not hasattr(check_core_gene_duplications, '_contig_to_header_cache'):
+            check_core_gene_duplications._contig_to_header_cache = {
+                extract_base_contig_name(header): header for header in fragments_dict.keys()
+            }
+        original_header = check_core_gene_duplications._contig_to_header_cache.get(contig_name)
+
+        if original_header:
+            if cluster_id not in cluster_contig_dict:
+                cluster_contig_dict[cluster_id] = set()
+            cluster_contig_dict[cluster_id].add(original_header)
+
+    # Filter clusters by size and exclude noise
+    filtered_clusters = {}
+    for cluster_id, contig_headers in cluster_contig_dict.items():
+        if cluster_id == "noise":
+            continue
+        total_size = sum(len(fragments_dict[h]["sequence"]) for h in contig_headers)
+        if total_size >= args.min_bin_size:
+            filtered_clusters[cluster_id] = contig_headers
+
+    duplication_results = {}
+
+    try:
+        for cluster_id, contig_headers in tqdm(
+            filtered_clusters.items(), desc="Checking core gene duplications"
+        ):
+            # Create temporary FASTA file
+            bin_fasta = os.path.join(temp_dir, f"{cluster_id}.fa")
+            with open(bin_fasta, "w") as f:
+                for header in contig_headers:
+                    seq = fragments_dict[header]["sequence"]
+                    f.write(f">{header}\n")
+                    for i in range(0, len(seq), 60):
+                        f.write(f"{seq[i: i+60]}\n")
+
+            # Run miniprot
+            miniprot_output = os.path.join(temp_dir, f"{cluster_id}.paf")
+            db_to_use = db_path  # Use the compressed file directly
+            cmd = f'miniprot -t {args.cores} "{bin_fasta}" "{db_to_use}" > "{miniprot_output}" 2>/dev/null'
+
+            if args.verbose:
+                logger.debug(f"Running miniprot command: {cmd}")
+
+            try:
+                result = os.system(cmd)
+                if result == 0:
+                    # Parse miniprot output
+                    best_alignments = (
+                        {}
+                    )  # {(contig, gene_family): {score, coverage, identity}}
+
+                    if (
+                        os.path.exists(miniprot_output)
+                        and os.path.getsize(miniprot_output) > 0
+                    ):
+                        if args.verbose:
+                            logger.debug(
+                                f"Miniprot output file exists and has size: {os.path.getsize(miniprot_output)} bytes"
+                            )
+                        with open(miniprot_output, "r") as paf_file:
+                            for line in paf_file:
+                                if line.startswith("#") or not line.strip():
+                                    continue
+
+                                parts = line.strip().split("\t")
+                                if len(parts) >= 11:
+                                    try:
+                                        query_name = parts[0]  # Protein name
+                                        target_name = parts[5]  # Contig name
+                                        target_length = int(parts[6])
+                                        target_start = int(parts[7])
+                                        target_end = int(parts[8])
+                                        matching_bases = int(parts[9])
+                                        alignment_length = int(parts[10])
+
+                                        # Extract gene family code from protein name (query)
+                                        full_gene_id = query_name.split()[0]
+                                        if ":" in full_gene_id:
+                                            gene_family_code = full_gene_id.split(":")[
+                                                -1
+                                            ]
+                                        else:
+                                            gene_family_code = full_gene_id
+
+                                        # Calculate quality metrics
+                                        target_coverage = (
+                                            (target_end - target_start) / target_length
+                                            if target_length > 0
+                                            else 0
+                                        )
+                                        identity = (
+                                            matching_bases / alignment_length
+                                            if alignment_length > 0
+                                            else 0
+                                        )
+
+                                        # Only consider high-quality alignments
+                                        if target_coverage >= 0.60 and identity >= 0.40:
+                                            score = target_coverage * identity
+                                            key = (
+                                                target_name,
+                                                gene_family_code,
+                                            )  # Use contig name as key
+
+                                            if (
+                                                key not in best_alignments
+                                                or score > best_alignments[key]["score"]
+                                            ):
+                                                best_alignments[key] = {
+                                                    "score": score,
+                                                    "coverage": target_coverage,
+                                                    "identity": identity,
+                                                    "gene_family": gene_family_code,
+                                                }
+
+                                    except (ValueError, IndexError):
+                                        continue
+
+                    # Count gene families present in each contig
+                    contig_genes = {}
+                    for (contig, gene_family), alignment in best_alignments.items():
+                        if contig not in contig_genes:
+                            contig_genes[contig] = set()
+                        contig_genes[contig].add(gene_family)
+
+                    # Count total occurrences of each gene family
+                    gene_counts = {}
+                    for contig, gene_families in contig_genes.items():
+                        for gene_family in gene_families:
+                            if gene_family not in gene_counts:
+                                gene_counts[gene_family] = 0
+                            gene_counts[gene_family] += 1
+
+                    # Check for duplications
+                    duplicated_genes = {
+                        gene: count for gene, count in gene_counts.items() if count > 1
+                    }
+                    has_duplications = len(duplicated_genes) > 0
+
+                    duplication_results[cluster_id] = {
+                        "has_duplications": has_duplications,
+                        "duplicated_genes": duplicated_genes,
+                        "total_genes_found": len(gene_counts),
+                    }
+
+                else:
+                    duplication_results[cluster_id] = {
+                        "has_duplications": False,
+                        "duplicated_genes": {},
+                        "total_genes_found": 0,
+                    }
+
+            except Exception as e:
+                logger.warning(f"Error running miniprot for {cluster_id}: {e}")
+                duplication_results[cluster_id] = {
+                    "has_duplications": False,
+                    "duplicated_genes": {},
+                    "total_genes_found": 0,
+                }
+
+    finally:
+        logger.info(f"Miniprot files preserved at: {temp_dir}")
+
+    # Add duplication information to clusters_df
+    clusters_df = clusters_df.copy()
+    clusters_df["has_duplicated_core_genes"] = False
+    clusters_df["duplicated_core_genes_count"] = 0
+    clusters_df["total_core_genes_found"] = 0
+
+    for cluster_id, result in duplication_results.items():
+        mask = clusters_df["cluster"] == cluster_id
+        clusters_df.loc[mask, "has_duplicated_core_genes"] = result["has_duplications"]
+        clusters_df.loc[mask, "duplicated_core_genes_count"] = len(
+            result["duplicated_genes"]
+        )
+        clusters_df.loc[mask, "total_core_genes_found"] = result["total_genes_found"]
+
+    # Log summary
+    bins_with_duplications = sum(
+        1 for r in duplication_results.values() if r["has_duplications"]
+    )
+    total_bins_checked = len(duplication_results)
+    logger.info(
+        f"Checked {total_bins_checked} bins: {bins_with_duplications} have duplicated core genes"
+    )
+
+    # Save results
+    results_path = os.path.join(args.output, "core_gene_duplication_results.json")
+    with open(results_path, "w") as f:
+        json.dump(duplication_results, f, indent=2)
+
+    return clusters_df
+
+
+def cluster_contigs_kmeans_refinement(
+    embeddings_df, fragments_dict, args, bin_id, duplication_results
+):
+    """
+    Cluster contigs using K-means where the number of clusters is based on
+    the number of duplicated single copy core genes found in the original bin.
+
+    Args:
+        embeddings_df: DataFrame with embeddings for contigs
+        fragments_dict: Dictionary containing fragment sequences
+        args: Command line arguments
+        bin_id: Original bin ID being refined
+        duplication_results: Results from core gene duplication analysis
+
+    Returns:
+        DataFrame with cluster assignments
+    """
+    logger.info(f"Performing K-means clustering for {bin_id} refinement...")
+
+    # Get the number of duplicated core genes for this bin
+    if bin_id in duplication_results:
+        duplicated_genes_count = len(duplication_results[bin_id]["duplicated_genes"])
+        total_genes_found = duplication_results[bin_id]["total_genes_found"]
+        logger.info(
+            f"Bin {bin_id} has {duplicated_genes_count} duplicated core genes out of {total_genes_found} total genes"
+        )
+    else:
+        logger.warning(f"No duplication results found for {bin_id}, using default k=2")
+        duplicated_genes_count = 2
+
+    # Determine number of clusters for K-means
+    # Use the number of duplicated core genes as the number of clusters
+    # This assumes each duplicated gene represents a different species/strain
+    n_clusters = max(2, duplicated_genes_count)  # Minimum of 2 clusters
+
+    # If we have more contigs than duplicated genes, cap the clusters
+    n_contigs = len(embeddings_df)
+    if n_contigs < n_clusters:
+        logger.warning(
+            f"Number of contigs ({n_contigs}) is less than number of duplicated genes ({duplicated_genes_count}), reducing clusters to {n_contigs}"
+        )
+        n_clusters = max(2, n_contigs - 1)  # Keep at least 2 clusters if possible
+
+    logger.info(f"Using K-means with {n_clusters} clusters for {bin_id} refinement")
+
+    # Normalize the embeddings data for clustering
+    logger.debug("Normalizing embeddings for clustering...")
+    norm_data = normalize(embeddings_df.values, norm="l2")
+
+    # Apply K-means clustering
+    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+    cluster_labels = kmeans.fit_predict(norm_data)
+
+    # Format cluster labels
+    formatted_labels = [f"bin_{label}" for label in cluster_labels]
+
+    # Create clusters dataframe with original contig names (without fragment suffixes)
+    original_contig_names = [
+        extract_base_contig_name(name) for name in embeddings_df.index
+    ]
+    contig_clusters_df = pd.DataFrame(
+        {"contig": original_contig_names, "cluster": formatted_labels}
+    )
+
+    # Count number of clusters and contigs per cluster
+    n_clusters_found = len(contig_clusters_df["cluster"].unique())
+    logger.info(f"K-means refinement found {n_clusters_found} clusters")
+
+    # Count contigs per cluster
+    logger.debug("Counting contigs per cluster...")
+    cluster_contig_counts = {}
+    for _, row in contig_clusters_df.iterrows():
+        cluster_id = row["cluster"]
+        contig_name = row["contig"]
+
+        if cluster_id not in cluster_contig_counts:
+            cluster_contig_counts[cluster_id] = set()
+        cluster_contig_counts[cluster_id].add(contig_name)
+
+    logger.debug("Contigs per cluster:")
+    for cluster_id, original_contigs in cluster_contig_counts.items():
+        count = len(original_contigs)
+        logger.debug(f"  Cluster {cluster_id}: {count} contigs")
+
+    return contig_clusters_df
+
+
+def _refine_single_bin_worker(args_tuple):
+    """
+    Worker function to refine a single contaminated bin in parallel.
+
+    Args:
+        args_tuple: Tuple containing (bin_id, bin_fragments, fragments_dict, args,
+                   duplication_results, refinement_round, max_refinement_rounds,
+                   refinement_dir, cores_per_bin)
+
+    Returns:
+        dict: Results of the bin refinement including status and refined clusters
+    """
+    (
+        bin_id,
+        bin_fragments,
+        fragments_dict,
+        args,
+        duplication_results,
+        refinement_round,
+        max_refinement_rounds,
+        refinement_dir,
+        cores_per_bin,
+    ) = args_tuple
+
+    try:
+        logger.info(f"Worker: Starting refinement of {bin_id}...")
+
+        # Create bin-specific directory
+        bin_refinement_dir = os.path.join(refinement_dir, f"bin_{bin_id}")
+        os.makedirs(bin_refinement_dir, exist_ok=True)
+
+        # Get original contigs for this bin (bin_fragments is now contig-level)
+        # Build lookup dict for O(1) contig name to header mapping
+        contig_to_header_map = {
+            extract_base_contig_name(header): header for header in fragments_dict.keys()
+        }
+        bin_contigs = set()
+        for _, row in bin_fragments.iterrows():
+            contig_name = row["contig"]
+            header = contig_to_header_map.get(contig_name)
+            if header:
+                bin_contigs.add(header)
+
+        if not bin_contigs:
+            return {
+                "bin_id": bin_id,
+                "status": "failed",
+                "reason": "no_contigs",
+                "sub_bins": 0,
+                "clusters_df": None,
+            }
+
+        # Write bin FASTA
+        bin_fasta = os.path.join(bin_refinement_dir, f"{bin_id}.fa")
+        with open(bin_fasta, "w") as f:
+            for contig_header in bin_contigs:
+                seq = fragments_dict[contig_header]["sequence"]
+                f.write(f">{contig_header}\n")
+                for i in range(0, len(seq), 60):
+                    f.write(f"{seq[i: i+60]}\n")
+
+        # Import the required functions here to avoid circular imports
+        from .features import get_features
+        from .models import train_siamese_network, generate_embeddings
+
+        # Create refined args for this bin (with adjusted parameters)
+        refined_args = argparse.Namespace(**vars(args))
+        refined_args.fasta = bin_fasta
+        refined_args.output = bin_refinement_dir
+        refined_args.cores = cores_per_bin  # Use allocated cores for this worker
+        # Set refinement-specific flags
+        refined_args.skip_bacterial_filter = True  # Already filtered in main pipeline
+        refined_args.skip_refinement = refinement_round >= max_refinement_rounds
+        # Use same parameters as main pipeline for consistency
+        refined_args.epochs = args.epochs
+        refined_args.min_cluster_size = args.min_cluster_size
+        refined_args.min_samples = args.min_samples
+        refined_args.max_positive_pairs = args.max_positive_pairs
+        # Use half the batch size for refinement step
+        refined_args.batch_size = args.batch_size // 2
+
+        logger.debug(
+            f"Worker: Running refinement pipeline for {bin_id} with {len(bin_contigs)} contigs using {cores_per_bin} cores"
+        )
+
+        # Run the refinement pipeline
+        refined_features_df, refined_fragments_dict = get_features(
+            refined_args.fasta,
+            refined_args.bam,
+            refined_args.tsv,
+            refined_args.output,
+            refined_args.min_contig_length,
+            refined_args.cores,
+            getattr(
+                refined_args, "num_augmentations", 0
+            ),  # No augmentations for refinement
+        )
+
+        if refined_features_df.empty:
+            return {
+                "bin_id": bin_id,
+                "status": "failed",
+                "reason": "no_features",
+                "sub_bins": 0,
+                "clusters_df": None,
+            }
+
+        # Train siamese network for this bin
+        logger.debug(f"Worker: Training siamese network for {bin_id} refinement...")
+        refined_model = train_siamese_network(refined_features_df, refined_args)
+
+        # Generate embeddings
+        logger.debug(f"Worker: Generating embeddings for {bin_id} refinement...")
+        refined_embeddings_df = generate_embeddings(
+            refined_model, refined_features_df, refined_args
+        )
+
+        # Cluster the refined embeddings using K-means based on duplicated core genes
+        logger.debug(f"Worker: Clustering {bin_id} refinement using K-means...")
+        refined_clusters_df = cluster_contigs_kmeans_refinement(
+            refined_embeddings_df,
+            refined_fragments_dict,
+            refined_args,
+            bin_id,
+            duplication_results,
+        )
+
+        # Check for duplicated core genes in refined bins
+        logger.debug(
+            f"Worker: Checking core gene duplications in {bin_id} refined sub-bins..."
+        )
+        refined_clusters_df = check_core_gene_duplications(
+            refined_clusters_df, refined_fragments_dict, refined_args
+        )
+
+        # Rename clusters to avoid conflicts (prefix with original bin name)
+        refined_clusters_df = refined_clusters_df.copy()
+        refined_clusters_df["original_bin"] = bin_id
+        refined_clusters_df["cluster"] = refined_clusters_df["cluster"].apply(
+            lambda x: f"{bin_id}_refined_{x}" if x != "noise" else "noise"
+        )
+
+        # Count successful sub-bins (exclude noise)
+        sub_bins = refined_clusters_df[refined_clusters_df["cluster"] != "noise"][
+            "cluster"
+        ].nunique()
+
+        if sub_bins > 1:
+            logger.info(
+                f"Worker: Successfully refined {bin_id} into {sub_bins} sub-bins"
+            )
+            return {
+                "bin_id": bin_id,
+                "status": "success",
+                "sub_bins": sub_bins,
+                "clusters_df": refined_clusters_df,
+            }
+        else:
+            logger.warning(
+                f"Worker: Refinement of {bin_id} produced only {sub_bins} sub-bins"
+            )
+            return {
+                "bin_id": bin_id,
+                "status": "insufficient_split",
+                "sub_bins": sub_bins,
+                "clusters_df": None,
+            }
+
+    except Exception as e:
+        logger.error(f"Worker: Error during refinement of {bin_id}: {e}")
+        return {
+            "bin_id": bin_id,
+            "status": "error",
+            "reason": str(e),
+            "sub_bins": 0,
+            "clusters_df": None,
+        }
+
+
+def refine_contaminated_bins(
+    clusters_df, fragments_dict, args, refinement_round=1, max_refinement_rounds=2
+):
+    """
+    Refine bins that have duplicated core genes by re-running the entire pipeline
+    on each contaminated bin to split it into cleaner sub-bins. This function performs
+    iterative refinement:
+
+    1. First round: Refines bins with duplicated core genes using K-means clustering
+       based on the number of duplicated core genes
+    2. Checks for duplications in refined sub-bins
+    3. Second round: Refines still-contaminated sub-bins (if max_refinement_rounds >= 2)
+    4. Final check: Marks any remaining contaminated bins without further refinement
+
+    This approach allows for progressive improvement of bin quality while preventing
+    infinite refinement loops.
+
+    Args:
+        clusters_df: DataFrame with cluster assignments and duplication flags
+        fragments_dict: Dictionary containing fragment sequences
+        args: Command line arguments
+        refinement_round: Current refinement round (1-indexed)
+        max_refinement_rounds: Maximum number of refinement rounds to perform
+
+    Returns:
+        tuple: (refined_clusters_df, refined_fragments_dict, refinement_summary)
+    """
+    # Identify contaminated bins
+    contaminated_bins = []
+    if "has_duplicated_core_genes" in clusters_df.columns:
+        contaminated_clusters = clusters_df[
+            clusters_df["has_duplicated_core_genes"] == True
+        ]["cluster"].unique()
+        contaminated_bins = [c for c in contaminated_clusters if c != "noise"]
+
+    if not contaminated_bins:
+        logger.info("No contaminated bins found, skipping refinement")
+        return clusters_df, fragments_dict, {}
+
+    if refinement_round > max_refinement_rounds:
+        logger.info(
+            f"Maximum refinement rounds ({max_refinement_rounds}) reached, marking remaining contaminated bins without further refinement"
+        )
+        return clusters_df, fragments_dict, {}
+
+    logger.info(
+        f"Starting refinement round {refinement_round} of {len(contaminated_bins)} contaminated bins..."
+    )
+    if refinement_round == 1:
+        logger.info(
+            f"Maximum {max_refinement_rounds} refinement rounds will be performed"
+        )
+        logger.info(
+            "Refinement approach: bins with duplicated core genes will be split into sub-bins using K-means clustering"
+        )
+        logger.info("Number of clusters = number of duplicated single copy core genes")
+        logger.info("After refinement, sub-bins will be checked again for duplications")
+        if max_refinement_rounds > 1:
+            logger.info(
+                "Still-contaminated sub-bins will undergo additional refinement rounds"
+            )
+        logger.info(
+            "After maximum rounds, any remaining contaminated bins will be marked but not refined further"
+        )
+
+    # Create refinement output directory
+    refinement_dir = os.path.join(args.output, "refinement")
+    os.makedirs(refinement_dir, exist_ok=True)
+
+    # Load duplication results for K-means clustering
+    duplication_results = {}
+    results_path = os.path.join(args.output, "core_gene_duplication_results.json")
+    if os.path.exists(results_path):
+        try:
+            with open(results_path, "r") as f:
+                duplication_results = json.load(f)
+            logger.info(
+                f"Loaded duplication results for {len(duplication_results)} bins"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to load duplication results: {e}")
+    else:
+        logger.warning(
+            "No duplication results file found, will use default k=2 for K-means"
+        )
+
+    # No fragment mapping needed since clusters_df is already contig-level
+
+    all_refined_clusters = []
+    refinement_summary = {}
+
+    # Calculate core allocation for parallel processing
+    num_contaminated_bins = len(contaminated_bins)
+    if num_contaminated_bins == 0:
+        return clusters_df, fragments_dict, {}
+
+    # Determine optimal parallelization strategy
+    max_parallel_bins = (
+        max(1, min(args.cores // 2, num_contaminated_bins))
+        if num_contaminated_bins > 0
+        else 1
+    )
+    cores_per_bin = max(1, args.cores // max_parallel_bins)
+
+    logger.info(
+        f"Processing {num_contaminated_bins} contaminated bins using {max_parallel_bins} parallel workers"
+    )
+    logger.info(f"Each worker will use {cores_per_bin} cores")
+
+    # Filter bins with insufficient contigs before parallel processing
+    valid_bins = []
+    for bin_id in contaminated_bins:
+        # Get contigs belonging to this bin (clusters_df is now contig-level)
+        bin_contigs_df = clusters_df[clusters_df["cluster"] == bin_id]
+        if bin_contigs_df.empty:
+            continue
+
+        # Get original contigs for this bin - use O(1) lookup
+        contig_to_header_map = {
+            extract_base_contig_name(header): header for header in fragments_dict.keys()
+        }
+        bin_contigs = set()
+        for _, row in bin_contigs_df.iterrows():
+            contig_name = row["contig"]
+            header = contig_to_header_map.get(contig_name)
+            if header:
+                bin_contigs.add(header)
+
+        if len(bin_contigs) < 2:
+            logger.warning(
+                f"Bin {bin_id} has fewer than 2 contigs, skipping refinement"
+            )
+            refinement_summary[bin_id] = {
+                "status": "skipped",
+                "reason": "too_few_contigs",
+                "sub_bins": 0,
+            }
+            continue
+
+        valid_bins.append((bin_id, bin_contigs_df))
+
+    if not valid_bins:
+        logger.info("No valid bins found for refinement")
+        return clusters_df, fragments_dict, refinement_summary
+
+    # Prepare worker arguments for parallel processing
+    worker_args = []
+    for bin_id, bin_fragments in valid_bins:
+        worker_args.append(
+            (
+                bin_id,
+                bin_fragments,
+                fragments_dict,
+                args,
+                duplication_results,
+                refinement_round,
+                max_refinement_rounds,
+                refinement_dir,
+                cores_per_bin,
+            )
+        )
+
+    # Process bins sequentially
+    logger.info(f"Starting sequential refinement of {len(valid_bins)} bins...")
+    results = []
+    for worker_arg in tqdm(worker_args, desc="Refining contaminated bins (sequential)"):
+        results.append(_refine_single_bin_worker(worker_arg))
+
+    # Process results
+    for result in results:
+        bin_id = result["bin_id"]
+        refinement_summary[bin_id] = {
+            "status": result["status"],
+            "sub_bins": result["sub_bins"],
+        }
+
+        if result["status"] == "success" and result["clusters_df"] is not None:
+            all_refined_clusters.append(result["clusters_df"])
+            logger.info(
+                f"Successfully refined {bin_id} into {result['sub_bins']} sub-bins"
+            )
+        elif result["status"] == "error":
+            refinement_summary[bin_id]["reason"] = result["reason"]
+            logger.error(f"Error during refinement of {bin_id}: {result['reason']}")
+        elif result["status"] == "insufficient_split":
+            logger.warning(
+                f"Refinement of {bin_id} produced only {result['sub_bins']} sub-bins, keeping original"
+            )
+        elif result["status"] == "failed":
+            refinement_summary[bin_id]["reason"] = result["reason"]
+            logger.warning(f"Refinement of {bin_id} failed: {result['reason']}")
+
+    logger.info(f"Parallel refinement completed. Processed {len(results)} bins.")
+
+    # Combine all refined clusters
+    if all_refined_clusters:
+        logger.info("Integrating refined bins into final results...")
+
+        # Remove contaminated bins from original results
+        clean_original_clusters = clusters_df[
+            ~clusters_df["cluster"].isin(contaminated_bins)
+        ].copy()
+
+        # Add refined clusters
+        all_refined_df = pd.concat(all_refined_clusters, ignore_index=True)
+
+        # Combine clean original + refined clusters
+        final_clusters_df = pd.concat(
+            [clean_original_clusters, all_refined_df], ignore_index=True
+        )
+
+        # Update fragments_dict to include refined fragments (they should already be there)
+        # No need to modify fragments_dict as it contains original sequences
+
+        logger.info(f"Refinement round {refinement_round} complete!")
+        logger.info("Refinement summary:")
+        for bin_id, summary in refinement_summary.items():
+            if summary["status"] == "success":
+                logger.info(
+                    f"  {bin_id}: Split into {summary['sub_bins']} clean sub-bins"
+                )
+            elif summary["status"] == "insufficient_split":
+                logger.info(
+                    f"  {bin_id}: Insufficient splitting ({summary['sub_bins']} sub-bins), kept original"
+                )
+            else:
+                logger.info(
+                    f"  {bin_id}: {summary['status']} - {summary.get('reason', 'unknown')}"
+                )
+
+        # Check if we should perform another round of refinement
+        if refinement_round < max_refinement_rounds:
+            logger.info(
+                f"Checking for contaminated bins requiring round {refinement_round+1} refinement..."
+            )
+
+            # Check for contaminated bins in the current result
+            still_contaminated_bins = []
+            if "has_duplicated_core_genes" in final_clusters_df.columns:
+                still_contaminated_clusters = final_clusters_df[
+                    final_clusters_df["has_duplicated_core_genes"] == True
+                ]["cluster"].unique()
+                still_contaminated_bins = [
+                    c for c in still_contaminated_clusters if c != "noise"
+                ]
+
+            if still_contaminated_bins:
+                logger.info(
+                    f"Found {len(still_contaminated_bins)} bins still needing refinement, starting round {refinement_round+1}"
+                )
+
+                # Recursively refine the still-contaminated bins
+                final_clusters_df, fragments_dict, additional_refinement_summary = (
+                    refine_contaminated_bins(
+                        final_clusters_df,
+                        fragments_dict,
+                        args,
+                        refinement_round=refinement_round + 1,
+                        max_refinement_rounds=max_refinement_rounds,
+                    )
+                )
+
+                # Merge refinement summaries
+                refinement_summary.update(additional_refinement_summary)
+            else:
+                logger.info("No more contaminated bins found, refinement complete!")
+
+        return final_clusters_df, fragments_dict, refinement_summary
+    else:
+        logger.warning("No bins were successfully refined, keeping original results")
+
+        # Check if we should perform another round anyway (in case original bins are still contaminated)
+        if refinement_round < max_refinement_rounds:
+            logger.info(
+                "Checking if original contaminated bins should undergo another refinement round..."
+            )
+            return refine_contaminated_bins(
+                clusters_df,
+                fragments_dict,
+                args,
+                refinement_round=refinement_round + 1,
+                max_refinement_rounds=max_refinement_rounds,
+            )
+
+        return clusters_df, fragments_dict, refinement_summary

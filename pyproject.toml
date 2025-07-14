@@ -1,0 +1,114 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "remag"
+version = "0.1.0"
+description = "Metagenomic binning using neural networks and contrastive learning"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {file = "LICENSE"}
+authors = [
+    {name = "Your Name", email = "your.email@example.com"},
+]
+maintainers = [
+    {name = "Your Name", email = "your.email@example.com"},
+]
+keywords = [
+    "metagenomics",
+    "binning",
+    "neural networks",
+    "contrastive learning",
+    "bioinformatics",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+dependencies = [
+    "hdbscan>=0.8.28",
+    "matplotlib>=3.5.0",
+    "numpy>=1.21.0",
+    "pandas>=1.3.0",
+    "pysam>=0.18.0",
+    "rich-click>=1.5.0",
+    "torch>=1.11.0",
+    "loguru>=0.6.0",
+    "scikit-learn>=1.0.0",
+    "tqdm>=4.62.0",
+    "umap-learn>=0.5.0",
+    "xgboost>=1.6.0",
+    "joblib>=1.1.0",
+    "pyarrow>=10.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=3.0.0",
+    "black>=22.0.0",
+    "isort>=5.10.0",
+    "flake8>=4.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/remag"
+Repository = "https://github.com/yourusername/remag"
+Documentation = "https://github.com/yourusername/remag"
+"Bug Tracker" = "https://github.com/yourusername/remag/issues"
+
+[project.scripts]
+remag = "remag.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["remag*"]
+exclude = ["tests*"]
+
+[tool.setuptools.package-data]
+"remag.xgbclass" = ["models/*"]
+"remag.db" = ["*.faa.gz"]
+
+[tool.black]
+line-length = 88
+target-version = ['py38']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+line_length = 88
+known_first_party = ["remag"]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -q --strict-markers"
+testpaths = [
+    "tests",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+]
