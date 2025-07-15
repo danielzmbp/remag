@@ -11,7 +11,7 @@ from .utils import setup_logging
 from .features import filter_bacterial_contigs, get_features
 from .models import train_siamese_network, generate_embeddings
 from .clustering import cluster_contigs
-from .quality import check_core_gene_duplications
+from .miniprot_utils import check_core_gene_duplications
 from .refinement import refine_contaminated_bins
 from .output import save_clusters_as_fasta
 
@@ -81,7 +81,14 @@ def main(args):
 
     # Check for duplicated core genes using miniprot
     logger.info("Checking for duplicated core genes...")
-    clusters_df = check_core_gene_duplications(clusters_df, fragments_dict, args)
+    clusters_df = check_core_gene_duplications(
+        clusters_df, 
+        fragments_dict, 
+        args,
+        target_coverage_threshold=0.50,
+        identity_threshold=0.50,
+        use_header_cache=False
+    )
 
     skip_refinement = getattr(args, "skip_refinement", False)
     if not skip_refinement:
