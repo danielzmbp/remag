@@ -283,7 +283,7 @@ def generate_augmented_fragments(
             "h1",
             0,
             min_contig_length,
-            num_augmentations // 2,
+            num_augmentations,
             max_overlap,
         )
         second_half_fragments = _generate_half_augmentations(
@@ -292,7 +292,7 @@ def generate_augmented_fragments(
             "h2",
             mid_point,
             min_contig_length,
-            num_augmentations - (num_augmentations // 2),
+            num_augmentations,
             max_overlap,
         )
 
