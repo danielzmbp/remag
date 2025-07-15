@@ -38,17 +38,17 @@ class SiameseNetwork(nn.Module):
             )
             
             self.coverage_encoder = nn.Sequential(
-                nn.Linear(n_coverage_features, 64),
-                nn.BatchNorm1d(64),
+                nn.Linear(n_coverage_features, 32),
+                nn.BatchNorm1d(32),
                 nn.LeakyReLU(),
                 nn.Dropout(0.05),
-                nn.Linear(64, 32),
-                nn.BatchNorm1d(32),
+                nn.Linear(32, 16),
+                nn.BatchNorm1d(16),
                 nn.LeakyReLU(),
             )
             
             # Fusion layer to combine encoded features
-            fusion_input_size = 128 + 32  # kmer_encoder output + coverage_encoder output
+            fusion_input_size = 128 + 16  # kmer_encoder output + coverage_encoder output
             self.fusion_layer = nn.Sequential(
                 nn.Linear(fusion_input_size, 256),
                 nn.BatchNorm1d(256),

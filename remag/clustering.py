@@ -582,6 +582,91 @@ def multi_k_bacterial_removal(embeddings_df, contig_names, eukaryotic_scores=Non
         return embeddings_df, contig_names, False
 
 
+def approximate_predict_noise_points(clusterer, embeddings, cluster_labels, noise_threshold=0.3):
+    """
+    Attempt to recover noise points by predicting their cluster membership.
+    
+    Uses HDBSCAN's approximate_predict to assign noise points to existing clusters
+    if they have sufficient membership probability.
+    
+    Args:
+        clusterer: Fitted HDBSCAN clusterer with prediction_data=True
+        embeddings: Normalized embedding matrix used for clustering
+        cluster_labels: Original cluster labels from HDBSCAN
+        noise_threshold: Minimum membership probability to assign noise point to cluster
+    
+    Returns:
+        tuple: (recovered_labels, recovery_stats)
+            - recovered_labels: Updated cluster labels with recovered noise points
+            - recovery_stats: Dict with recovery statistics
+    """
+    logger.debug(f"Attempting to recover noise points with threshold={noise_threshold}")
+    
+    # Find noise points
+    noise_mask = cluster_labels == -1
+    noise_indices = np.where(noise_mask)[0]
+    n_noise_original = len(noise_indices)
+    
+    if n_noise_original == 0:
+        logger.debug("No noise points to recover")
+        return cluster_labels.copy(), {"noise_original": 0, "noise_recovered": 0, "noise_remaining": 0}
+    
+    logger.debug(f"Found {n_noise_original} noise points to attempt recovery")
+    
+    # Get noise point embeddings
+    noise_embeddings = embeddings[noise_indices]
+    
+    # Use approximate_predict to get cluster probabilities for noise points
+    try:
+        predicted_labels, membership_strengths = hdbscan.approximate_predict(clusterer, noise_embeddings)
+        logger.debug(f"Approximate predict completed for {len(predicted_labels)} noise points")
+    except Exception as e:
+        logger.warning(f"Failed to run approximate_predict: {e}")
+        return cluster_labels.copy(), {"noise_original": n_noise_original, "noise_recovered": 0, "noise_remaining": n_noise_original}
+    
+    # Create copy of original labels for modification
+    recovered_labels = cluster_labels.copy()
+    
+    # Track recovery statistics
+    recovered_count = 0
+    cluster_assignments = {}
+    
+    # Assign noise points to clusters if membership strength is above threshold
+    for i, (pred_label, membership_strength) in enumerate(zip(predicted_labels, membership_strengths)):
+        noise_idx = noise_indices[i]
+        
+        # Only assign if prediction is confident and not still noise
+        if pred_label != -1 and membership_strength >= noise_threshold:
+            recovered_labels[noise_idx] = pred_label
+            recovered_count += 1
+            
+            # Track which clusters received recovered points
+            if pred_label not in cluster_assignments:
+                cluster_assignments[pred_label] = 0
+            cluster_assignments[pred_label] += 1
+            
+            logger.debug(f"Recovered noise point {noise_idx} -> cluster {pred_label} (strength: {membership_strength:.3f})")
+    
+    n_noise_remaining = n_noise_original - recovered_count
+    
+    # Log recovery results
+    logger.info(f"Noise point recovery: {recovered_count}/{n_noise_original} points recovered ({n_noise_remaining} remain noise)")
+    
+    if cluster_assignments:
+        assignment_summary = ", ".join([f"cluster_{k}: {v}" for k, v in sorted(cluster_assignments.items())])
+        logger.debug(f"Recovery distribution: {assignment_summary}")
+    
+    recovery_stats = {
+        "noise_original": n_noise_original,
+        "noise_recovered": recovered_count,
+        "noise_remaining": n_noise_remaining,
+        "recovery_rate": recovered_count / n_noise_original if n_noise_original > 0 else 0.0,
+        "cluster_assignments": cluster_assignments
+    }
+    
+    return recovered_labels, recovery_stats
+
+
 def cluster_contigs(embeddings_df, fragments_dict, args):
     """Main clustering function that orchestrates the clustering process."""
     clusters_contigs_path = os.path.join(args.output, "clusters_contigs.csv")
@@ -685,7 +770,7 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
         min_samples=args.min_samples,
         metric="euclidean",
         cluster_selection_method="eom",
-        cluster_selection_epsilon=0.5,
+        cluster_selection_epsilon=0,
         prediction_data=True,
         core_dist_n_jobs=-1,
     )
@@ -695,6 +780,38 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
     n_noise = sum(1 for label in cluster_labels if label == -1)
     cluster_sizes = np.bincount(cluster_labels[cluster_labels >= 0]) if n_clusters > 0 else []
     logger.info(f"HDBSCAN result: {n_clusters} clusters, {n_noise} noise points, sizes: {cluster_sizes.tolist() if hasattr(cluster_sizes, 'tolist') else list(cluster_sizes)}")
+    
+    # Attempt to recover noise points using approximate_predict
+    if n_noise > 0 and not getattr(args, 'skip_noise_recovery', False):
+        logger.info(f"Attempting to recover {n_noise} noise points using approximate_predict...")
+        
+        # Get noise recovery threshold from args or use default
+        noise_threshold = getattr(args, 'noise_recovery_threshold', 0.3)
+        
+        recovered_labels, recovery_stats = approximate_predict_noise_points(
+            clusterer, norm_data, cluster_labels, noise_threshold
+        )
+        
+        # Update cluster labels with recovered points
+        cluster_labels = recovered_labels
+        
+        # Update statistics
+        n_clusters_after = len(set(cluster_labels)) - (1 if -1 in cluster_labels else 0)
+        n_noise_after = sum(1 for label in cluster_labels if label == -1)
+        cluster_sizes_after = np.bincount(cluster_labels[cluster_labels >= 0]) if n_clusters_after > 0 else []
+        
+        logger.info(f"After noise recovery: {n_clusters_after} clusters, {n_noise_after} noise points, sizes: {cluster_sizes_after.tolist() if hasattr(cluster_sizes_after, 'tolist') else list(cluster_sizes_after)}")
+        
+        # Save recovery statistics
+        recovery_stats_path = os.path.join(args.output, "noise_recovery_stats.json")
+        with open(recovery_stats_path, 'w') as f:
+            json.dump(recovery_stats, f, indent=2)
+        logger.debug(f"Saved noise recovery statistics to {recovery_stats_path}")
+    else:
+        if n_noise == 0:
+            logger.debug("No noise points found - skipping noise recovery")
+        else:
+            logger.debug("Noise recovery disabled - skipping approximate_predict")
     
     formatted_labels = [
         f"bin_{label}" if label != -1 else "noise" for label in cluster_labels
@@ -837,90 +954,3 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
     logger.info(f"Saved contig-level clusters to {clusters_contigs_path}")
 
     return clusters_df
-
-
-def cluster_contigs_kmeans_refinement(
-    embeddings_df, fragments_dict, args, bin_id, duplication_results
-):
-    """
-    Cluster contigs using K-means where the number of clusters is based on
-    the number of duplicated single copy core genes found in the original bin.
-
-    Args:
-        embeddings_df: DataFrame with embeddings for contigs
-        fragments_dict: Dictionary containing fragment sequences
-        args: Command line arguments
-        bin_id: Original bin ID being refined
-        duplication_results: Results from core gene duplication analysis
-
-    Returns:
-        DataFrame with cluster assignments
-    """
-    logger.info(f"Performing K-means clustering for {bin_id} refinement...")
-
-    # Get the number of duplicated core genes for this bin
-    if bin_id in duplication_results:
-        duplicated_genes_count = len(duplication_results[bin_id]["duplicated_genes"])
-        total_genes_found = duplication_results[bin_id]["total_genes_found"]
-        logger.info(
-            f"Bin {bin_id} has {duplicated_genes_count} duplicated core genes out of {total_genes_found} total genes"
-        )
-    else:
-        logger.warning(f"No duplication results found for {bin_id}, using default k=2")
-        duplicated_genes_count = 2
-
-    # Determine number of clusters for K-means
-    # Use the number of duplicated core genes as the number of clusters
-    # This assumes each duplicated gene represents a different species/strain
-    n_clusters = max(2, duplicated_genes_count)  # Minimum of 2 clusters
-
-    # If we have more contigs than duplicated genes, cap the clusters
-    n_contigs = len(embeddings_df)
-    if n_contigs < n_clusters:
-        logger.warning(
-            f"Number of contigs ({n_contigs}) is less than number of duplicated genes ({duplicated_genes_count}), reducing clusters to {n_contigs}"
-        )
-        n_clusters = max(2, n_contigs - 1)  # Keep at least 2 clusters if possible
-
-    logger.info(f"Using K-means with {n_clusters} clusters for {bin_id} refinement")
-
-    # Normalize the embeddings data for clustering
-    logger.debug("Normalizing embeddings for clustering...")
-    norm_data = normalize(embeddings_df.values, norm="l2")
-
-    # Apply K-means clustering
-    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
-    cluster_labels = kmeans.fit_predict(norm_data)
-
-    # Format cluster labels
-    formatted_labels = [f"bin_{label}" for label in cluster_labels]
-
-    # Create clusters dataframe with original contig names (without fragment suffixes)
-    original_contig_names = [
-        extract_base_contig_name(name) for name in embeddings_df.index
-    ]
-    contig_clusters_df = pd.DataFrame(
-        {"contig": original_contig_names, "cluster": formatted_labels}
-    )
-
-    # Count number of clusters and contigs per cluster
-    n_clusters_found = len(contig_clusters_df["cluster"].unique())
-    logger.info(f"K-means refinement found {n_clusters_found} clusters")
-
-    # Count contigs per cluster
-    logger.debug("Counting contigs per cluster...")
-    cluster_contig_counts = {}
-    for _, row in contig_clusters_df.iterrows():
-        cluster_id = row["cluster"]
-        contig_name = row["contig"]
-
-        if cluster_id not in cluster_contig_counts:
-            cluster_contig_counts[cluster_id] = set()
-        cluster_contig_counts[cluster_id].add(contig_name)
-
-    logger.debug("Contigs per cluster:")
-    for cluster_id, original_contigs in cluster_contig_counts.items():
-        count = len(original_contigs)
-        logger.debug(f"  Cluster {cluster_id}: {count} contigs")
-
-    return contig_clusters_df
