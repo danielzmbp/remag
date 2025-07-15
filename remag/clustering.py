@@ -689,7 +689,7 @@ def soft_clustering_noise_recovery(clusterer, embeddings, cluster_labels, noise_
         "noise_recovered": recovered_count,
         "noise_remaining": n_noise_remaining,
         "recovery_rate": recovered_count / n_noise_original if n_noise_original > 0 else 0.0,
-        "cluster_assignments": cluster_assignments,
+        "cluster_assignments": {int(k): v for k, v in cluster_assignments.items()},
         "membership_threshold": noise_threshold,
         "membership_stats": {
             "min": float(memberships_array.min()) if len(memberships_array) > 0 else 0.0,

@@ -247,7 +247,7 @@ def validate_coverage_options(ctx, param, value):
 @click.option(
     "--noise-recovery-threshold",
     type=click.FloatRange(min=0.1, max=0.8),
-    default=0.2,
+    default=0.5,
     show_default=True,
     help="Similarity threshold for recovering noise points into bins (lower = more permissive).",
 )
