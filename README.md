@@ -1,6 +1,6 @@
 # REMAG
 
-Metagenomic binning using neural networks and contrastive learning.
+**RE**covery of eukaryotic genomes using contrastive learning. A specialized metagenomic binning tool designed for recovering high-quality eukaryotic genomes from mixed prokaryotic-eukaryotic samples.
 
 ## Quick Start
 
@@ -34,7 +34,7 @@ conda create -n remag python=3.9
 conda activate remag
 
 # Clone and install
-git clone https://github.com/yourusername/remag.git
+git clone https://github.com/danielzmbp/remag.git
 cd remag
 pip install .
 ```
@@ -47,7 +47,7 @@ conda create -n remag python=3.9
 conda activate remag
 
 # Clone and install in development mode
-git clone https://github.com/yourusername/remag.git
+git clone https://github.com/danielzmbp/remag.git
 cd remag
 pip install -e ".[dev]"
 ```
@@ -87,21 +87,39 @@ python remag.py -f contigs.fasta -b alignments.bam -o output_directory
 python -m remag -f contigs.fasta -b alignments.bam -o output_directory
 ```
 
+## How REMAG Works
+
+REMAG uses a sophisticated multi-stage pipeline specifically designed for eukaryotic genome recovery:
+
+1. **Bacterial Pre-filtering**: Uses the integrated 4CAC classifier to identify and optionally remove bacterial contigs
+2. **Feature Extraction**: Combines k-mer composition (4-mers) with coverage profiles, using fragment-based augmentation
+3. **Representation Learning**: Trains a Siamese neural network with contrastive learning to generate meaningful contig embeddings
+4. **Multi-Stage Clustering**: 
+   - K-means pre-clustering to separate bacterial clusters
+   - HDBSCAN clustering on eukaryotic contigs
+   - Noise point recovery using approximate prediction
+5. **Chimera Detection**: Analyzes large contigs for chimeric sequences using embedding similarity
+6. **Quality Assessment**: Uses miniprot against eukaryotic core genes to detect contamination
+7. **Iterative Refinement**: Splits contaminated bins based on core gene duplications
+
 ## Features
 
-- **Neural Networks**: Utilizes deep learning with contrastive learning for contig representation
-- **Multi-modal Feature Extraction**: Combines k-mer frequencies, coverage profiles, and fragment features
-- **Bacterial Filtering**: Includes integrated 4CAC classifier (xgbclass) for sequence classification
-- **Advanced Clustering**: HDBSCAN clustering with optional K-means pre-clustering
-- **Quality Control**: Built-in bin refinement and quality assessment
-- **Flexible Input**: Supports both BAM files and TSV coverage data
-- **Rich Visualization**: UMAP projections and interactive plots
+- **Eukaryotic-Centric Design**: Specifically optimized for recovering eukaryotic genomes from mixed samples
+- **Contrastive Learning**: Uses Siamese neural networks with InfoNCE loss for contig representation learning
+- **Multi-Modal Features**: Combines k-mer composition (4-mers) with coverage profiles using dual encoders
+- **Bacterial Pre-filtering**: Integrated 4CAC classifier removes bacterial contigs before main clustering
+- **Advanced Clustering**: Multi-stage clustering with K-means pre-clustering and HDBSCAN
+- **Chimera Detection**: Specialized detection of chimeric contigs using embedding similarity analysis
+- **Quality-Driven Refinement**: Iterative bin splitting based on core gene duplications (miniprot + eukaryotic database)
+- **Noise Recovery**: Advanced noise point recovery using approximate HDBSCAN prediction
+- **Flexible Input**: Supports multiple BAM files (each representing a sample) and TSV coverage data
+- **Rich Visualization**: UMAP projections with clustering results
 
 ## Options
 
 ```
   -f, --fasta PATH                Input FASTA file with contigs to bin. Can be gzipped.  [required]
-  -b, --bam PATH                  Input BAM file(s) for coverage calculation. Must be indexed. Each BAM represents a sample. Supports glob patterns (e.g., '*.bam', 'sample_*.bam').
+  -b, --bam PATH                  Input BAM file(s) for coverage calculation. Must be indexed. Each BAM represents a sample. Supports space-separated files or glob patterns (e.g., '*.bam', 'sample_*.bam').
   -t, --tsv PATH                  Input TSV file(s) with coverage information.
   -o, --output PATH               Output directory for results.  [required]
   --epochs INTEGER RANGE          Training epochs for neural network.  [default: 400; 1<=x<=10000]
@@ -109,14 +127,14 @@ python -m remag -f contigs.fasta -b alignments.bam -o output_directory
   --embedding-dim INTEGER RANGE   Embedding dimension for contrastive learning.  [default: 256; 32<=x<=512]
   --nce-temperature FLOAT RANGE   Temperature for InfoNCE loss.  [default: 0.07; 0.01<=x<=1.0]
   --min-cluster-size INTEGER RANGE
-                                  Minimum fragments per cluster.  [default: 2; 1<=x<=1000]
-  --min-samples INTEGER RANGE     Minimum samples for HDBSCAN core points.  [default: 1; 1<=x<=1000]
+                                  Minimum fragments per cluster.  [default: 5; 1<=x<=1000]
+  --min-samples INTEGER RANGE     Minimum samples for HDBSCAN core points.  [default: 3; 1<=x<=1000]
   --min-contig-length INTEGER RANGE
                                   Minimum contig length in bp.  [default: 1000; 500<=x<=50000]
   --max-positive-pairs INTEGER RANGE
                                   Maximum positive pairs for contrastive learning.  [default: 5000000; 10000<=x<=50000000]
   -c, --cores INTEGER RANGE       Number of CPU cores.  [default: 8; 1<=x<=128]
-  --min-bin-size INTEGER RANGE    Minimum bin size in bp.  [default: 50000; 50000<=x<=10000000]
+  --min-bin-size INTEGER RANGE    Minimum bin size in bp.  [default: 100000; 50000<=x<=10000000]
   -v, --verbose                   Enable verbose logging.
   --enable-preclustering / --disable-preclustering
                                   Enable K-means pre-clustering to remove bacterial contigs before HDBSCAN.  [default: enable-preclustering]
@@ -126,6 +144,9 @@ python -m remag -f contigs.fasta -b alignments.bam -o output_directory
                                   Maximum refinement rounds.  [default: 2; 1<=x<=5]
   --num-augmentations INTEGER RANGE
                                   Number of random fragments per contig.  [default: 8; 0<=x<=64]
+  --skip-chimera-detection        Skip chimera detection for large contigs.
+  --noise-recovery-threshold FLOAT RANGE
+                                  Threshold for noise point recovery (lower = more permissive).  [default: 0.3; 0.1<=x<=0.9]
   -h, --help                      Show this message and exit.
 ```
 
@@ -144,19 +165,20 @@ REMAG produces several output files:
 ## Requirements
 
 - Python 3.8+
-- PyTorch
-- scikit-learn
-- XGBoost (for 4CAC classifier)
-- HDBSCAN
-- UMAP
-- pandas
-- numpy
-- matplotlib
-- pysam
-- loguru
-- tqdm
-- rich-click
-- joblib
+- PyTorch (≥1.11.0)
+- scikit-learn (≥1.0.0)
+- XGBoost (≥1.6.0) - for 4CAC classifier
+- HDBSCAN (≥0.8.28)
+- UMAP (≥0.5.0)
+- pandas (≥1.3.0)
+- numpy (≥1.21.0)
+- matplotlib (≥3.5.0)
+- pysam (≥0.18.0)
+- loguru (≥0.6.0)
+- tqdm (≥4.62.0)
+- rich-click (≥1.5.0)
+- joblib (≥1.1.0)
+- pyarrow (≥10.0.0)
 
 The package includes the pre-trained 4CAC classifier models for bacterial sequence filtering. The 4CAC classifier code is adapted from the [Shamir-Lab/4CAC repository](https://github.com/Shamir-Lab/4CAC).
 
