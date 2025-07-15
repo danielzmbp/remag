@@ -141,7 +141,7 @@ def validate_coverage_options(ctx, param, value):
 @click.option(
     "--epochs",
     type=click.IntRange(min=50, max=2000),
-    default=400,
+    default=200,
     show_default=True,
     help="Number of training epochs for contrastive learning model.",
 )
