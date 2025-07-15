@@ -344,7 +344,7 @@ def train_siamese_network(features_df, args):
     ).to(device)
     criterion = InfoNCELoss(temperature=args.nce_temperature)
 
-    base_learning_rate = 5e-3
+    base_learning_rate = 1e-3
     scaled_lr = (args.batch_size / 256) * base_learning_rate
     warmup_epochs = 5
     warmup_start_lr = scaled_lr * 0.1

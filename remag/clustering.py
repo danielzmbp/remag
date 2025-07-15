@@ -582,7 +582,7 @@ def multi_k_bacterial_removal(embeddings_df, contig_names, eukaryotic_scores=Non
         return embeddings_df, contig_names, False
 
 
-def approximate_predict_noise_points(clusterer, embeddings, cluster_labels, noise_threshold=0.3):
+def approximate_predict_noise_points(clusterer, embeddings, cluster_labels, noise_threshold=0.2):
     """
     Attempt to recover noise points by predicting their cluster membership.
     
@@ -631,9 +631,18 @@ def approximate_predict_noise_points(clusterer, embeddings, cluster_labels, nois
     recovered_count = 0
     cluster_assignments = {}
     
+    # Log membership strength distribution for debugging
+    if len(membership_strengths) > 0:
+        strengths_array = np.array(membership_strengths)
+        logger.debug(f"Membership strengths - min: {strengths_array.min():.3f}, max: {strengths_array.max():.3f}, mean: {strengths_array.mean():.3f}, median: {np.median(strengths_array):.3f}")
+        logger.debug(f"Threshold: {noise_threshold:.3f}, points above threshold: {np.sum(strengths_array >= noise_threshold)}")
+    
     # Assign noise points to clusters if membership strength is above threshold
     for i, (pred_label, membership_strength) in enumerate(zip(predicted_labels, membership_strengths)):
         noise_idx = noise_indices[i]
+        
+        # Log all predictions for debugging
+        logger.debug(f"Noise point {noise_idx}: pred_label={pred_label}, membership_strength={membership_strength:.3f}, threshold={noise_threshold:.3f}")
         
         # Only assign if prediction is confident and not still noise
         if pred_label != -1 and membership_strength >= noise_threshold:
@@ -786,7 +795,7 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
         logger.info(f"Attempting to recover {n_noise} noise points using approximate_predict...")
         
         # Get noise recovery threshold from args or use default
-        noise_threshold = getattr(args, 'noise_recovery_threshold', 0.3)
+        noise_threshold = getattr(args, 'noise_recovery_threshold', 0.2)
         
         recovered_labels, recovery_stats = approximate_predict_noise_points(
             clusterer, norm_data, cluster_labels, noise_threshold
