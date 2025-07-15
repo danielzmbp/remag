@@ -55,6 +55,30 @@ click.rich_click.STYLE_ERRORS_SUGGESTION = "magenta italic"
 click.rich_click.ERRORS_SUGGESTION = (
     "Try running the '--help' flag for more information."
 )
+click.rich_click.OPTION_GROUPS = {
+    "remag": [
+        {
+            "name": "Input/Output",
+            "options": ["--fasta", "--bam", "--tsv", "--output"],
+        },
+        {
+            "name": "Contrastive Learning",
+            "options": ["--epochs", "--batch-size", "--embedding-dim", "--nce-temperature", "--max-positive-pairs", "--num-augmentations"],
+        },
+        {
+            "name": "Clustering",
+            "options": ["--min-cluster-size", "--min-samples", "--enable-preclustering", "--noise-recovery-threshold"],
+        },
+        {
+            "name": "Filtering & Processing",
+            "options": ["--min-contig-length", "--min-bin-size", "--skip-bacterial-filter", "--skip-refinement", "--max-refinement-rounds", "--skip-chimera-detection"],
+        },
+        {
+            "name": "General",
+            "options": ["--cores", "--verbose"],
+        },
+    ]
+}
 
 
 def validate_coverage_options(ctx, param, value):
@@ -89,7 +113,7 @@ def validate_coverage_options(ctx, param, value):
     "--fasta",
     required=True,
     type=click.Path(exists=True, readable=True, path_type=str),
-    help="Input FASTA file with contigs to bin. Can be gzipped.",
+    help="Input FASTA file containing contigs to bin into genomes. Supports gzipped files.",
 )
 @click.option(
     "-b",
@@ -97,7 +121,7 @@ def validate_coverage_options(ctx, param, value):
     type=SpaceSeparatedPaths(),
     multiple=True,
     callback=validate_coverage_options,
-    help="Input BAM file(s) for coverage calculation. Must be indexed. Each BAM represents a sample. Supports space-separated files or glob patterns (e.g., '*.bam', 'sample_*.bam').",
+    help="Indexed BAM files for coverage calculation. Each file represents one sample. Supports space-separated paths and glob patterns (e.g., '*.bam').",
 )
 @click.option(
     "-t",
@@ -105,120 +129,127 @@ def validate_coverage_options(ctx, param, value):
     multiple=True,
     type=click.Path(exists=True, readable=True, path_type=str),
     callback=validate_coverage_options,
-    help="Input TSV file(s) with coverage information.",
+    help="Pre-computed coverage data in TSV format. Alternative to BAM files.",
 )
 @click.option(
     "-o",
     "--output",
     required=True,
     type=click.Path(path_type=str),
-    help="Output directory for results.",
+    help="Output directory for binning results and intermediate files.",
 )
 @click.option(
     "--epochs",
-    type=click.IntRange(min=1, max=10000),
+    type=click.IntRange(min=50, max=2000),
     default=400,
     show_default=True,
-    help="Training epochs for neural network.",
+    help="Number of training epochs for contrastive learning model.",
 )
 @click.option(
     "--batch-size",
-    type=click.IntRange(min=32, max=8192),
+    type=click.IntRange(min=64, max=2048),
     default=512,
     show_default=True,
-    help="Batch size for training.",
+    help="Batch size for contrastive learning training.",
 )
 @click.option(
     "--embedding-dim",
-    type=click.IntRange(min=32, max=512),
+    type=click.IntRange(min=64, max=512),
     default=256,
     show_default=True,
-    help="Embedding dimension for contrastive learning.",
+    help="Dimensionality of contig embeddings in contrastive learning.",
 )
 @click.option(
     "--nce-temperature",
-    type=click.FloatRange(min=0.01, max=1.0),
+    type=click.FloatRange(min=0.01, max=0.5),
     default=0.07,
     show_default=True,
-    help="Temperature for InfoNCE loss.",
+    help="Temperature parameter for InfoNCE contrastive loss function.",
 )
 @click.option(
     "--min-cluster-size",
-    type=click.IntRange(min=1, max=1000),
+    type=click.IntRange(min=2, max=100),
     default=5,
     show_default=True,
-    help="Minimum fragments per cluster.",
+    help="Minimum number of contigs required to form a cluster/bin.",
 )
 @click.option(
     "--min-samples",
-    type=click.IntRange(min=1, max=1000),
-    default=3,
+    type=click.IntRange(min=1, max=100),
+    default=None,
     show_default=True,
-    help="Minimum samples for HDBSCAN core points.",
+    help="Minimum samples for HDBSCAN core points. If None, uses min-cluster-size.",
 )
 @click.option(
     "--min-contig-length",
-    type=click.IntRange(min=500, max=50000),
+    type=click.IntRange(min=500, max=10000),
     default=1000,
     show_default=True,
-    help="Minimum contig length in bp.",
+    help="Minimum contig length in base pairs for binning consideration.",
 )
 @click.option(
     "--max-positive-pairs",
-    type=click.IntRange(min=10000, max=50000000),
+    type=click.IntRange(min=100000, max=10000000),
     default=5000000,
     show_default=True,
-    help="Maximum positive pairs for contrastive learning.",
+    help="Maximum number of positive pairs for contrastive learning training.",
 )
 @click.option(
     "-c",
     "--cores",
-    type=click.IntRange(min=1, max=128),
+    type=click.IntRange(min=1, max=64),
     default=8,
     show_default=True,
-    help="Number of CPU cores.",
+    help="Number of CPU cores to use for parallel processing.",
 )
 @click.option(
     "--min-bin-size",
-    type=click.IntRange(min=50000, max=10000000),
+    type=click.IntRange(min=50000, max=5000000),
     default=100000,
     show_default=True,
-    help="Minimum bin size in bp.",
+    help="Minimum total bin size in base pairs for output.",
 )
-@click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging.")
+@click.option("--verbose", "-v", is_flag=True, help="Enable detailed logging output.")
 @click.option(
     "--enable-preclustering/--disable-preclustering",
     default=True,
-    help="Enable K-means pre-clustering to remove bacterial contigs before HDBSCAN.",
+    help="Use K-means pre-clustering to filter bacterial contigs before main clustering.",
 )
 @click.option(
     "--skip-bacterial-filter",
     is_flag=True,
-    help="Skip bacterial contig filtering (4CAC classifier + contrastive learning).",
+    help="Skip bacterial contig filtering using 4CAC classifier and contrastive learning.",
 )
 @click.option(
     "--skip-refinement",
     is_flag=True,
-    help="Skip bin refinement.",
+    help="Skip post-clustering bin refinement and optimization.",
 )
 @click.option(
     "--max-refinement-rounds",
-    type=click.IntRange(min=1, max=5),
+    type=click.IntRange(min=1, max=10),
     default=2,
     show_default=True,
-    help="Maximum refinement rounds.",
+    help="Maximum number of iterative bin refinement rounds.",
 )
 @click.option(
     "--num-augmentations",
-    type=click.IntRange(min=0, max=64),
+    type=click.IntRange(min=1, max=32),
     default=8,
     show_default=True,
-    help="Number of random fragments per contig.",
+    help="Number of random fragments per contig for data augmentation.",
 )
 @click.option(
     "--skip-chimera-detection",
     is_flag=True,
-    help="Skip chimera detection for large contigs.",
+    help="Skip chimeric contig detection and splitting for large contigs.",
+)
+@click.option(
+    "--noise-recovery-threshold",
+    type=click.FloatRange(min=0.1, max=0.8),
+    default=0.3,
+    show_default=True,
+    help="Similarity threshold for recovering noise points into bins (lower = more permissive).",
 )
 def main_cli(
     fasta,
@@ -242,6 +273,7 @@ def main_cli(
     max_refinement_rounds,
     num_augmentations,
     skip_chimera_detection,
+    noise_recovery_threshold,
 ):
     """REMAG: Recovery of eukaryotic genomes using contrastive learning."""
     args = argparse.Namespace(
@@ -266,6 +298,7 @@ def main_cli(
         max_refinement_rounds=max_refinement_rounds,
         num_augmentations=num_augmentations,
         skip_chimera_detection=skip_chimera_detection,
+        noise_recovery_threshold=noise_recovery_threshold,
     )
     run_remag(args)
 
