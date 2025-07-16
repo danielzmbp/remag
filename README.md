@@ -94,10 +94,9 @@ REMAG uses a sophisticated multi-stage pipeline specifically designed for eukary
 1. **Bacterial Pre-filtering**: Uses the integrated 4CAC classifier to identify and optionally remove bacterial contigs
 2. **Feature Extraction**: Combines k-mer composition (4-mers) with coverage profiles, using fragment-based augmentation
 3. **Representation Learning**: Trains a Siamese neural network with contrastive learning to generate meaningful contig embeddings
-4. **Multi-Stage Clustering**: 
-   - K-means pre-clustering to separate bacterial clusters
-   - HDBSCAN clustering on eukaryotic contigs
-   - Noise point recovery using approximate prediction
+4. **HDBSCAN Clustering**: 
+   - HDBSCAN clustering on contig embeddings
+   - Noise point recovery using soft clustering
 5. **Chimera Detection**: Analyzes large contigs for chimeric sequences using embedding similarity
 6. **Quality Assessment**: Uses miniprot against eukaryotic core genes to detect contamination
 7. **Iterative Refinement**: Splits contaminated bins based on core gene duplications
@@ -108,7 +107,7 @@ REMAG uses a sophisticated multi-stage pipeline specifically designed for eukary
 - **Contrastive Learning**: Uses Siamese neural networks with InfoNCE loss for contig representation learning
 - **Multi-Modal Features**: Combines k-mer composition (4-mers) with coverage profiles using dual encoders
 - **Bacterial Pre-filtering**: Integrated 4CAC classifier removes bacterial contigs before main clustering
-- **Advanced Clustering**: Multi-stage clustering with K-means pre-clustering and HDBSCAN
+- **Advanced Clustering**: HDBSCAN clustering with soft noise recovery
 - **Chimera Detection**: Specialized detection of chimeric contigs using embedding similarity analysis
 - **Quality-Driven Refinement**: Iterative bin splitting based on core gene duplications (miniprot + eukaryotic database)
 - **Noise Recovery**: Advanced noise point recovery using approximate HDBSCAN prediction
@@ -119,7 +118,7 @@ REMAG uses a sophisticated multi-stage pipeline specifically designed for eukary
 
 ```
   -f, --fasta PATH                Input FASTA file with contigs to bin. Can be gzipped.  [required]
-  -b, --bam PATH                  Input BAM file(s) for coverage calculation. Must be indexed. Each BAM represents a sample. Supports space-separated files or glob patterns (e.g., '*.bam', 'sample_*.bam').
+  -b, --bam PATH                  Input BAM file(s) for coverage calculation. Must be indexed. Each BAM represents a sample. Supports space-separated files or glob patterns (e.g., "*.bam", "sample_*.bam"). Use quotes around glob patterns.
   -t, --tsv PATH                  Input TSV file(s) with coverage information.
   -o, --output PATH               Output directory for results.  [required]
   --epochs INTEGER RANGE          Training epochs for neural network.  [default: 400; 1<=x<=10000]
@@ -136,8 +135,6 @@ REMAG uses a sophisticated multi-stage pipeline specifically designed for eukary
   -c, --cores INTEGER RANGE       Number of CPU cores.  [default: 8; 1<=x<=128]
   --min-bin-size INTEGER RANGE    Minimum bin size in bp.  [default: 100000; 50000<=x<=10000000]
   -v, --verbose                   Enable verbose logging.
-  --enable-preclustering / --disable-preclustering
-                                  Enable K-means pre-clustering to remove bacterial contigs before HDBSCAN.  [default: enable-preclustering]
   --skip-bacterial-filter         Skip bacterial contig filtering (4CAC classifier + contrastive learning).
   --skip-refinement               Skip bin refinement.
   --max-refinement-rounds INTEGER RANGE

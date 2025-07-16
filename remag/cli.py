@@ -67,7 +67,7 @@ click.rich_click.OPTION_GROUPS = {
         },
         {
             "name": "Clustering",
-            "options": ["--min-cluster-size", "--min-samples", "--enable-preclustering", "--noise-recovery-threshold"],
+            "options": ["--min-cluster-size", "--min-samples", "--noise-recovery-threshold"],
         },
         {
             "name": "Filtering & Processing",
@@ -211,11 +211,6 @@ def validate_coverage_options(ctx, param, value):
 )
 @click.option("--verbose", "-v", is_flag=True, help="Enable detailed logging output.")
 @click.option(
-    "--enable-preclustering/--disable-preclustering",
-    default=True,
-    help="Use K-means pre-clustering to filter bacterial contigs before main clustering.",
-)
-@click.option(
     "--skip-bacterial-filter",
     is_flag=True,
     help="Skip bacterial contig filtering using 4CAC classifier and contrastive learning.",
@@ -246,7 +241,7 @@ def validate_coverage_options(ctx, param, value):
 )
 @click.option(
     "--noise-recovery-threshold",
-    type=click.FloatRange(min=0.1, max=0.8),
+    type=click.FloatRange(min=0, max=0.8),
     default=0.5,
     show_default=True,
     help="Similarity threshold for recovering noise points into bins (lower = more permissive).",
@@ -267,7 +262,6 @@ def main_cli(
     cores,
     min_bin_size,
     verbose,
-    enable_preclustering,
     skip_bacterial_filter,
     skip_refinement,
     max_refinement_rounds,
@@ -292,7 +286,6 @@ def main_cli(
         cores=cores,
         min_bin_size=min_bin_size,
         verbose=verbose,
-        enable_preclustering=enable_preclustering,
         skip_bacterial_filter=skip_bacterial_filter,
         skip_refinement=skip_refinement,
         max_refinement_rounds=max_refinement_rounds,

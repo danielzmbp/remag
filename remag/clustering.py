@@ -10,8 +10,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import umap
-from sklearn.cluster import KMeans
-from sklearn.metrics import silhouette_score
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.preprocessing import normalize
 from loguru import logger
@@ -20,6 +18,132 @@ import json
 
 from .utils import extract_base_contig_name
 import torch
+
+
+def _permutation_anova_chimera_test(h1_embeddings, h2_embeddings, n_permutations=1000, alpha=0.05):
+    """
+    Perform permutation ANOVA to test if inter-group distances are significantly
+    larger than intra-group distances, indicating a possible chimeric contig.
+    
+    Args:
+        h1_embeddings: numpy array of embeddings for h1 fragments (n_h1 x embedding_dim)
+        h2_embeddings: numpy array of embeddings for h2 fragments (n_h2 x embedding_dim) 
+        n_permutations: number of permutations for the test
+        alpha: significance level
+        
+    Returns:
+        tuple: (is_chimeric, results_dict)
+    """
+    # Calculate pairwise cosine distances within and between groups
+    
+    # Intra-group distances (within h1)
+    h1_intra_distances = []
+    if len(h1_embeddings) > 1:
+        for i in range(len(h1_embeddings)):
+            for j in range(i+1, len(h1_embeddings)):
+                # Cosine distance = 1 - cosine_similarity
+                cos_sim = cosine_similarity([h1_embeddings[i]], [h1_embeddings[j]])[0][0]
+                h1_intra_distances.append(1 - cos_sim)
+    
+    # Intra-group distances (within h2)
+    h2_intra_distances = []
+    if len(h2_embeddings) > 1:
+        for i in range(len(h2_embeddings)):
+            for j in range(i+1, len(h2_embeddings)):
+                cos_sim = cosine_similarity([h2_embeddings[i]], [h2_embeddings[j]])[0][0]
+                h2_intra_distances.append(1 - cos_sim)
+    
+    # Inter-group distances (between h1 and h2)
+    inter_distances = []
+    for i in range(len(h1_embeddings)):
+        for j in range(len(h2_embeddings)):
+            cos_sim = cosine_similarity([h1_embeddings[i]], [h2_embeddings[j]])[0][0]
+            inter_distances.append(1 - cos_sim)
+    
+    # Combine all distances with group labels
+    all_distances = h1_intra_distances + h2_intra_distances + inter_distances
+    group_labels = (['intra'] * (len(h1_intra_distances) + len(h2_intra_distances)) + 
+                   ['inter'] * len(inter_distances))
+    
+    if not all_distances or len(set(group_labels)) < 2:
+        # Not enough data for test
+        return False, {
+            'f_statistic': 0.0,
+            'p_value': 1.0,
+            'mean_intra_distance': 0.0,
+            'mean_inter_distance': 0.0,
+            'n_intra_pairs': len(h1_intra_distances) + len(h2_intra_distances),
+            'n_inter_pairs': len(inter_distances),
+            'test_performed': False
+        }
+    
+    # Calculate observed F-statistic
+    def calculate_f_statistic(distances, labels):
+        intra_distances = [d for d, l in zip(distances, labels) if l == 'intra']
+        inter_distances = [d for d, l in zip(distances, labels) if l == 'inter']
+        
+        if not intra_distances or not inter_distances:
+            return 0.0
+            
+        mean_intra = np.mean(intra_distances)
+        mean_inter = np.mean(inter_distances)
+        mean_total = np.mean(distances)
+        
+        # Between-group sum of squares
+        ss_between = (len(intra_distances) * (mean_intra - mean_total)**2 + 
+                     len(inter_distances) * (mean_inter - mean_total)**2)
+        
+        # Within-group sum of squares
+        ss_within = (sum((d - mean_intra)**2 for d in intra_distances) + 
+                    sum((d - mean_inter)**2 for d in inter_distances))
+        
+        # Degrees of freedom
+        df_between = 1  # 2 groups - 1
+        df_within = len(distances) - 2
+        
+        if df_within <= 0 or ss_within == 0:
+            return 0.0
+            
+        # F-statistic
+        ms_between = ss_between / df_between
+        ms_within = ss_within / df_within
+        
+        return ms_between / ms_within if ms_within > 0 else 0.0
+    
+    observed_f = calculate_f_statistic(all_distances, group_labels)
+    
+    # Permutation test
+    extreme_count = 0
+    all_indices = list(range(len(all_distances)))
+    
+    for _ in range(n_permutations):
+        # Randomly shuffle group labels
+        shuffled_labels = np.random.permutation(group_labels)
+        permuted_f = calculate_f_statistic(all_distances, shuffled_labels)
+        
+        if permuted_f >= observed_f:
+            extreme_count += 1
+    
+    p_value = extreme_count / n_permutations
+    is_chimeric = p_value < alpha
+    
+    # Calculate summary statistics
+    intra_distances_all = [d for d, l in zip(all_distances, group_labels) if l == 'intra']
+    inter_distances_all = [d for d, l in zip(all_distances, group_labels) if l == 'inter']
+    
+    results = {
+        'f_statistic': float(observed_f),
+        'p_value': float(p_value),
+        'mean_intra_distance': float(np.mean(intra_distances_all)) if intra_distances_all else 0.0,
+        'mean_inter_distance': float(np.mean(inter_distances_all)) if inter_distances_all else 0.0,
+        'n_intra_pairs': len(intra_distances_all),
+        'n_inter_pairs': len(inter_distances_all),
+        'test_performed': True,
+        'alpha': alpha,
+        'n_permutations': n_permutations
+    }
+    
+    return is_chimeric, results
 
 
 def detect_chimeric_contigs(embeddings_df, clusters_df, args):
@@ -167,29 +291,10 @@ def detect_chimeric_contigs(embeddings_df, clusters_df, args):
         h1_mean = h1_embeddings.mean(axis=0)
         h2_mean = h2_embeddings.mean(axis=0)
         
-        # Calculate intra-half similarity (consistency within each half)
-        h1_intra_similarity = 0.0
-        h2_intra_similarity = 0.0
-        
-        if len(halves['h1']) > 1:
-            h1_similarities = []
-            for i in range(len(halves['h1'])):
-                for j in range(i+1, len(halves['h1'])):
-                    sim = cosine_similarity([h1_embeddings.iloc[i]], [h1_embeddings.iloc[j]])[0][0]
-                    h1_similarities.append(sim)
-            h1_intra_similarity = np.mean(h1_similarities) if h1_similarities else 1.0
-        else:
-            h1_intra_similarity = 1.0
-            
-        if len(halves['h2']) > 1:
-            h2_similarities = []
-            for i in range(len(halves['h2'])):
-                for j in range(i+1, len(halves['h2'])):
-                    sim = cosine_similarity([h2_embeddings.iloc[i]], [h2_embeddings.iloc[j]])[0][0]
-                    h2_similarities.append(sim)
-            h2_intra_similarity = np.mean(h2_similarities) if h2_similarities else 1.0
-        else:
-            h2_intra_similarity = 1.0
+        # Perform permutation ANOVA to test for significant differences between halves
+        is_possible_chimera, anova_results = _permutation_anova_chimera_test(
+            h1_embeddings.values, h2_embeddings.values, n_permutations=1000
+        )
         
         # Find cluster assignment for this base contig
         base_contig_cluster = None
@@ -197,31 +302,23 @@ def detect_chimeric_contigs(embeddings_df, clusters_df, args):
         if not cluster_row.empty:
             base_contig_cluster = cluster_row.iloc[0]['cluster']
         
-        # Chimera detection based on intra-similarity differences
-        # Real chimeras should have very different intra-similarities in h1 and h2
-        intra_similarity_difference = abs(h1_intra_similarity - h2_intra_similarity)
-        
-        # Additional check: fragment count balance
+        # Calculate fragment count balance for additional info
         fragment_ratio = min(len(halves['h1']), len(halves['h2'])) / max(len(halves['h1']), len(halves['h2']))
         
-        # Simple chimera detection: large difference in intra-similarities and reasonable fragment balance
-        is_possible_chimera = (intra_similarity_difference > 0.3 and fragment_ratio > 0.2)
-        
         chimera_results[base_contig] = {
-            'h1_intra_similarity': float(h1_intra_similarity),
-            'h2_intra_similarity': float(h2_intra_similarity),
-            'intra_similarity_difference': float(intra_similarity_difference),
             'h1_fragment_count': int(len(halves['h1'])),
             'h2_fragment_count': int(len(halves['h2'])),
             'fragment_ratio': float(fragment_ratio),
             'cluster_assignment': str(base_contig_cluster) if base_contig_cluster is not None else None,
-            'is_possible_chimera': bool(is_possible_chimera)
+            'is_possible_chimera': bool(is_possible_chimera),
+            **anova_results  # Include all ANOVA statistics
         }
         
         if is_possible_chimera:
             logger.info(f"Possible chimeric contig detected: {base_contig} "
-                       f"(h1_intra: {h1_intra_similarity:.3f}, h2_intra: {h2_intra_similarity:.3f}, "
-                       f"difference: {intra_similarity_difference:.3f}, fragment_ratio: {fragment_ratio:.3f})")
+                       f"(p-value: {anova_results['p_value']:.4f}, "
+                       f"F-stat: {anova_results['f_statistic']:.3f}, "
+                       f"fragment_ratio: {fragment_ratio:.3f})")
     
     # Save results
     results_path = os.path.join(args.output, "chimera_detection_results.json")
@@ -297,292 +394,11 @@ def plot_umap(umap_df, output_dir):
     logger.info(f"Saved UMAP plot to {plot_path}")
 
 
-def detect_two_cluster_structure(embeddings, contig_names, eukaryotic_scores=None, threshold=0.3):
-    """
-    Returns True if data shows strong 2-cluster structure using silhouette analysis
-    and eukaryotic score separation.
-    
-    Args:
-        embeddings: Normalized embedding matrix
-        contig_names: List of contig names corresponding to embeddings
-        eukaryotic_scores: Dict mapping contig names to eukaryotic scores
-        threshold: Minimum silhouette score to consider well-separated
-    
-    Returns:
-        tuple: (bool, int or None) - (True if strong 2-cluster structure detected, eukaryotic cluster index)
-    """
-    logger.debug(f"Testing 2-cluster structure with {len(embeddings)} contigs")
-    
-    if len(embeddings) < 4:
-        logger.debug("Insufficient data for 2-cluster detection (< 4 contigs)")
-        return False, None
-    
-    # Test k=2 clustering
-    kmeans_2 = KMeans(n_clusters=2, random_state=42, n_init=10)
-    labels_2 = kmeans_2.fit_predict(embeddings)
-    
-    # Calculate silhouette score
-    sil_score = silhouette_score(embeddings, labels_2)
-    
-    # Check cluster size balance (avoid 99%/1% splits)
-    cluster_sizes = np.bincount(labels_2)
-    min_cluster_ratio = min(cluster_sizes) / len(labels_2)
-    
-    logger.debug(f"2-cluster analysis: silhouette={sil_score:.3f}, sizes={cluster_sizes.tolist()}, min_ratio={min_cluster_ratio:.3f}")
-    
-    # Check eukaryotic score separation if available
-    eukaryotic_cluster = None
-    eukaryotic_separation_good = True
-    
-    if eukaryotic_scores:
-        cluster_0_eukar_scores = []
-        cluster_1_eukar_scores = []
-        
-        for i, contig_name in enumerate(contig_names):
-            # Remove fragment suffixes if present
-            clean_contig_name = extract_base_contig_name(contig_name)
-            if clean_contig_name in eukaryotic_scores:
-                eukar_score = eukaryotic_scores[clean_contig_name]
-                if labels_2[i] == 0:
-                    cluster_0_eukar_scores.append(eukar_score)
-                else:
-                    cluster_1_eukar_scores.append(eukar_score)
-        
-        if cluster_0_eukar_scores and cluster_1_eukar_scores:
-            mean_eukar_0 = np.mean(cluster_0_eukar_scores)
-            mean_eukar_1 = np.mean(cluster_1_eukar_scores)
-            
-            # Count high-confidence eukaryotes (>0.95) in each cluster
-            high_conf_eukar_0 = sum(1 for score in cluster_0_eukar_scores if score > 0.95)
-            high_conf_eukar_1 = sum(1 for score in cluster_1_eukar_scores if score > 0.95)
-            
-            logger.debug(f"Eukaryotic separation: cluster_0={mean_eukar_0:.3f}({high_conf_eukar_0}), cluster_1={mean_eukar_1:.3f}({high_conf_eukar_1})")
-            
-            # Check if both clusters have high-confidence eukaryotes (bad separation)
-            if high_conf_eukar_0 > 0 and high_conf_eukar_1 > 0:
-                logger.debug("Both clusters contain high-confidence eukaryotes - poor separation")
-                eukaryotic_separation_good = False
-            else:
-                # Identify which cluster has more/higher eukaryotic content
-                if mean_eukar_0 > mean_eukar_1:
-                    eukaryotic_cluster = 0
-                else:
-                    eukaryotic_cluster = 1
-                
-                # Require meaningful separation (>0.2 difference in mean scores)
-                score_separation = abs(mean_eukar_0 - mean_eukar_1)
-                if score_separation < 0.2:
-                    eukaryotic_separation_good = False
-                logger.debug(f"Eukaryotic cluster: {eukaryotic_cluster}, score_separation: {score_separation:.3f}")
-    else:
-        logger.debug("No eukaryotic scores - skipping separation check")
-    
-    is_good_structure = (sil_score > threshold and 
-                        min_cluster_ratio > 0.1 and 
-                        eukaryotic_separation_good)
-    
-    logger.info(f"2-cluster decision: silhouette={sil_score:.3f}, ratio={min_cluster_ratio:.3f}, eukar_sep={eukaryotic_separation_good} => use_kmeans={is_good_structure}")
-    
-    
-    return is_good_structure, eukaryotic_cluster
 
 
-def multi_k_bacterial_removal(embeddings_df, contig_names, eukaryotic_scores=None, k_values=[3, 4, 5]):
-    """
-    Use multi-k K-means clustering to identify and remove purely bacterial clusters.
-    Only removes clusters with zero high-confidence eukaryotes, preserving all eukaryotic material.
-    
-    Args:
-        embeddings_df: DataFrame with contig embeddings
-        contig_names: List of contig names
-        eukaryotic_scores: Dict mapping contig names to eukaryotic scores
-        k_values: List of k-values to try
-    
-    Returns:
-        tuple: (filtered_embeddings_df, filtered_contig_names, success_flag)
-    """
-    logger.info(f"Starting multi-k pre-clustering with k={k_values}...")
-    logger.debug(f"Input: {len(embeddings_df)} embeddings, {len(contig_names)} contig names")
-    
-    # Check if we have eukaryotic scores
-    if not eukaryotic_scores:
-        logger.warning("No eukaryotic scores available - skipping pre-clustering")
-        return embeddings_df, contig_names, False
-    
-    # Debug: Analyze eukaryotic score distribution
-    logger.debug(f"Eukaryotic scores loaded for {len(eukaryotic_scores)} contigs")
-    scores_array = np.array(list(eukaryotic_scores.values()))
-    logger.debug(f"Eukaryotic score distribution: min={scores_array.min():.3f}, max={scores_array.max():.3f}, mean={scores_array.mean():.3f}")
-    
-    # Count contigs by score thresholds
-    high_conf_count = sum(1 for s in scores_array if s > 0.95)
-    medium_conf_count = sum(1 for s in scores_array if 0.7 <= s <= 0.95)
-    low_conf_count = sum(1 for s in scores_array if 0.3 <= s < 0.7)
-    bacterial_count = sum(1 for s in scores_array if s < 0.3)
-    
-    logger.debug(f"Score distribution: high_conf(>0.95)={high_conf_count}, medium_conf(0.7-0.95)={medium_conf_count}, low_conf(0.3-0.7)={low_conf_count}, bacterial(<0.3)={bacterial_count}")
-    
-    # Check how many contig names have corresponding eukaryotic scores
-    matched_scores = 0
-    for contig_name in contig_names:
-        clean_name = extract_base_contig_name(contig_name)
-        if clean_name in eukaryotic_scores:
-            matched_scores += 1
-    
-    logger.debug(f"Contig name matching: {matched_scores}/{len(contig_names)} contigs have eukaryotic scores")
-    
-    # Normalize embeddings for clustering
-    norm_data = normalize(embeddings_df.values, norm="l2")
-    
-    best_removal_ratio = 0
-    best_kept_indices = None
-    best_k = None
-    max_bacterial_content = 0
-    
-    for k in k_values:
-        if len(embeddings_df) <= k:
-            logger.debug(f"Skipping k={k} (insufficient data: {len(embeddings_df)} contigs)")
-            continue
-            
-        
-        # Perform K-means clustering
-        kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
-        labels = kmeans.fit_predict(norm_data)
-        
-        cluster_sizes = np.bincount(labels)
-        
-        # Analyze each cluster for high-confidence eukaryotes
-        clusters_to_keep = set()
-        cluster_analysis = {}
-        
-        logger.debug(f"K={k}: Analyzing {k} clusters from {len(contig_names)} contigs")
-        
-        for cluster_id in range(k):
-            cluster_mask = labels == cluster_id
-            cluster_indices = np.where(cluster_mask)[0]
-            cluster_size = len(cluster_indices)
-            
-            # Count high-confidence eukaryotes in this cluster
-            high_conf_eukaryotes = 0
-            medium_conf_eukaryotes = 0
-            low_conf_eukaryotes = 0
-            bacterial_contigs = 0
-            total_with_scores = 0
-            score_sum = 0.0
-            
-            for idx in cluster_indices:
-                contig_name = extract_base_contig_name(contig_names[idx])
-                if contig_name in eukaryotic_scores:
-                    total_with_scores += 1
-                    score = eukaryotic_scores[contig_name]
-                    score_sum += score
-                    
-                    if score > 0.95:
-                        high_conf_eukaryotes += 1
-                    elif score >= 0.7:
-                        medium_conf_eukaryotes += 1
-                    elif score >= 0.3:
-                        low_conf_eukaryotes += 1
-                    else:
-                        bacterial_contigs += 1
-            
-            cluster_size_ratio = cluster_size / len(contig_names)
-            avg_score = score_sum / total_with_scores if total_with_scores > 0 else 0.0
-            
-            cluster_analysis[cluster_id] = {
-                'size': cluster_size,
-                'size_ratio': cluster_size_ratio,
-                'high_conf_eukaryotes': high_conf_eukaryotes,
-                'medium_conf_eukaryotes': medium_conf_eukaryotes,
-                'low_conf_eukaryotes': low_conf_eukaryotes,
-                'bacterial_contigs': bacterial_contigs,
-                'total_with_scores': total_with_scores,
-                'avg_score': avg_score
-            }
-            
-            # Log detailed cluster analysis
-            logger.debug(f"K={k}, cluster {cluster_id}: size={cluster_size} ({cluster_size_ratio:.1%}), "
-                        f"high_conf={high_conf_eukaryotes}, medium_conf={medium_conf_eukaryotes}, "
-                        f"low_conf={low_conf_eukaryotes}, bacterial={bacterial_contigs}, "
-                        f"avg_score={avg_score:.3f}, with_scores={total_with_scores}/{cluster_size}")
-            
-            # Keep clusters with ANY high-confidence eukaryotes
-            # Also keep reasonably sized clusters (>5% of total) even without high-conf eukaryotes
-            # (they might contain lower-scoring eukaryotes)
-            keep_high_conf = high_conf_eukaryotes > 0
-            keep_size = cluster_size_ratio > 0.05
-            
-            if keep_high_conf or keep_size:
-                clusters_to_keep.add(cluster_id)
-                reason = []
-                if keep_high_conf:
-                    reason.append(f"{high_conf_eukaryotes} high-conf eukaryotes")
-                if keep_size:
-                    reason.append(f"{cluster_size_ratio:.1%} size")
-                logger.debug(f"K={k}, cluster {cluster_id}: KEEPING ({', '.join(reason)})")
-            else:
-                logger.debug(f"K={k}, cluster {cluster_id}: REMOVING (0 high-conf eukaryotes, {cluster_size_ratio:.1%} size)")
-        
-        # Calculate how much we can safely remove
-        kept_indices = np.where(np.isin(labels, list(clusters_to_keep)))[0]
-        removal_ratio = 1 - (len(kept_indices) / len(contig_names))
-        
-        removed_clusters = set(range(k)) - clusters_to_keep
-        logger.debug(f"K={k}: keeping clusters {sorted(clusters_to_keep)}, removing clusters {sorted(removed_clusters)}")
-        logger.debug(f"K={k}: keeping {len(clusters_to_keep)}/{k} clusters, removal={removal_ratio:.1%} ({len(contig_names) - len(kept_indices)}/{len(contig_names)} contigs)")
-        
-        # Show what we're removing
-        if removed_clusters:
-            for cluster_id in removed_clusters:
-                analysis = cluster_analysis[cluster_id]
-                logger.debug(f"K={k}: removing cluster {cluster_id} with {analysis['bacterial_contigs']} bacterial contigs, "
-                            f"avg_score={analysis['avg_score']:.3f}, size={analysis['size']}")
-        
-        # Track the best k-value (one that removes the most purely bacterial content)
-        if removal_ratio > best_removal_ratio:
-            best_removal_ratio = removal_ratio
-            best_kept_indices = kept_indices
-            best_k = k
-            logger.debug(f"New best k={k} with removal={removal_ratio:.1%}")
-        
-        # Track maximum bacterial content found across all k-values
-        max_bacterial_content = max(max_bacterial_content, removal_ratio)
-    
-    # Final decision logging
-    logger.debug(f"Final decision: best_k={best_k}, best_removal_ratio={best_removal_ratio:.1%}, "
-                f"max_bacterial_content={max_bacterial_content:.1%}")
-    logger.debug(f"Decision threshold: removal_ratio > 0.02 (2%)")
-    
-    # Apply the best clustering result if it removes a meaningful amount
-    if best_kept_indices is not None and best_removal_ratio > 0.02:  # At least 2% removal
-        filtered_embeddings_df = embeddings_df.iloc[best_kept_indices]
-        filtered_contig_names = [contig_names[i] for i in best_kept_indices]
-        
-        bacteria_removed = len(contig_names) - len(filtered_contig_names)
-        logger.info(f"Pre-clustering successful: k={best_k}, kept {len(filtered_contig_names)}/{len(contig_names)} contigs ({best_removal_ratio:.1%} bacterial removal)")
-        
-        # Show final statistics of what was removed
-        if best_k:
-            # Re-run k-means with best_k to get final cluster assignments for logging
-            kmeans_final = KMeans(n_clusters=best_k, random_state=42, n_init=10)
-            final_labels = kmeans_final.fit_predict(norm_data)
-            final_clusters_to_keep = set()
-            
-            # Determine which clusters were kept
-            for i, kept_idx in enumerate(best_kept_indices):
-                final_clusters_to_keep.add(final_labels[kept_idx])
-            
-            removed_clusters_final = set(range(best_k)) - final_clusters_to_keep
-            logger.debug(f"Final removal: removed clusters {sorted(removed_clusters_final)} from k={best_k} clustering")
-        
-        return filtered_embeddings_df, filtered_contig_names, True
-    else:
-        logger.info(f"Pre-clustering: minimal bacterial content found ({max_bacterial_content:.1%})")
-        logger.debug(f"Reason: best_removal_ratio={best_removal_ratio:.1%} <= 0.02 threshold")
-        return embeddings_df, contig_names, False
 
 
-def soft_clustering_noise_recovery(clusterer, embeddings, cluster_labels, noise_threshold=0.2, output_dir=None):
+def soft_clustering_noise_recovery(clusterer, embeddings, cluster_labels, noise_threshold=0.5, output_dir=None):
     """
     Recover noise points using HDBSCAN's soft clustering membership vectors.
     
@@ -763,58 +579,11 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
         high_conf_count = sum(1 for s in scores_array if s > 0.95)
         logger.info(f"Eukaryotic classification: {len(eukaryotic_scores)} scored, {high_conf_count} high-confidence (>0.95)")
 
-    # Check if data shows strong 2-cluster structure for pre-filtering
-    is_good_structure, eukaryotic_cluster = detect_two_cluster_structure(
-        norm_data, contig_names, eukaryotic_scores
-    )
-    
-    # Always use HDBSCAN clustering, but pre-filter using 2-cluster structure if detected
+    # Use HDBSCAN clustering directly on all data
     logger.info("Using HDBSCAN clustering")
-    
-    # Apply pre-clustering - either the existing multi-k method or 2-cluster filtering
-    if is_good_structure and eukaryotic_cluster is not None:
-        logger.info("Detected well-separated eukaryotic/bacterial structure - filtering small cluster before HDBSCAN")
-        
-        # Use K-means with 2 clusters to identify and filter out the small cluster
-        kmeans = KMeans(n_clusters=2, random_state=42, n_init=10)
-        cluster_labels = kmeans.fit_predict(norm_data)
-        cluster_dist = np.bincount(cluster_labels)
-        logger.debug(f"K-means pre-filtering result: {cluster_dist.tolist()}")
-        
-        # Keep only the eukaryotic cluster for HDBSCAN
-        eukaryotic_indices = [i for i, label in enumerate(cluster_labels) if label == eukaryotic_cluster]
-        logger.info(f"Keeping eukaryotic cluster {eukaryotic_cluster} ({len(eukaryotic_indices)} contigs) for HDBSCAN, filtering out cluster {1-eukaryotic_cluster} ({cluster_dist[1-eukaryotic_cluster]} contigs)")
-        
-        # Filter data for HDBSCAN
-        filtered_embeddings_df = embeddings_df.iloc[eukaryotic_indices]
-        filtered_contig_names = [contig_names[i] for i in eukaryotic_indices]
-        norm_data = normalize(filtered_embeddings_df.values, norm="l2")
-        working_contig_names = filtered_contig_names
-        working_embeddings_df = filtered_embeddings_df
-        precluster_success = True
-        
-    elif args.enable_preclustering:
-        logger.info("Pre-clustering enabled - attempting bacterial removal...")
-        filtered_embeddings_df, filtered_contig_names, precluster_success = multi_k_bacterial_removal(
-            embeddings_df, contig_names, eukaryotic_scores
-        )
-        
-        if precluster_success:
-            # Update data for HDBSCAN to use only the filtered (eukaryotic) contigs
-            logger.info("Using pre-filtered eukaryotic contigs for HDBSCAN")
-            norm_data = normalize(filtered_embeddings_df.values, norm="l2")
-            working_contig_names = filtered_contig_names
-            working_embeddings_df = filtered_embeddings_df
-        else:
-            logger.info("Pre-clustering had minimal effect, using original data for HDBSCAN")
-            working_contig_names = contig_names
-            working_embeddings_df = embeddings_df
-            precluster_success = False
-    else:
-        logger.debug("Pre-clustering disabled")
-        working_contig_names = contig_names
-        working_embeddings_df = embeddings_df
-        precluster_success = False
+    working_contig_names = contig_names
+    working_embeddings_df = embeddings_df
+    precluster_success = False
     
     # Create HDBSCAN clusterer
     logger.info(f"Running HDBSCAN on {len(working_contig_names)} contigs (min_cluster_size={args.min_cluster_size}, min_samples={args.min_samples})")
@@ -839,7 +608,7 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
         logger.info(f"Attempting to recover {n_noise} noise points using soft clustering...")
         
         # Get noise recovery threshold from args or use default
-        noise_threshold = getattr(args, 'noise_recovery_threshold', 0.2)
+        noise_threshold = getattr(args, 'noise_recovery_threshold', 0.5)
         
         recovered_labels, recovery_stats = soft_clustering_noise_recovery(
             clusterer, norm_data, cluster_labels, noise_threshold, args.output
@@ -871,44 +640,12 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
     ]
 
     # Create clusters dataframe with original contig names (without .original suffix)
-    if precluster_success and 'working_contig_names' in locals() and working_contig_names != contig_names:
-        # Pre-clustering was used, need to map back to all original contigs
-        logger.debug("Mapping pre-clustered results back to all contigs")
-        
-        # Create mapping for filtered contigs
-        working_original_names = [extract_base_contig_name(name) for name in working_contig_names]
-        filtered_clusters_df = pd.DataFrame(
-            {"contig": working_original_names, "cluster": formatted_labels}
-        )
-        
-        # Create full mapping including contigs that were filtered out as noise
-        all_original_names = [extract_base_contig_name(name) for name in embeddings_df.index]
-        all_clusters = []
-        
-        for original_name in all_original_names:
-            cluster_assignment = filtered_clusters_df[
-                filtered_clusters_df["contig"] == original_name
-            ]["cluster"]
-            if not cluster_assignment.empty:
-                all_clusters.append(cluster_assignment.iloc[0])
-            else:
-                all_clusters.append("noise")  # Contigs removed by pre-clustering
-        
-        contig_clusters_df = pd.DataFrame(
-            {"contig": all_original_names, "cluster": all_clusters}
-        )
-        
-        removed_by_precluster = sum(1 for cluster in all_clusters if cluster == "noise") - sum(1 for label in formatted_labels if label == "noise")
-        if removed_by_precluster > 0:
-            logger.debug(f"Additional {removed_by_precluster} contigs marked as noise by pre-clustering")
-    else:
-        # No pre-clustering or pre-clustering failed, use original approach
-        original_contig_names = [
-            extract_base_contig_name(name) for name in embeddings_df.index
-        ]
-        contig_clusters_df = pd.DataFrame(
-            {"contig": original_contig_names, "cluster": formatted_labels}
-        )
+    original_contig_names = [
+        extract_base_contig_name(name) for name in embeddings_df.index
+    ]
+    contig_clusters_df = pd.DataFrame(
+        {"contig": original_contig_names, "cluster": formatted_labels}
+    )
 
     # Use contig-level clusters directly
     clusters_df = contig_clusters_df
@@ -943,18 +680,10 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
         count = len(original_contigs)
         logger.debug(f"  Cluster {cluster_id}: {count} contigs")
 
-    # Use UMAP for visualization - use the same data that was actually clustered
+    # Use UMAP for visualization
     logger.debug("Performing UMAP dimensionality reduction for visualization...")
-    
-    # Determine which embeddings to use for UMAP based on what was actually clustered
-    if precluster_success and 'working_embeddings_df' in locals() and working_embeddings_df is not embeddings_df:
-        # Pre-clustering was used and successful, use filtered data for UMAP
-        umap_embeddings_df = working_embeddings_df
-        logger.debug(f"Using pre-filtered data for UMAP: {umap_embeddings_df.shape[0]} contigs")
-    else:
-        # No pre-clustering or pre-clustering failed, use original data
-        umap_embeddings_df = embeddings_df
-        logger.debug(f"Using original data for UMAP: {umap_embeddings_df.shape[0]} contigs")
+    umap_embeddings_df = embeddings_df
+    logger.debug(f"Using original data for UMAP: {umap_embeddings_df.shape[0]} contigs")
     
     # Create UMAP reducer
     reducer = umap.UMAP(
