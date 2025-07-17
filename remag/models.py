@@ -18,11 +18,52 @@ from loguru import logger
 
 
 class SiameseNetwork(nn.Module):
-    def __init__(self, input_size=None, embedding_dim=128, n_kmer_features=None, n_coverage_features=None):
+    def __init__(self, input_size=None, embedding_dim=128, n_kmer_features=None, n_coverage_features=None, n_lm_features=None):
         super(SiameseNetwork, self).__init__()
         
-        if n_kmer_features is not None and n_coverage_features is not None:
+        if n_lm_features is not None and n_coverage_features is not None:
+            # Language model + coverage features architecture
             self.dual_encoder = True
+            self.use_language_model = True
+            self.n_lm_features = n_lm_features
+            self.n_coverage_features = n_coverage_features
+            
+            # Language model feature encoder (768 -> 256)
+            self.lm_encoder = nn.Sequential(
+                nn.Linear(n_lm_features, 512),
+                nn.BatchNorm1d(512),
+                nn.LeakyReLU(),
+                nn.Dropout(0.1),
+                nn.Linear(512, 256),
+                nn.BatchNorm1d(256),
+                nn.LeakyReLU(),
+            )
+            
+            # Coverage encoder (same as before)
+            self.coverage_encoder = nn.Sequential(
+                nn.Linear(n_coverage_features, 32),
+                nn.BatchNorm1d(32),
+                nn.LeakyReLU(),
+                nn.Dropout(0.05),
+                nn.Linear(32, 16),
+                nn.BatchNorm1d(16),
+                nn.LeakyReLU(),
+            )
+            
+            # Fusion layer to combine encoded features
+            fusion_input_size = 256 + 16  # lm_encoder output + coverage_encoder output
+            self.fusion_layer = nn.Sequential(
+                nn.Linear(fusion_input_size, 256),
+                nn.BatchNorm1d(256),
+                nn.LeakyReLU(),
+                nn.Dropout(0.05),
+                nn.Linear(256, embedding_dim),
+            )
+            
+        elif n_kmer_features is not None and n_coverage_features is not None:
+            # Original k-mer + coverage features architecture
+            self.dual_encoder = True
+            self.use_language_model = False
             self.n_kmer_features = n_kmer_features
             self.n_coverage_features = n_coverage_features
             
@@ -59,8 +100,9 @@ class SiameseNetwork(nn.Module):
             
         else:
             self.dual_encoder = False
+            self.use_language_model = False
             if input_size is None:
-                raise ValueError("Either provide input_size or both n_kmer_features and n_coverage_features")
+                raise ValueError("Either provide input_size or both n_kmer_features and n_coverage_features or n_lm_features and n_coverage_features")
             
             # The base network generates the representations for downstream tasks
             self.base_network = nn.Sequential(
@@ -82,18 +124,32 @@ class SiameseNetwork(nn.Module):
     def _encode_features(self, x):
         """Internal method to encode features using appropriate architecture"""
         if self.dual_encoder:
-            # Split input into k-mer and coverage features
-            kmer_features = x[:, :self.n_kmer_features]
-            coverage_features = x[:, self.n_kmer_features:]
-            
-            # Encode each feature type separately
-            kmer_encoded = self.kmer_encoder(kmer_features)
-            coverage_encoded = self.coverage_encoder(coverage_features)
-            
-            # Fuse the encoded features
-            fused_features = torch.cat([kmer_encoded, coverage_encoded], dim=1)
-            representation = self.fusion_layer(fused_features)
-            return representation
+            if self.use_language_model:
+                # Split input into language model and coverage features
+                lm_features = x[:, :self.n_lm_features]
+                coverage_features = x[:, self.n_lm_features:]
+                
+                # Encode each feature type separately
+                lm_encoded = self.lm_encoder(lm_features)
+                coverage_encoded = self.coverage_encoder(coverage_features)
+                
+                # Fuse the encoded features
+                fused_features = torch.cat([lm_encoded, coverage_encoded], dim=1)
+                representation = self.fusion_layer(fused_features)
+                return representation
+            else:
+                # Split input into k-mer and coverage features
+                kmer_features = x[:, :self.n_kmer_features]
+                coverage_features = x[:, self.n_kmer_features:]
+                
+                # Encode each feature type separately
+                kmer_encoded = self.kmer_encoder(kmer_features)
+                coverage_encoded = self.coverage_encoder(coverage_features)
+                
+                # Fuse the encoded features
+                fused_features = torch.cat([kmer_encoded, coverage_encoded], dim=1)
+                representation = self.fusion_layer(fused_features)
+                return representation
         else:
             return self.base_network(x)
 
@@ -279,34 +335,58 @@ def train_siamese_network(features_df, args):
     """Train the Siamese network for contrastive learning."""
     model_path = os.path.join(args.output, "siamese_model.pt")
 
-    # Feature dimensions: k-mer features are always 136, coverage is 2 per sample
-    n_kmer_features = 136
+    # Determine feature dimensions based on input
     total_features = features_df.shape[1]
-    n_coverage_features = total_features - n_kmer_features
     
-    logger.info(f"Using dual-encoder architecture: {n_kmer_features} k-mer + {n_coverage_features} coverage features")
-
-    # Load existing model if available
-    if os.path.exists(model_path):
-        logger.info(f"Loading existing model from {model_path}")
-        device = torch.device(
-            "cuda"
-            if torch.cuda.is_available()
-            else "mps" if torch.backends.mps.is_available() else "cpu"
-        )
-        model = SiameseNetwork(
-            n_kmer_features=n_kmer_features, 
-            n_coverage_features=n_coverage_features,
-            embedding_dim=args.embedding_dim
-        ).to(device)
-        model.load_state_dict(torch.load(model_path, weights_only=False))
-        return model
+    # Check if we have language model features (768 dimensions)
+    if hasattr(args, 'use_language_model') and args.use_language_model:
+        n_lm_features = 768  # Language model embedding dimension
+        n_coverage_features = total_features - n_lm_features
+        logger.info(f"Using dual-encoder architecture: {n_lm_features} language model + {n_coverage_features} coverage features")
+        
+        # Load existing model if available
+        if os.path.exists(model_path):
+            logger.info(f"Loading existing model from {model_path}")
+            device = torch.device(
+                "cuda"
+                if torch.cuda.is_available()
+                else "mps" if torch.backends.mps.is_available() else "cpu"
+            )
+            model = SiameseNetwork(
+                n_lm_features=n_lm_features, 
+                n_coverage_features=n_coverage_features,
+                embedding_dim=args.embedding_dim
+            ).to(device)
+            model.load_state_dict(torch.load(model_path, weights_only=False))
+            return model
+    else:
+        # Original k-mer features
+        n_kmer_features = 136
+        n_coverage_features = total_features - n_kmer_features
+        logger.info(f"Using dual-encoder architecture: {n_kmer_features} k-mer + {n_coverage_features} coverage features")
+        
+        # Load existing model if available
+        if os.path.exists(model_path):
+            logger.info(f"Loading existing model from {model_path}")
+            device = torch.device(
+                "cuda"
+                if torch.cuda.is_available()
+                else "mps" if torch.backends.mps.is_available() else "cpu"
+            )
+            model = SiameseNetwork(
+                n_kmer_features=n_kmer_features, 
+                n_coverage_features=n_coverage_features,
+                embedding_dim=args.embedding_dim
+            ).to(device)
+            model.load_state_dict(torch.load(model_path, weights_only=False))
+            return model
 
     device = torch.device(
         "cuda"
         if torch.cuda.is_available()
-        else "mps" if torch.backends.mps.is_available() else "cpu"
+        else "mps" if torch.backends.mps.is_available() and torch.backends.mps.is_built() else "cpu"
     )
+    logger.info(f"Using device: {device}")
 
     # Create dataset and dataloader
     dataset = SequenceDataset(features_df, max_positive_pairs=args.max_positive_pairs)
@@ -337,11 +417,18 @@ def train_siamese_network(features_df, args):
         return model
 
     # Initialize model, loss, optimizer
-    model = SiameseNetwork(
-        n_kmer_features=n_kmer_features,
-        n_coverage_features=n_coverage_features,
-        embedding_dim=args.embedding_dim
-    ).to(device)
+    if hasattr(args, 'use_language_model') and args.use_language_model:
+        model = SiameseNetwork(
+            n_lm_features=n_lm_features,
+            n_coverage_features=n_coverage_features,
+            embedding_dim=args.embedding_dim
+        ).to(device)
+    else:
+        model = SiameseNetwork(
+            n_kmer_features=n_kmer_features,
+            n_coverage_features=n_coverage_features,
+            embedding_dim=args.embedding_dim
+        ).to(device)
     criterion = InfoNCELoss(temperature=args.nce_temperature)
 
     base_learning_rate = 1e-3
@@ -451,8 +538,9 @@ def generate_embeddings(model, features_df, args):
     device = torch.device(
         "cuda"
         if torch.cuda.is_available()
-        else "mps" if torch.backends.mps.is_available() else "cpu"
+        else "mps" if torch.backends.mps.is_available() and torch.backends.mps.is_built() else "cpu"
     )
+    logger.info(f"Using device: {device}")
     logger.debug(f"Using device: {device}")
 
     model.eval()
@@ -488,8 +576,9 @@ def generate_embeddings_for_fragments(model, features_df, fragment_names, args):
     device = torch.device(
         "cuda"
         if torch.cuda.is_available()
-        else "mps" if torch.backends.mps.is_available() else "cpu"
+        else "mps" if torch.backends.mps.is_available() and torch.backends.mps.is_built() else "cpu"
     )
+    logger.info(f"Using device: {device}")
     logger.debug(f"Using device: {device}")
 
     model.eval()

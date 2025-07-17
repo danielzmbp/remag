@@ -438,6 +438,24 @@ def soft_clustering_noise_recovery(clusterer, embeddings, cluster_labels, noise_
         logger.warning(f"Failed to generate soft clustering vectors: {e}")
         return cluster_labels.copy(), {"noise_original": n_noise_original, "noise_recovered": 0, "noise_remaining": n_noise_original}
     
+    # Get valid cluster indices (non-noise clusters from original clustering)
+    valid_clusters = np.unique(cluster_labels[cluster_labels >= 0])
+    
+    # Check if we have any clusters to recover to
+    if len(valid_clusters) == 0:
+        logger.debug("No valid clusters found - cannot recover noise points")
+        return cluster_labels.copy(), {"noise_original": n_noise_original, "noise_recovered": 0, "noise_remaining": n_noise_original}
+    
+    # Check if soft clustering vectors are available and have the right shape
+    if soft_clusters is None or soft_clusters.size == 0:
+        logger.debug("No soft clustering vectors available - cannot recover noise points")
+        return cluster_labels.copy(), {"noise_original": n_noise_original, "noise_recovered": 0, "noise_remaining": n_noise_original}
+    
+    # For cases where no clusters were found, soft_clusters may be empty or have wrong shape
+    if len(soft_clusters.shape) < 2 or soft_clusters.shape[1] == 0:
+        logger.debug("Soft clustering vectors have invalid shape - cannot recover noise points")
+        return cluster_labels.copy(), {"noise_original": n_noise_original, "noise_recovered": 0, "noise_remaining": n_noise_original}
+    
     # Create copy of original labels for modification
     recovered_labels = cluster_labels.copy()
     
@@ -446,16 +464,32 @@ def soft_clustering_noise_recovery(clusterer, embeddings, cluster_labels, noise_
     cluster_assignments = {}
     noise_analysis = []
     
-    # Get valid cluster indices (non-noise clusters from original clustering)
-    valid_clusters = np.unique(cluster_labels[cluster_labels >= 0])
-    
     # Analyze each noise point
     for noise_idx in noise_indices:
         membership_vector = soft_clusters[noise_idx]
         
+        # Check if membership vector is valid
+        if membership_vector is None or len(membership_vector) == 0:
+            logger.debug(f"Invalid membership vector for noise point {noise_idx}")
+            continue
+        
+        # Ensure membership vector is numpy array
+        if not isinstance(membership_vector, np.ndarray):
+            membership_vector = np.array(membership_vector)
+        
+        # Check if membership vector has valid values
+        if membership_vector.size == 0 or not np.any(np.isfinite(membership_vector)):
+            logger.debug(f"Empty or invalid membership vector for noise point {noise_idx}")
+            continue
+        
         # Find the cluster with highest membership probability
         best_cluster_internal_idx = np.argmax(membership_vector)
         best_membership = membership_vector[best_cluster_internal_idx]
+        
+        # Check if best membership is valid
+        if not np.isfinite(best_membership) or best_membership <= 0:
+            logger.debug(f"Invalid best membership {best_membership} for noise point {noise_idx}")
+            continue
         
         # Map internal cluster index to actual cluster label
         # HDBSCAN's membership vectors correspond to clusters 0, 1, 2, ... in order
@@ -604,7 +638,7 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
     logger.info(f"HDBSCAN result: {n_clusters} clusters, {n_noise} noise points, sizes: {cluster_sizes.tolist() if hasattr(cluster_sizes, 'tolist') else list(cluster_sizes)}")
     
     # Attempt to recover noise points using soft clustering
-    if n_noise > 0 and not getattr(args, 'skip_noise_recovery', False):
+    if n_noise > 0 and n_clusters > 0 and not getattr(args, 'skip_noise_recovery', False):
         logger.info(f"Attempting to recover {n_noise} noise points using soft clustering...")
         
         # Get noise recovery threshold from args or use default
@@ -630,7 +664,9 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
             json.dump(recovery_stats, f, indent=2)
         logger.debug(f"Saved noise recovery statistics to {recovery_stats_path}")
     else:
-        if n_noise == 0:
+        if n_clusters == 0:
+            logger.info("Skipping noise recovery - no clusters found to recover noise points to")
+        elif n_noise == 0:
             logger.debug("No noise points found - skipping noise recovery")
         else:
             logger.debug("Noise recovery disabled - skipping soft clustering")
@@ -656,6 +692,15 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
     n_noise = final_counts.get("noise", 0)
     logger.info(f"Clustering complete: {n_clusters} clusters, {n_noise} noise contigs")
     logger.debug(f"Cluster sizes: {dict(sorted(final_counts.items()))}")
+    
+    # Provide suggestions if no clusters were found
+    if n_clusters == 0:
+        logger.warning("No clusters found! Consider adjusting clustering parameters:")
+        logger.warning("  - Decrease --min-cluster-size (current: {})".format(args.min_cluster_size))
+        logger.warning("  - Decrease --min-samples (current: {})".format(args.min_samples))
+        logger.warning("  - Increase --noise-recovery-threshold (current: {})".format(getattr(args, 'noise_recovery_threshold', 0.5)))
+        logger.warning("  - Check if your contigs are diverse enough for clustering")
+        logger.warning("  - Consider increasing the number of contigs or reducing filtering thresholds")
 
     # Save contig-level cluster assignments
     contig_clusters_df.to_csv(clusters_contigs_path, index=False)

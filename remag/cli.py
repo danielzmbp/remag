@@ -62,6 +62,10 @@ click.rich_click.OPTION_GROUPS = {
             "options": ["--fasta", "--bam", "--tsv", "--output"],
         },
         {
+            "name": "Feature Extraction",
+            "options": ["--use-language-model", "--model-path", "--device"],
+        },
+        {
             "name": "Contrastive Learning",
             "options": ["--epochs", "--batch-size", "--embedding-dim", "--nce-temperature", "--max-positive-pairs", "--num-augmentations"],
         },
@@ -246,6 +250,23 @@ def validate_coverage_options(ctx, param, value):
     show_default=True,
     help="Similarity threshold for recovering noise points into bins (lower = more permissive).",
 )
+@click.option(
+    "--use-language-model",
+    is_flag=True,
+    help="Use language model embeddings instead of k-mer frequencies for feature extraction.",
+)
+@click.option(
+    "--model-path",
+    type=click.Path(exists=True, file_okay=False, dir_okay=True, path_type=str),
+    help="Path to the language model directory. Required when --use-language-model is specified.",
+)
+@click.option(
+    "--device",
+    type=click.Choice(['auto', 'cpu', 'cuda', 'mps'], case_sensitive=False),
+    default='auto',
+    show_default=True,
+    help="Device to use for neural network computations. 'auto' will select the best available device.",
+)
 def main_cli(
     fasta,
     bam,
@@ -268,8 +289,25 @@ def main_cli(
     num_augmentations,
     skip_chimera_detection,
     noise_recovery_threshold,
+    use_language_model,
+    model_path,
+    device,
 ):
     """REMAG: Recovery of eukaryotic genomes using contrastive learning."""
+    
+    # Validate language model options
+    if use_language_model and model_path is None:
+        raise click.BadParameter("--model-path is required when --use-language-model is specified.")
+    
+    # Use default model path if using language model but no path specified
+    if use_language_model and model_path is None:
+        # Default to the model directory relative to this script
+        default_model_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "model")
+        if os.path.exists(default_model_path):
+            model_path = default_model_path
+        else:
+            raise click.BadParameter(f"Default model path not found: {default_model_path}. Please specify --model-path.")
+    
     args = argparse.Namespace(
         fasta=fasta,
         bam=bam if bam else None,
@@ -292,6 +330,9 @@ def main_cli(
         num_augmentations=num_augmentations,
         skip_chimera_detection=skip_chimera_detection,
         noise_recovery_threshold=noise_recovery_threshold,
+        use_language_model=use_language_model,
+        model_path=model_path,
+        device=device,
     )
     run_remag(args)
 

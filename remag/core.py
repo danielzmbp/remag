@@ -40,9 +40,15 @@ def main(args):
         logger.info("Skipping bacterial filtering as requested")
 
     # Generate all features with full augmentations upfront
-    logger.info(
-        f"Generating features with {args.num_augmentations} augmentations per contig..."
-    )
+    if getattr(args, 'use_language_model', False):
+        logger.info(
+            f"Generating language model features with {args.num_augmentations} augmentations per contig..."
+        )
+    else:
+        logger.info(
+            f"Generating k-mer features with {args.num_augmentations} augmentations per contig..."
+        )
+    
     features_df, fragments_dict = get_features(
         input_fasta,  # Use filtered FASTA if bacterial filtering was applied
         args.bam,
@@ -51,6 +57,9 @@ def main(args):
         args.min_contig_length,
         args.cores,
         args.num_augmentations,
+        use_language_model=getattr(args, 'use_language_model', False),
+        model_path=getattr(args, 'model_path', None),
+        device=getattr(args, 'device', 'auto'),
     )
 
     if features_df.empty:

@@ -476,9 +476,12 @@ def get_features(
     min_contig_length: int = 1000,
     cores: int = 16,
     num_augmentations: int = 8,
+    use_language_model: bool = False,
+    model_path: Optional[str] = None,
+    device: str = "auto",
 ) -> Tuple[pd.DataFrame, FragmentDict]:
     """
-    Generate k-mer and coverage features for fragments.
+    Generate language model or k-mer and coverage features for fragments.
 
     Args:
         fasta_file: Path to input FASTA file
@@ -488,6 +491,9 @@ def get_features(
         min_contig_length: Minimum contig length
         cores: Number of cores for processing
         num_augmentations: Number of random fragments per contig
+        use_language_model: Whether to use language model embeddings instead of k-mer features
+        model_path: Path to language model directory (required if use_language_model=True)
+        device: Device to use for neural network computations ('auto', 'cpu', 'cuda', 'mps')
 
     Returns:
         Tuple of (features DataFrame, fragments dictionary)
@@ -538,12 +544,17 @@ def get_features(
             logger.warning(f"Error loading existing features: {e}. Regenerating...")
 
     # Generate new features
-    logger.info("Generating k-mer features from FASTA file...")
-    kmer_len = 4
+    if use_language_model:
+        if model_path is None:
+            raise ValueError("model_path is required when use_language_model=True")
+        logger.info("Generating language model embeddings from FASTA file...")
+    else:
+        logger.info("Generating k-mer features from FASTA file...")
+        kmer_len = 4
+        # Generate k-mer mapping (for consistency, though we use _calculate_kmer_composition)
+        _, _ = generate_feature_mapping(kmer_len)
+    
     length_threshold = min_contig_length
-
-    # Generate k-mer mapping (for consistency, though we use _calculate_kmer_composition)
-    _, _ = generate_feature_mapping(kmer_len)
     fragments_dict = OrderedDict()
 
     # Process sequences and generate fragments
@@ -607,9 +618,20 @@ def get_features(
         logger.error("No valid fragments generated.")
         return pd.DataFrame(), {}
 
-    # Calculate k-mer composition for all fragments using helper function
-    logger.info("Calculating k-mer composition for all fragments...")
-    df = _calculate_kmer_composition(all_fragments, kmer_len=kmer_len)
+    # Calculate features for all fragments
+    if use_language_model:
+        logger.info("Calculating language model embeddings for all fragments...")
+        from .embedding_generator import calculate_dna_embeddings
+        df = calculate_dna_embeddings(
+            sequences_to_process=all_fragments,
+            model_path=model_path,
+            device=device,
+            batch_size=8,  # Adjust based on GPU memory
+            max_length=512
+        )
+    else:
+        logger.info("Calculating k-mer composition for all fragments...")
+        df = _calculate_kmer_composition(all_fragments, kmer_len=kmer_len)
 
     # Calculate coverage
     if bam_files:
