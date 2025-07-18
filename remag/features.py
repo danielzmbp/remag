@@ -209,7 +209,7 @@ def filter_bacterial_contigs(fasta_file, output_dir, min_contig_length=1000, cor
                     seqs.append(seq.upper())
                     n_total += 1
 
-                    if len(seqs) >= 10000:
+                    if len(seqs) >= 50000:
                         process_batch(seq_names, seqs, results_file)
                         seq_names, seqs = [], []
 
