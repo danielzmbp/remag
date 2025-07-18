@@ -15,7 +15,7 @@ from .utils import extract_base_contig_name
 
 
 # Import here to avoid circular imports
-from .miniprot_utils import check_core_gene_duplications
+from .miniprot_utils import check_core_gene_duplications, get_core_gene_duplication_results_path
 
 
 def cluster_contigs_kmeans_refinement(
@@ -360,7 +360,7 @@ def refine_contaminated_bins(
 
     # Load duplication results for K-means clustering
     duplication_results = {}
-    results_path = os.path.join(args.output, "core_gene_duplication_results.json")
+    results_path = get_core_gene_duplication_results_path(args)
     if os.path.exists(results_path):
         try:
             with open(results_path, "r") as f:

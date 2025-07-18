@@ -13,6 +13,11 @@ from loguru import logger
 from .utils import extract_base_contig_name
 
 
+def get_core_gene_duplication_results_path(args):
+    """Get the path for the core gene duplication results file."""
+    return os.path.join(args.output, "core_gene_duplication_results.json")
+
+
 def check_core_gene_duplications(clusters_df, fragments_dict, args, 
                                 target_coverage_threshold=0.50, 
                                 identity_threshold=0.50,
@@ -250,9 +255,10 @@ def check_core_gene_duplications(clusters_df, fragments_dict, args,
         f"Checked {total_bins_checked} bins: {bins_with_duplications} have duplicated core genes"
     )
 
-    # Save results
-    results_path = os.path.join(args.output, "core_gene_duplication_results.json")
-    with open(results_path, "w") as f:
-        json.dump(duplication_results, f, indent=2)
+    # Save results only if keeping intermediate files
+    if getattr(args, "keep_intermediate", False):
+        results_path = get_core_gene_duplication_results_path(args)
+        with open(results_path, "w") as f:
+            json.dump(duplication_results, f, indent=2)
 
     return clusters_df

@@ -67,11 +67,11 @@ click.rich_click.OPTION_GROUPS = {
         },
         {
             "name": "Clustering",
-            "options": ["--min-cluster-size", "--min-samples", "--noise-recovery-threshold"],
+            "options": ["--min-cluster-size", "--min-samples", "--noise-recovery-threshold", "--enable-noise-recovery"],
         },
         {
             "name": "Filtering & Processing",
-            "options": ["--min-contig-length", "--min-bin-size", "--skip-bacterial-filter", "--skip-refinement", "--max-refinement-rounds", "--skip-chimera-detection"],
+            "options": ["--min-contig-length", "--min-bin-size", "--skip-bacterial-filter", "--skip-refinement", "--max-refinement-rounds", "--skip-chimera-detection", "--keep-intermediate"],
         },
         {
             "name": "General",
@@ -169,7 +169,7 @@ def validate_coverage_options(ctx, param, value):
 @click.option(
     "--min-cluster-size",
     type=click.IntRange(min=2, max=100),
-    default=5,
+    default=2,
     show_default=True,
     help="Minimum number of contigs required to form a cluster/bin.",
 )
@@ -237,6 +237,7 @@ def validate_coverage_options(ctx, param, value):
 @click.option(
     "--skip-chimera-detection",
     is_flag=True,
+    default=True,
     help="Skip chimeric contig detection and splitting for large contigs.",
 )
 @click.option(
@@ -245,6 +246,18 @@ def validate_coverage_options(ctx, param, value):
     default=0.5,
     show_default=True,
     help="Similarity threshold for recovering noise points into bins (lower = more permissive).",
+)
+@click.option(
+    "--enable-noise-recovery",
+    is_flag=True,
+    default=False,
+    help="Enable noise recovery using soft clustering (disabled by default).",
+)
+@click.option(
+    "--keep-intermediate",
+    is_flag=True,
+    default=False,
+    help="Keep intermediate files (embeddings, features, model, etc.). By default, only bins.csv and bins/ folder are kept.",
 )
 def main_cli(
     fasta,
@@ -268,6 +281,8 @@ def main_cli(
     num_augmentations,
     skip_chimera_detection,
     noise_recovery_threshold,
+    enable_noise_recovery,
+    keep_intermediate,
 ):
     """REMAG: Recovery of eukaryotic genomes using contrastive learning."""
     args = argparse.Namespace(
@@ -292,6 +307,8 @@ def main_cli(
         num_augmentations=num_augmentations,
         skip_chimera_detection=skip_chimera_detection,
         noise_recovery_threshold=noise_recovery_threshold,
+        enable_noise_recovery=enable_noise_recovery,
+        keep_intermediate=keep_intermediate,
     )
     run_remag(args)
 

@@ -169,24 +169,18 @@ def detect_chimeric_contigs(embeddings_df, clusters_df, args):
     chimera_results = {}
     
     # Load features data to find h1/h2 fragments for large contigs
-    features_parquet_path = os.path.join(args.output, "features.parquet")
-    features_csv_path = os.path.join(args.output, "features.csv")
+    from .features import get_features_csv_path
+    features_csv_path = get_features_csv_path(args.output)
     
     features_df = None
-    if os.path.exists(features_parquet_path):
-        try:
-            features_df = pd.read_parquet(features_parquet_path)
-        except Exception as e:
-            logger.error(f"Error loading features data from parquet: {e}")
-            return {}
-    elif os.path.exists(features_csv_path):
+    if os.path.exists(features_csv_path):
         try:
             features_df = pd.read_csv(features_csv_path, index_col=0)
         except Exception as e:
             logger.error(f"Error loading features data from csv: {e}")
             return {}
     else:
-        logger.warning(f"Features file not found at {features_parquet_path} or {features_csv_path}, skipping chimera detection")
+        logger.warning(f"Features file not found at {features_csv_path}, skipping chimera detection")
         return {}
     
     # Group h1/h2 fragments by base contig name
@@ -214,10 +208,10 @@ def detect_chimeric_contigs(embeddings_df, clusters_df, args):
         return {}
     
     # Load the trained model for generating embeddings
-    from .models import train_siamese_network, generate_embeddings_for_fragments
+    from .models import train_siamese_network, generate_embeddings_for_fragments, get_model_path
     
     # Load or train the model
-    model_path = os.path.join(args.output, "siamese_model.pt")
+    model_path = get_model_path(args)
     if os.path.exists(model_path):
         logger.info(f"Loading trained model from {model_path}")
         device = torch.device(
@@ -320,14 +314,15 @@ def detect_chimeric_contigs(embeddings_df, clusters_df, args):
                        f"F-stat: {anova_results['f_statistic']:.3f}, "
                        f"fragment_ratio: {fragment_ratio:.3f})")
     
-    # Save results
-    results_path = os.path.join(args.output, "chimera_detection_results.json")
-    with open(results_path, 'w') as f:
-        json.dump(chimera_results, f, indent=2)
+    # Save results only if keeping intermediate files
+    if getattr(args, "keep_intermediate", False):
+        results_path = os.path.join(args.output, "chimera_detection_results.json")
+        with open(results_path, 'w') as f:
+            json.dump(chimera_results, f, indent=2)
+        logger.info(f"Results saved to {results_path}")
     
     chimeric_count = sum(1 for r in chimera_results.values() if r['is_possible_chimera'])
     logger.info(f"Chimera detection complete. Found {chimeric_count} possible chimeric contigs out of {len(chimera_results)} analyzed")
-    logger.info(f"Results saved to {results_path}")
     
     return chimera_results
 
@@ -430,10 +425,25 @@ def soft_clustering_noise_recovery(clusterer, embeddings, cluster_labels, noise_
     
     logger.debug(f"Found {n_noise_original} noise points to attempt recovery")
     
-    # Get soft cluster membership vectors for all points
+    # Get soft cluster membership vectors for noise points only
     try:
-        soft_clusters = hdbscan.all_points_membership_vectors(clusterer)
-        logger.debug(f"Generated soft clustering vectors: {soft_clusters.shape}")
+        # More efficient: only compute for noise points using approximate_predict
+        if hasattr(clusterer, 'prediction_data_') and clusterer.prediction_data_ is not None:
+            # Use approximate_predict for noise points only - much faster
+            embeddings_noise = embeddings[noise_indices]
+            noise_predictions = hdbscan.approximate_predict(clusterer, embeddings_noise)
+            
+            # Get membership vectors for just the noise points
+            soft_clusters_noise = hdbscan.membership_vector(clusterer, embeddings_noise)
+            logger.debug(f"Generated soft clustering vectors for noise points only: {soft_clusters_noise.shape}")
+            
+            # Create full-size array and populate only noise indices
+            soft_clusters = np.zeros((len(embeddings), soft_clusters_noise.shape[1]))
+            soft_clusters[noise_indices] = soft_clusters_noise
+        else:
+            # Fallback to full computation if prediction data not available
+            soft_clusters = hdbscan.all_points_membership_vectors(clusterer)
+            logger.debug(f"Generated soft clustering vectors (fallback): {soft_clusters.shape}")
     except Exception as e:
         logger.warning(f"Failed to generate soft clustering vectors: {e}")
         return cluster_labels.copy(), {"noise_original": n_noise_original, "noise_recovered": 0, "noise_remaining": n_noise_original}
@@ -449,44 +459,55 @@ def soft_clustering_noise_recovery(clusterer, embeddings, cluster_labels, noise_
     # Get valid cluster indices (non-noise clusters from original clustering)
     valid_clusters = np.unique(cluster_labels[cluster_labels >= 0])
     
-    # Analyze each noise point
-    for noise_idx in noise_indices:
-        membership_vector = soft_clusters[noise_idx]
+    # Vectorized processing of noise points
+    if len(noise_indices) > 0:
+        # Extract membership vectors for noise points only
+        noise_memberships = soft_clusters[noise_indices]
         
-        # Find the cluster with highest membership probability
-        best_cluster_internal_idx = np.argmax(membership_vector)
-        best_membership = membership_vector[best_cluster_internal_idx]
+        # Find best cluster for each noise point (vectorized)
+        best_cluster_internal_indices = np.argmax(noise_memberships, axis=1)
+        best_memberships = noise_memberships[np.arange(len(noise_indices)), best_cluster_internal_indices]
         
-        # Map internal cluster index to actual cluster label
-        # HDBSCAN's membership vectors correspond to clusters 0, 1, 2, ... in order
-        if best_cluster_internal_idx < len(valid_clusters):
-            best_cluster_label = valid_clusters[best_cluster_internal_idx]
-        else:
-            best_cluster_label = -1
+        # Map internal indices to cluster labels (vectorized)
+        valid_mask = best_cluster_internal_indices < len(valid_clusters)
+        best_cluster_labels = np.full(len(noise_indices), -1, dtype=int)
+        best_cluster_labels[valid_mask] = valid_clusters[best_cluster_internal_indices[valid_mask]]
         
-        # Store analysis data for debugging
-        noise_analysis.append({
-            "noise_index": int(noise_idx),
-            "membership_vector": membership_vector.tolist(),
-            "best_cluster_internal_idx": int(best_cluster_internal_idx),
-            "best_cluster_label": int(best_cluster_label) if best_cluster_label != -1 else None,
-            "best_membership": float(best_membership),
-            "assigned": bool(best_membership >= noise_threshold and best_cluster_label != -1)
-        })
+        # Apply threshold filter
+        assignment_mask = (best_memberships >= noise_threshold) & (best_cluster_labels != -1)
+        assignable_indices = noise_indices[assignment_mask]
+        assignable_labels = best_cluster_labels[assignment_mask]
         
-        logger.debug(f"Noise point {noise_idx}: best_cluster={best_cluster_label}, membership={best_membership:.3f}, threshold={noise_threshold:.3f}")
+        # Assign recovered points
+        recovered_labels[assignable_indices] = assignable_labels
+        recovered_count = len(assignable_indices)
         
-        # Assign to cluster if membership is above threshold
-        if best_membership >= noise_threshold and best_cluster_label != -1:
-            recovered_labels[noise_idx] = best_cluster_label
-            recovered_count += 1
-            
-            # Track cluster assignments
-            if best_cluster_label not in cluster_assignments:
-                cluster_assignments[best_cluster_label] = 0
-            cluster_assignments[best_cluster_label] += 1
-            
-            logger.debug(f"Recovered noise point {noise_idx} -> cluster {best_cluster_label} (membership: {best_membership:.3f})")
+        # Track cluster assignments
+        unique_labels, counts = np.unique(assignable_labels, return_counts=True)
+        cluster_assignments = dict(zip(unique_labels.astype(int), counts.astype(int)))
+        
+        # Create analysis data for debugging (only if debug logging enabled)
+        if logger.isEnabledFor(logging.DEBUG):
+            for i, noise_idx in enumerate(noise_indices):
+                membership_vector = noise_memberships[i]
+                best_cluster_internal_idx = best_cluster_internal_indices[i]
+                best_membership = best_memberships[i]
+                best_cluster_label = best_cluster_labels[i]
+                assigned = assignment_mask[i]
+                
+                noise_analysis.append({
+                    "noise_index": int(noise_idx),
+                    "membership_vector": membership_vector.tolist(),
+                    "best_cluster_internal_idx": int(best_cluster_internal_idx),
+                    "best_cluster_label": int(best_cluster_label) if best_cluster_label != -1 else None,
+                    "best_membership": float(best_membership),
+                    "assigned": bool(assigned)
+                })
+                
+                logger.debug(f"Noise point {noise_idx}: best_cluster={best_cluster_label}, membership={best_membership:.3f}, threshold={noise_threshold:.3f}")
+                
+                if assigned:
+                    logger.debug(f"Recovered noise point {noise_idx} -> cluster {best_cluster_label} (membership: {best_membership:.3f})")
     
     n_noise_remaining = n_noise_original - recovered_count
     
@@ -516,45 +537,24 @@ def soft_clustering_noise_recovery(clusterer, embeddings, cluster_labels, noise_
         }
     }
     
-    # Save detailed debugging information
-    if output_dir:
-        debug_info = {
-            "recovery_stats": recovery_stats,
-            "noise_point_analysis": noise_analysis,
-            "soft_cluster_shape": list(soft_clusters.shape),
-            "valid_clusters": valid_clusters.tolist()
-        }
-        
-        debug_path = os.path.join(output_dir, "soft_clustering_debug.json")
-        try:
-            with open(debug_path, 'w') as f:
-                json.dump(debug_info, f, indent=2)
-            logger.debug(f"Saved soft clustering debug information to {debug_path}")
-        except Exception as e:
-            logger.warning(f"Failed to save soft clustering debug information: {e}")
     
     return recovered_labels, recovery_stats
 
 
 def cluster_contigs(embeddings_df, fragments_dict, args):
     """Main clustering function that orchestrates the clustering process."""
-    clusters_contigs_path = os.path.join(args.output, "clusters_contigs.csv")
+    bins_path = os.path.join(args.output, "bins.csv")
 
-    # Check if clusters file already exists
-    if os.path.exists(clusters_contigs_path):
-        logger.info(f"Loading existing clusters from {clusters_contigs_path}")
-        return pd.read_csv(clusters_contigs_path)
+    # Check if bins file already exists
+    if os.path.exists(bins_path):
+        logger.info(f"Loading existing bins from {bins_path}")
+        return pd.read_csv(bins_path)
 
     # Load eukaryotic classification scores if available
     eukaryotic_scores = {}
-    base_name = os.path.basename(args.fasta)
-    name_without_ext = os.path.splitext(base_name)[0]
-    if name_without_ext.endswith(".gz"):
-        name_without_ext = os.path.splitext(name_without_ext)[0]
+    from .features import get_classification_results_path
     
-    classification_results_path = os.path.join(
-        args.output, f"{name_without_ext}_4cac_classification.tsv"
-    )
+    classification_results_path = get_classification_results_path(args.fasta, args.output)
     
     if os.path.exists(classification_results_path):
         try:
@@ -567,9 +567,9 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
     else:
         logger.warning(f"Eukaryotic classification file not found: {classification_results_path}")
 
-    # Normalize the embeddings data for clustering
-    logger.debug("Normalizing embeddings for clustering...")
-    norm_data = normalize(embeddings_df.values, norm="l2")
+    # Embeddings are already L2 normalized when saved to CSV
+    logger.debug("Using pre-normalized embeddings for clustering...")
+    norm_data = embeddings_df.values
     contig_names = list(embeddings_df.index)
     
     # Log essential data properties
@@ -604,7 +604,7 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
     logger.info(f"HDBSCAN result: {n_clusters} clusters, {n_noise} noise points, sizes: {cluster_sizes.tolist() if hasattr(cluster_sizes, 'tolist') else list(cluster_sizes)}")
     
     # Attempt to recover noise points using soft clustering
-    if n_noise > 0 and not getattr(args, 'skip_noise_recovery', False):
+    if n_noise > 0 and getattr(args, 'enable_noise_recovery', False):
         logger.info(f"Attempting to recover {n_noise} noise points using soft clustering...")
         
         # Get noise recovery threshold from args or use default
@@ -624,16 +624,17 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
         
         logger.info(f"After noise recovery: {n_clusters_after} clusters, {n_noise_after} noise points, sizes: {cluster_sizes_after.tolist() if hasattr(cluster_sizes_after, 'tolist') else list(cluster_sizes_after)}")
         
-        # Save recovery statistics
-        recovery_stats_path = os.path.join(args.output, "soft_clustering_recovery_stats.json")
-        with open(recovery_stats_path, 'w') as f:
-            json.dump(recovery_stats, f, indent=2)
-        logger.debug(f"Saved noise recovery statistics to {recovery_stats_path}")
+        # Save recovery statistics only if keeping intermediate files
+        if getattr(args, "keep_intermediate", False):
+            recovery_stats_path = os.path.join(args.output, "soft_clustering_recovery_stats.json")
+            with open(recovery_stats_path, 'w') as f:
+                json.dump(recovery_stats, f, indent=2)
+            logger.debug(f"Saved noise recovery statistics to {recovery_stats_path}")
     else:
         if n_noise == 0:
             logger.debug("No noise points found - skipping noise recovery")
         else:
-            logger.debug("Noise recovery disabled - skipping soft clustering")
+            logger.debug("Noise recovery disabled by default - use --enable-noise-recovery to enable")
     
     formatted_labels = [
         f"bin_{label}" if label != -1 else "noise" for label in cluster_labels
@@ -657,8 +658,11 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
     logger.info(f"Clustering complete: {n_clusters} clusters, {n_noise} noise contigs")
     logger.debug(f"Cluster sizes: {dict(sorted(final_counts.items()))}")
 
-    # Save contig-level cluster assignments
-    contig_clusters_df.to_csv(clusters_contigs_path, index=False)
+    # Filter out noise contigs for final bins.csv
+    final_bins_df = contig_clusters_df[contig_clusters_df["cluster"] != "noise"].copy()
+    
+    # Save final bins (excluding noise)
+    final_bins_df.to_csv(bins_path, index=False)
 
     # Count contigs per cluster
     logger.debug("Counting contigs per cluster...")
@@ -680,51 +684,54 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
         count = len(original_contigs)
         logger.debug(f"  Cluster {cluster_id}: {count} contigs")
 
-    # Use UMAP for visualization
-    logger.debug("Performing UMAP dimensionality reduction for visualization...")
-    umap_embeddings_df = embeddings_df
-    logger.debug(f"Using original data for UMAP: {umap_embeddings_df.shape[0]} contigs")
-    
-    # Create UMAP reducer
-    reducer = umap.UMAP(
-        n_neighbors=15,
-        min_dist=0.1,
-        n_components=2,
-        metric="cosine",
-        random_state=42,
-        n_jobs=1,  # Set to 1 to avoid warning about random_state + parallelism
-    )
+    # Use UMAP for visualization only if keeping intermediate files
+    if getattr(args, "keep_intermediate", False):
+        logger.debug("Performing UMAP dimensionality reduction for visualization...")
+        umap_embeddings_df = embeddings_df
+        logger.debug(f"Using original data for UMAP: {umap_embeddings_df.shape[0]} contigs")
+        
+        # Create UMAP reducer
+        reducer = umap.UMAP(
+            n_neighbors=15,
+            min_dist=0.1,
+            n_components=2,
+            metric="cosine",
+            random_state=42,
+            n_jobs=1,  # Set to 1 to avoid warning about random_state + parallelism
+        )
 
-    # Fit and transform the embeddings
-    logger.debug(f"Running UMAP on {umap_embeddings_df.shape[0]} contigs...")
-    umap_embeddings = reducer.fit_transform(umap_embeddings_df.values)
+        # Fit and transform the embeddings
+        logger.debug(f"Running UMAP on {umap_embeddings_df.shape[0]} contigs...")
+        umap_embeddings = reducer.fit_transform(umap_embeddings_df.values)
 
-    # Save UMAP embeddings for visualization
-    umap_df = pd.DataFrame(
-        umap_embeddings, columns=["UMAP1", "UMAP2"], index=umap_embeddings_df.index
-    )
-    # Map clusters to UMAP data (removing fragment suffixes for matching)
-    umap_original_names = [
-        extract_base_contig_name(name) for name in umap_embeddings_df.index
-    ]
-    umap_clusters = []
-    for original_name in umap_original_names:
-        cluster_assignment = contig_clusters_df[
-            contig_clusters_df["contig"] == original_name
-        ]["cluster"]
-        if not cluster_assignment.empty:
-            umap_clusters.append(cluster_assignment.iloc[0])
-        else:
-            umap_clusters.append("noise")
+        # Save UMAP embeddings for visualization
+        umap_df = pd.DataFrame(
+            umap_embeddings, columns=["UMAP1", "UMAP2"], index=umap_embeddings_df.index
+        )
+        # Map clusters to UMAP data (removing fragment suffixes for matching)
+        umap_original_names = [
+            extract_base_contig_name(name) for name in umap_embeddings_df.index
+        ]
+        umap_clusters = []
+        for original_name in umap_original_names:
+            cluster_assignment = contig_clusters_df[
+                contig_clusters_df["contig"] == original_name
+            ]["cluster"]
+            if not cluster_assignment.empty:
+                umap_clusters.append(cluster_assignment.iloc[0])
+            else:
+                umap_clusters.append("noise")
 
-    umap_df["cluster"] = umap_clusters
-    umap_path = os.path.join(args.output, "umap_embeddings.csv")
-    umap_df.to_csv(umap_path)
-    logger.debug(f"Saved UMAP embeddings to {umap_path}")
+        umap_df["cluster"] = umap_clusters
+        
+        # Save UMAP embeddings and plot
+        umap_path = os.path.join(args.output, "umap_embeddings.csv")
+        umap_df.to_csv(umap_path)
+        logger.debug(f"Saved UMAP embeddings to {umap_path}")
 
-    # Create and save UMAP plot
-    logger.debug("Creating UMAP visualization plot...")
-    plot_umap(umap_df, args.output)
+        # Create and save UMAP plot
+        logger.debug("Creating UMAP visualization plot...")
+        plot_umap(umap_df, args.output)
 
     # Perform chimera detection for large contigs
     if not getattr(args, 'skip_chimera_detection', False):

@@ -17,6 +17,11 @@ from tqdm import tqdm
 from loguru import logger
 
 
+def get_model_path(args):
+    """Get the path for the Siamese model file."""
+    return os.path.join(args.output, "siamese_model.pt")
+
+
 class SiameseNetwork(nn.Module):
     def __init__(self, input_size=None, embedding_dim=128, n_kmer_features=None, n_coverage_features=None):
         super(SiameseNetwork, self).__init__()
@@ -277,7 +282,7 @@ class SequenceDataset(Dataset):
 
 def train_siamese_network(features_df, args):
     """Train the Siamese network for contrastive learning."""
-    model_path = os.path.join(args.output, "siamese_model.pt")
+    model_path = get_model_path(args)
 
     # Feature dimensions: k-mer features are always 136, coverage is 2 per sample
     n_kmer_features = 136
@@ -299,7 +304,7 @@ def train_siamese_network(features_df, args):
             n_coverage_features=n_coverage_features,
             embedding_dim=args.embedding_dim
         ).to(device)
-        model.load_state_dict(torch.load(model_path, weights_only=False))
+        model.load_state_dict(torch.load(model_path, map_location=device, weights_only=False))
         return model
 
     device = torch.device(
@@ -433,8 +438,11 @@ def train_siamese_network(features_df, args):
         model.load_state_dict(best_model_state)
         logger.info(f"Loaded best model with loss: {best_loss:.4f}")
 
-    torch.save(model.state_dict(), model_path)
-    logger.info(f"Model saved to {model_path}")
+    # Save model only if keeping intermediate files
+    if getattr(args, "keep_intermediate", False):
+        torch.save(model.state_dict(), model_path)
+        logger.info(f"Model saved to {model_path}")
+    
     return model
 
 
@@ -473,13 +481,22 @@ def generate_embeddings(model, features_df, args):
             batch_features = torch.tensor(batch_df.values, dtype=torch.float32).to(device)
             batch_embeddings = model.get_embedding(batch_features)
             
+            # L2 normalize the embeddings
+            batch_embeddings = torch.nn.functional.normalize(batch_embeddings, p=2, dim=1)
+            
             for j, header in enumerate(batch_df.index):
-                embeddings[header] = batch_embeddings[j].cpu().numpy()
+                # Remove .original suffix from header name
+                clean_header = header.replace(".original", "")
+                embeddings[clean_header] = batch_embeddings[j].cpu().numpy()
 
     import pandas as pd
     embeddings_df = pd.DataFrame.from_dict(embeddings, orient="index")
-    embeddings_df.to_csv(embeddings_path)
-    logger.info(f"Embeddings saved to {embeddings_path}")
+    
+    # Save embeddings only if keeping intermediate files
+    if getattr(args, "keep_intermediate", False):
+        embeddings_df.to_csv(embeddings_path)
+        logger.info(f"Embeddings saved to {embeddings_path}")
+    
     return embeddings_df
 
 

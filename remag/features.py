@@ -83,6 +83,20 @@ def _calculate_kmer_composition(
     return df
 
 
+def get_classification_results_path(fasta_file, output_dir):
+    """Get the path for the 4CAC classification results file."""
+    base_name = os.path.basename(fasta_file)
+    name_without_ext = os.path.splitext(base_name)[0]
+    if name_without_ext.endswith(".gz"):
+        name_without_ext = os.path.splitext(name_without_ext)[0]
+    return os.path.join(output_dir, f"{name_without_ext}_4cac_classification.tsv")
+
+
+def get_features_csv_path(output_dir):
+    """Get the path for the features CSV file."""
+    return os.path.join(output_dir, "features.csv")
+
+
 def filter_bacterial_contigs(fasta_file, output_dir, min_contig_length=1000, cores=8):
     """
     Filter bacterial contigs using the 4CAC XGBoost classifier.
@@ -105,9 +119,7 @@ def filter_bacterial_contigs(fasta_file, output_dir, min_contig_length=1000, cor
     filtered_fasta = os.path.join(
         output_dir, f"{name_without_ext}_non_bacterial_filtered.fasta"
     )
-    classification_results = os.path.join(
-        output_dir, f"{name_without_ext}_4cac_classification.tsv"
-    )
+    classification_results = get_classification_results_path(fasta_file, output_dir)
 
     if os.path.exists(filtered_fasta):
         logger.info(f"Using existing filtered FASTA: {filtered_fasta}")
@@ -476,6 +488,7 @@ def get_features(
     min_contig_length: int = 1000,
     cores: int = 16,
     num_augmentations: int = 8,
+    args = None,
 ) -> Tuple[pd.DataFrame, FragmentDict]:
     """
     Generate k-mer and coverage features for fragments.
@@ -492,14 +505,14 @@ def get_features(
     Returns:
         Tuple of (features DataFrame, fragments dictionary)
     """
-    features_parquet_path = os.path.join(output_dir, "features.parquet")
+    features_csv_path = get_features_csv_path(output_dir)
     fragments_path = os.path.join(output_dir, "fragments.pkl")
 
     # Try to load existing features
-    if os.path.exists(features_parquet_path) and os.path.exists(fragments_path):
-        logger.info(f"Loading existing features from {features_parquet_path}")
+    if os.path.exists(features_csv_path) and os.path.exists(fragments_path):
+        logger.info(f"Loading existing features from {features_csv_path}")
         try:
-            df = pd.read_parquet(features_parquet_path)
+            df = pd.read_csv(features_csv_path, index_col=0)
             fragments_dict = pd.read_pickle(fragments_path)
 
             # Verify and update coverage if needed
@@ -514,7 +527,8 @@ def get_features(
                     errors="ignore",
                 )
                 df = pd.concat([df, coverage_df], axis=1)
-                df.to_parquet(features_parquet_path)
+                if getattr(args, "keep_intermediate", False):
+                    df.to_csv(features_csv_path)
 
             elif tsv_files:
                 expected_cols = [
@@ -530,7 +544,8 @@ def get_features(
                         errors="ignore",
                     )
                     df = pd.concat([df, coverage_df], axis=1)
-                    df.to_parquet(features_parquet_path)
+                    if getattr(args, "keep_intermediate", False):
+                        df.to_csv(features_csv_path)
 
             return df, fragments_dict
 
@@ -650,8 +665,13 @@ def get_features(
         }
         for header, data in fragments_dict.items()
     }
-    pd.to_pickle(compact_dict, fragments_path, protocol=4)
-    df.to_parquet(features_parquet_path)
+    # Save features and fragments only if keeping intermediate files
+    if getattr(args, "keep_intermediate", False):
+        pd.to_pickle(compact_dict, fragments_path, protocol=4)
+        df.to_csv(features_csv_path)
+    else:
+        # Still save fragments dict for bin generation, but not features
+        pd.to_pickle(compact_dict, fragments_path, protocol=4)
 
     return df, fragments_dict
 

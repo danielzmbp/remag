@@ -152,7 +152,7 @@ REMAG uses a sophisticated multi-stage pipeline specifically designed for eukary
 REMAG produces several output files:
 
 - `bins/`: Directory containing FASTA files for each bin
-- `final_clusters_contigs.csv`: Final contig-to-bin assignments
+- `bins.csv`: Final contig-to-bin assignments (excludes noise contigs)
 - `embeddings.csv`: Contig embeddings from the neural network
 - `umap_embeddings.csv`: UMAP projections for visualization
 - `umap_plot.pdf`: UMAP visualization plot
@@ -175,7 +175,6 @@ REMAG produces several output files:
 - tqdm (≥4.62.0)
 - rich-click (≥1.5.0)
 - joblib (≥1.1.0)
-- pyarrow (≥10.0.0)
 
 The package includes the pre-trained 4CAC classifier models for bacterial sequence filtering. The 4CAC classifier code is adapted from the [Shamir-Lab/4CAC repository](https://github.com/Shamir-Lab/4CAC).
 

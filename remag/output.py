@@ -10,7 +10,7 @@ from .utils import extract_base_contig_name
 
 
 def save_clusters_as_fasta(clusters_df, fragments_dict, args):
-    """Save clusters as FASTA files."""
+    """Save clusters as FASTA files and return valid bin IDs."""
     bins_dir = os.path.join(args.output, "bins")
     os.makedirs(bins_dir, exist_ok=True)
 
@@ -83,3 +83,7 @@ def save_clusters_as_fasta(clusters_df, fragments_dict, args):
     logger.info(
         f"Saved {len(filtered_cluster_contigs)} bins with {total_contigs_in_bins} total contigs"
     )
+    
+    # Return the set of valid bin IDs (excluding noise)
+    valid_bins = set(filtered_cluster_contigs.keys()) - {"noise"}
+    return valid_bins
