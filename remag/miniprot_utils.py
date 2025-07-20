@@ -7,6 +7,7 @@ that was previously duplicated between quality.py and refinement.py.
 
 import json
 import os
+import shutil
 from tqdm import tqdm
 from loguru import logger
 
@@ -230,7 +231,16 @@ def check_core_gene_duplications(clusters_df, fragments_dict, args,
                 }
 
     finally:
-        logger.info(f"Miniprot files preserved at: {temp_dir}")
+        # Clean up temp_miniprot folder unless keeping intermediate files
+        if not getattr(args, "keep_intermediate", False):
+            if os.path.exists(temp_dir):
+                try:
+                    shutil.rmtree(temp_dir)
+                    logger.debug(f"Cleaned up temporary miniprot files at: {temp_dir}")
+                except Exception as e:
+                    logger.warning(f"Failed to clean up temporary miniprot files: {e}")
+        else:
+            logger.info(f"Miniprot files preserved at: {temp_dir}")
 
     # Add duplication information to clusters_df
     clusters_df = clusters_df.copy()

@@ -51,6 +51,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+gpu = [
+    "cuml>=22.04.0",
+    "cudf>=22.04.0",
+    "cupy-cuda11x>=9.0.0",
+]
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=3.0.0",

@@ -178,7 +178,7 @@ class InfoNCELoss(nn.Module):
         mask_to_ignore = mask_same_contig & ~mask_positives.bool()
 
         # 4. Apply the mask by setting the logits of ignored pairs to a very low value.
-        similarity_matrix[mask_to_ignore] = -1e9
+        similarity_matrix[mask_to_ignore] = -1e4
 
         # --- Calculate Loss ---
         loss_vec = self.criterion(similarity_matrix, labels)
@@ -349,7 +349,7 @@ def train_siamese_network(features_df, args):
     ).to(device)
     criterion = InfoNCELoss(temperature=args.nce_temperature)
 
-    base_learning_rate = 1e-3
+    base_learning_rate = getattr(args, 'base_learning_rate', 8e-3)
     scaled_lr = (args.batch_size / 256) * base_learning_rate
     warmup_epochs = 5
     warmup_start_lr = scaled_lr * 0.1
@@ -385,12 +385,13 @@ def train_siamese_network(features_df, args):
     epochs_no_improve = 0
 
     # Training loop
-    for epoch in range(args.epochs):
+    epoch_progress = tqdm(range(args.epochs), desc="Training Progress")
+    
+    for epoch in epoch_progress:
         model.train()
         running_loss = 0.0
-        progress_bar = tqdm(dataloader, desc=f"Epoch {epoch+1}/{args.epochs}")
 
-        for features1, features2, base_ids in progress_bar:
+        for features1, features2, base_ids in dataloader:
             features1, features2, base_ids = (
                 features1.to(device),
                 features2.to(device),
@@ -408,9 +409,6 @@ def train_siamese_network(features_df, args):
             optimizer.step()
             running_loss += loss.item()
 
-            # Update progress bar
-            progress_bar.set_postfix({"Loss": f"{loss.item():.4f}"})
-
         # Update learning rate
         scheduler.step()
 
@@ -418,10 +416,11 @@ def train_siamese_network(features_df, args):
         avg_loss = running_loss / len(dataloader)
         current_lr = optimizer.param_groups[0]["lr"]
 
-        logger.info(
+        # Always log to file
+        logger.debug(
             f"Epoch {epoch+1}/{args.epochs} - Avg Loss: {avg_loss:.4f}, LR: {current_lr:.2e}"
         )
-
+        
         # Early stopping check
         if avg_loss < best_loss:
             best_loss = avg_loss
@@ -432,6 +431,17 @@ def train_siamese_network(features_df, args):
             if epochs_no_improve >= patience:
                 logger.info(f"Early stopping after {epoch+1} epochs (patience: {patience})")
                 break
+        
+        # Update epoch progress bar
+        epoch_progress.set_postfix({
+            "Loss": f"{avg_loss:.4f}",
+            "LR": f"{current_lr:.2e}",
+            "Best": f"{best_loss:.4f}"
+        })
+        
+        # Print to screen every 5 epochs or on the last epoch
+        if (epoch + 1) % 5 == 0 or epoch == args.epochs - 1:
+            logger.info(f"Epoch {epoch+1}/{args.epochs} - Avg Loss: {avg_loss:.4f}, LR: {current_lr:.2e}")
 
     # Load best model
     if best_model_state:

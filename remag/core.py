@@ -64,13 +64,10 @@ def main(args):
     if not skip_bacterial_filter:
         classification_results_path = get_classification_results_path(args.fasta, args.output)
 
-    logger.info("Starting neural network training...")
+    logger.info("Training neural network and generating embeddings...")
     model = train_siamese_network(features_df, args)
-
-    logger.info("Generating embeddings...")
     embeddings_df = generate_embeddings(model, features_df, args)
 
-    logger.info("Clustering contigs...")
     clusters_df = cluster_contigs(embeddings_df, fragments_dict, args)
 
     # Check for duplicated core genes using miniprot

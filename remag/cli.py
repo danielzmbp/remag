@@ -63,11 +63,11 @@ click.rich_click.OPTION_GROUPS = {
         },
         {
             "name": "Contrastive Learning",
-            "options": ["--epochs", "--batch-size", "--embedding-dim", "--nce-temperature", "--max-positive-pairs", "--num-augmentations"],
+            "options": ["--epochs", "--batch-size", "--embedding-dim", "--nce-temperature", "--base-learning-rate", "--max-positive-pairs", "--num-augmentations"],
         },
         {
             "name": "Clustering",
-            "options": ["--min-cluster-size", "--min-samples", "--noise-recovery-threshold", "--enable-noise-recovery"],
+            "options": ["--min-cluster-size", "--min-samples", "--cluster-selection-epsilon", "--noise-recovery-threshold", "--enable-noise-recovery"],
         },
         {
             "name": "Filtering & Processing",
@@ -141,14 +141,14 @@ def validate_coverage_options(ctx, param, value):
 @click.option(
     "--epochs",
     type=click.IntRange(min=50, max=2000),
-    default=200,
+    default=400,
     show_default=True,
     help="Number of training epochs for contrastive learning model.",
 )
 @click.option(
     "--batch-size",
-    type=click.IntRange(min=64, max=2048),
-    default=512,
+    type=click.IntRange(min=64, max=8192),
+    default=2048,
     show_default=True,
     help="Batch size for contrastive learning training.",
 )
@@ -165,6 +165,13 @@ def validate_coverage_options(ctx, param, value):
     default=0.07,
     show_default=True,
     help="Temperature parameter for InfoNCE contrastive loss function.",
+)
+@click.option(
+    "--base-learning-rate",
+    type=click.FloatRange(min=1e-5, max=0.1),
+    default=8e-3,
+    show_default=True,
+    help="Base learning rate for contrastive learning training (scaled by batch size).",
 )
 @click.option(
     "--min-cluster-size",
@@ -205,7 +212,7 @@ def validate_coverage_options(ctx, param, value):
 @click.option(
     "--min-bin-size",
     type=click.IntRange(min=50000, max=5000000),
-    default=100000,
+    default=50000,
     show_default=True,
     help="Minimum total bin size in base pairs for output.",
 )
@@ -241,6 +248,13 @@ def validate_coverage_options(ctx, param, value):
     help="Skip chimeric contig detection and splitting for large contigs.",
 )
 @click.option(
+    "--cluster-selection-epsilon",
+    type=click.FloatRange(min=0, max=1.0),
+    default=0,
+    show_default=True,
+    help="HDBSCAN cluster selection epsilon for reachability-based clustering (higher = more flexible clustering).",
+)
+@click.option(
     "--noise-recovery-threshold",
     type=click.FloatRange(min=0, max=0.8),
     default=0.5,
@@ -259,6 +273,12 @@ def validate_coverage_options(ctx, param, value):
     default=False,
     help="Keep intermediate files (embeddings, features, model, etc.). By default, only bins.csv and bins/ folder are kept.",
 )
+@click.option(
+    "--skip-kmeans-filtering",
+    is_flag=True,
+    default=False,
+    help="Skip k-means pre-filtering to remove small, low-confidence clusters.",
+)
 def main_cli(
     fasta,
     bam,
@@ -268,6 +288,7 @@ def main_cli(
     batch_size,
     embedding_dim,
     nce_temperature,
+    base_learning_rate,
     min_cluster_size,
     min_samples,
     min_contig_length,
@@ -280,9 +301,11 @@ def main_cli(
     max_refinement_rounds,
     num_augmentations,
     skip_chimera_detection,
+    cluster_selection_epsilon,
     noise_recovery_threshold,
     enable_noise_recovery,
     keep_intermediate,
+    skip_kmeans_filtering,
 ):
     """REMAG: Recovery of eukaryotic genomes using contrastive learning."""
     args = argparse.Namespace(
@@ -294,6 +317,7 @@ def main_cli(
         batch_size=batch_size,
         embedding_dim=embedding_dim,
         nce_temperature=nce_temperature,
+        base_learning_rate=base_learning_rate,
         min_cluster_size=min_cluster_size,
         min_samples=min_samples,
         min_contig_length=min_contig_length,
@@ -306,9 +330,11 @@ def main_cli(
         max_refinement_rounds=max_refinement_rounds,
         num_augmentations=num_augmentations,
         skip_chimera_detection=skip_chimera_detection,
+        cluster_selection_epsilon=cluster_selection_epsilon,
         noise_recovery_threshold=noise_recovery_threshold,
         enable_noise_recovery=enable_noise_recovery,
         keep_intermediate=keep_intermediate,
+        skip_kmeans_filtering=skip_kmeans_filtering,
     )
     run_remag(args)
 

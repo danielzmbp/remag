@@ -12,12 +12,210 @@ import pandas as pd
 import umap
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.preprocessing import normalize
+from sklearn.cluster import KMeans
 from loguru import logger
 import os
 import json
 
 from .utils import extract_base_contig_name
 import torch
+
+# Try to import cuML for GPU acceleration
+try:
+    import cuml
+    import cudf
+    import cupy as cp
+    CUML_AVAILABLE = True
+    logger.debug("cuML GPU acceleration is available")
+except ImportError:
+    CUML_AVAILABLE = False
+    logger.debug("cuML not available, using CPU-only HDBSCAN")
+
+
+def _iterative_kmeans_filtering(embeddings, contig_names, eukaryotic_scores, 
+                               small_cluster_threshold=0.1, min_eukaryotic_score=0.95, 
+                               max_iterations=10):
+    """
+    Iteratively filter out small clusters with low eukaryotic confidence using k-means.
+    
+    Args:
+        embeddings: Normalized embedding matrix (n_contigs x embedding_dim)
+        contig_names: List of contig names corresponding to embeddings
+        eukaryotic_scores: Dict mapping contig names to eukaryotic confidence scores
+        small_cluster_threshold: Fraction of total data below which a cluster is considered "small"
+        min_eukaryotic_score: Minimum eukaryotic score to consider a contig high-confidence
+        max_iterations: Maximum number of k-means iterations to perform
+        
+    Returns:
+        tuple: (filtered_embeddings, filtered_contig_names, filter_stats)
+    """
+    logger.info("Starting iterative k-means filtering to remove small, low-confidence clusters...")
+    
+    current_embeddings = embeddings.copy()
+    current_contig_names = contig_names.copy()
+    iteration = 0
+    total_removed = 0
+    filter_stats = []
+    
+    while iteration < max_iterations:
+        iteration += 1
+        n_contigs = len(current_contig_names)
+        
+        if n_contigs < 10:  # Stop if too few contigs remain
+            logger.info(f"Stopping k-means filtering: only {n_contigs} contigs remain")
+            break
+            
+        logger.debug(f"K-means filtering iteration {iteration}: {n_contigs} contigs")
+        
+        # Perform k-means with k=2
+        kmeans = KMeans(n_clusters=2, random_state=42, n_init=10)
+        cluster_labels = kmeans.fit_predict(current_embeddings)
+        
+        # Analyze cluster sizes
+        unique_labels, counts = np.unique(cluster_labels, return_counts=True)
+        cluster_sizes = dict(zip(unique_labels, counts))
+        
+        logger.debug(f"K-means clusters: {cluster_sizes}")
+        
+        # Identify small cluster
+        cluster_0_size = cluster_sizes.get(0, 0)
+        cluster_1_size = cluster_sizes.get(1, 0)
+        
+        small_cluster_label = None
+        small_cluster_size = 0
+        large_cluster_size = 0
+        
+        if cluster_0_size < cluster_1_size:
+            small_cluster_label = 0
+            small_cluster_size = cluster_0_size
+            large_cluster_size = cluster_1_size
+        else:
+            small_cluster_label = 1
+            small_cluster_size = cluster_1_size
+            large_cluster_size = cluster_0_size
+        
+        small_cluster_fraction = small_cluster_size / n_contigs
+        
+        logger.debug(f"Small cluster: label={small_cluster_label}, size={small_cluster_size} "
+                    f"({small_cluster_fraction:.3f} of total)")
+        
+        # Check if small cluster meets removal criteria
+        if small_cluster_fraction > small_cluster_threshold:
+            logger.info(f"Small cluster is {small_cluster_fraction:.3f} of data "
+                       f"(threshold: {small_cluster_threshold}). Stopping k-means filtering.")
+            break
+        
+        # Get contigs in small cluster
+        small_cluster_mask = cluster_labels == small_cluster_label
+        small_cluster_contigs = [current_contig_names[i] for i in range(n_contigs) if small_cluster_mask[i]]
+        
+        # Check eukaryotic confidence in small cluster
+        high_conf_eukaryotes = 0
+        total_scored = 0
+        
+        for contig in small_cluster_contigs:
+            if contig in eukaryotic_scores:
+                total_scored += 1
+                if eukaryotic_scores[contig] >= min_eukaryotic_score:
+                    high_conf_eukaryotes += 1
+        
+        eukaryotic_fraction = high_conf_eukaryotes / total_scored if total_scored > 0 else 0
+        
+        logger.info(f"Small cluster analysis: {small_cluster_size} contigs, "
+                   f"{high_conf_eukaryotes}/{total_scored} high-confidence eukaryotes "
+                   f"(fraction: {eukaryotic_fraction:.3f})")
+        
+        # Decide whether to remove small cluster
+        should_remove = high_conf_eukaryotes == 0 and total_scored > 0
+        
+        if should_remove:
+            logger.info(f"Removing small cluster with {small_cluster_size} contigs "
+                       f"(no high-confidence eukaryotes)")
+            
+            # Keep only large cluster
+            large_cluster_mask = cluster_labels != small_cluster_label
+            current_embeddings = current_embeddings[large_cluster_mask]
+            current_contig_names = [current_contig_names[i] for i in range(n_contigs) if large_cluster_mask[i]]
+            
+            total_removed += small_cluster_size
+            
+            # Record filtering stats
+            filter_stats.append({
+                'iteration': iteration,
+                'contigs_before': n_contigs,
+                'small_cluster_size': small_cluster_size,
+                'small_cluster_fraction': small_cluster_fraction,
+                'high_conf_eukaryotes': high_conf_eukaryotes,
+                'total_scored': total_scored,
+                'eukaryotic_fraction': eukaryotic_fraction,
+                'removed': True,
+                'contigs_after': len(current_contig_names)
+            })
+        else:
+            if high_conf_eukaryotes > 0:
+                reason = f"contains {high_conf_eukaryotes} high-confidence eukaryotes"
+            elif total_scored == 0:
+                reason = "no eukaryotic scores available"
+            else:
+                reason = "unknown"
+                
+            logger.info(f"Keeping small cluster ({reason}). Stopping k-means filtering.")
+            
+            filter_stats.append({
+                'iteration': iteration,
+                'contigs_before': n_contigs,
+                'small_cluster_size': small_cluster_size,
+                'small_cluster_fraction': small_cluster_fraction,
+                'high_conf_eukaryotes': high_conf_eukaryotes,
+                'total_scored': total_scored,
+                'eukaryotic_fraction': eukaryotic_fraction,
+                'removed': False,
+                'reason': reason,
+                'contigs_after': len(current_contig_names)
+            })
+            break
+    
+    final_stats = {
+        'iterations': iteration,
+        'original_contigs': len(contig_names),
+        'filtered_contigs': len(current_contig_names),
+        'total_removed': total_removed,
+        'removal_fraction': total_removed / len(contig_names) if len(contig_names) > 0 else 0,
+        'iteration_details': filter_stats
+    }
+    
+    logger.info(f"K-means filtering complete: {len(current_contig_names)}/{len(contig_names)} contigs remaining "
+               f"({total_removed} removed in {iteration} iterations)")
+    
+    return current_embeddings, current_contig_names, final_stats
+
+
+def _create_hdbscan_clusterer(min_cluster_size, min_samples, cluster_selection_epsilon=0.3, use_gpu=True):
+    """Create HDBSCAN clusterer, preferring GPU if available."""
+    if use_gpu and CUML_AVAILABLE:
+        try:
+            clusterer = cuml.HDBSCAN(
+                min_cluster_size=min_cluster_size,
+                min_samples=min_samples,
+                metric="euclidean",
+                cluster_selection_method="eom",
+                prediction_data=True
+            )
+            return clusterer, True  # GPU clusterer
+        except Exception as e:
+            logger.warning(f"GPU clustering failed, falling back to CPU: {e}")
+    
+    # CPU fallback
+    clusterer = hdbscan.HDBSCAN(
+        min_cluster_size=min_cluster_size,
+        min_samples=min_samples,
+        metric="euclidean",
+        cluster_selection_method="eom",
+        cluster_selection_epsilon=cluster_selection_epsilon,
+        prediction_data=True,
+        core_dist_n_jobs=-1,
+    )
+    return clusterer, False  # CPU clusterer
 
 
 def _permutation_anova_chimera_test(h1_embeddings, h2_embeddings, n_permutations=1000, alpha=0.05):
@@ -579,32 +777,88 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
         high_conf_count = sum(1 for s in scores_array if s > 0.95)
         logger.info(f"Eukaryotic classification: {len(eukaryotic_scores)} scored, {high_conf_count} high-confidence (>0.95)")
 
-    # Use HDBSCAN clustering directly on all data
-    logger.info("Using HDBSCAN clustering")
+    # Apply k-means pre-filtering if enabled and eukaryotic scores are available
     working_contig_names = contig_names
     working_embeddings_df = embeddings_df
+    kmeans_filter_stats = None
+    
+    if not getattr(args, 'skip_kmeans_filtering', False) and eukaryotic_scores:
+        logger.info("Applying k-means pre-filtering to remove small, low-confidence clusters...")
+        
+        # Hard-coded filtering parameters (smaller threshold as requested)
+        small_cluster_threshold = 0.05  # 5% instead of 10%
+        min_eukaryotic_score = 0.95
+        max_iterations = 10
+        
+        # Extract contig names without fragment suffixes for eukaryotic score lookup
+        original_contig_names = [extract_base_contig_name(name) for name in embeddings_df.index]
+        
+        # Apply k-means filtering
+        filtered_embeddings, filtered_contig_names, kmeans_filter_stats = _iterative_kmeans_filtering(
+            norm_data, 
+            original_contig_names,
+            eukaryotic_scores,
+            small_cluster_threshold=small_cluster_threshold,
+            min_eukaryotic_score=min_eukaryotic_score,
+            max_iterations=max_iterations
+        )
+        
+        # Update working data if filtering removed contigs
+        if len(filtered_contig_names) < len(original_contig_names):
+            # Create mapping from original names back to fragment names with .original suffix
+            filtered_fragment_names = [f"{name}.original" for name in filtered_contig_names]
+            
+            # Filter embeddings dataframe to keep only remaining contigs
+            working_embeddings_df = embeddings_df.loc[filtered_fragment_names]
+            working_contig_names = list(working_embeddings_df.index)
+            norm_data = working_embeddings_df.values
+            
+            logger.info(f"K-means filtering: {len(working_contig_names)}/{len(contig_names)} contigs selected for HDBSCAN")
+        else:
+            logger.info("K-means filtering: no contigs removed, proceeding with all data")
+        
+        # Save filtering statistics if keeping intermediate files
+        if getattr(args, "keep_intermediate", False) and kmeans_filter_stats:
+            kmeans_stats_path = os.path.join(args.output, "kmeans_filtering_stats.json")
+            with open(kmeans_stats_path, 'w') as f:
+                json.dump(kmeans_filter_stats, f, indent=2)
+            logger.debug(f"Saved k-means filtering statistics to {kmeans_stats_path}")
+    else:
+        if not eukaryotic_scores:
+            logger.info("Skipping k-means pre-filtering: no eukaryotic classification scores available")
+        else:
+            logger.info("K-means pre-filtering disabled by --skip-kmeans-filtering flag")
+    
+    # Use HDBSCAN clustering on filtered data
+    logger.info("Using HDBSCAN clustering")
     precluster_success = False
     
-    # Create HDBSCAN clusterer
+    # Create HDBSCAN clusterer (GPU-accelerated if available)
     logger.info(f"Running HDBSCAN on {len(working_contig_names)} contigs (min_cluster_size={args.min_cluster_size}, min_samples={args.min_samples})")
-    clusterer = hdbscan.HDBSCAN(
-        min_cluster_size=args.min_cluster_size,
-        min_samples=args.min_samples,
-        metric="euclidean",
-        cluster_selection_method="eom",
-        cluster_selection_epsilon=0,
-        prediction_data=True,
-        core_dist_n_jobs=-1,
+    clusterer, is_gpu = _create_hdbscan_clusterer(
+        args.min_cluster_size, 
+        args.min_samples,
+        getattr(args, 'cluster_selection_epsilon', 0.3),
+        use_gpu=getattr(args, 'use_gpu', True)
     )
-
-    cluster_labels = clusterer.fit_predict(norm_data)
+    
+    if is_gpu:
+        logger.info("Using GPU-accelerated HDBSCAN clustering")
+        # Convert to GPU arrays for cuML
+        gpu_data = cp.asarray(norm_data, dtype=cp.float32)
+        cluster_labels = clusterer.fit_predict(gpu_data)
+        # Convert back to CPU numpy array
+        cluster_labels = cp.asnumpy(cluster_labels)
+    else:
+        logger.info("Using CPU HDBSCAN clustering")
+        cluster_labels = clusterer.fit_predict(norm_data)
     n_clusters = len(set(cluster_labels)) - (1 if -1 in cluster_labels else 0)
     n_noise = sum(1 for label in cluster_labels if label == -1)
     cluster_sizes = np.bincount(cluster_labels[cluster_labels >= 0]) if n_clusters > 0 else []
     logger.info(f"HDBSCAN result: {n_clusters} clusters, {n_noise} noise points, sizes: {cluster_sizes.tolist() if hasattr(cluster_sizes, 'tolist') else list(cluster_sizes)}")
     
-    # Attempt to recover noise points using soft clustering
-    if n_noise > 0 and getattr(args, 'enable_noise_recovery', False):
+    # Attempt to recover noise points using soft clustering (CPU only)
+    if n_noise > 0 and getattr(args, 'enable_noise_recovery', False) and not is_gpu:
         logger.info(f"Attempting to recover {n_noise} noise points using soft clustering...")
         
         # Get noise recovery threshold from args or use default
@@ -641,11 +895,11 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
     ]
 
     # Create clusters dataframe with original contig names (without .original suffix)
-    original_contig_names = [
-        extract_base_contig_name(name) for name in embeddings_df.index
+    final_original_contig_names = [
+        extract_base_contig_name(name) for name in working_embeddings_df.index
     ]
     contig_clusters_df = pd.DataFrame(
-        {"contig": original_contig_names, "cluster": formatted_labels}
+        {"contig": final_original_contig_names, "cluster": formatted_labels}
     )
 
     # Use contig-level clusters directly
@@ -657,6 +911,85 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
     n_noise = final_counts.get("noise", 0)
     logger.info(f"Clustering complete: {n_clusters} clusters, {n_noise} noise contigs")
     logger.debug(f"Cluster sizes: {dict(sorted(final_counts.items()))}")
+
+    # Check if only one bin was detected and perform reclustering with increased min_cluster_size
+    if n_clusters == 1:
+        logger.info("Only one bin detected. Attempting reclustering with increased min_cluster_size...")
+        
+        # Increase min_cluster_size by 1
+        new_min_cluster_size = args.min_cluster_size + 1
+        logger.info(f"Reclustering with min_cluster_size={new_min_cluster_size} (original: {args.min_cluster_size})")
+        
+        # Create new HDBSCAN clusterer with increased min_cluster_size
+        reclusterer, is_gpu_recluster = _create_hdbscan_clusterer(
+            new_min_cluster_size, 
+            args.min_samples,
+            getattr(args, 'cluster_selection_epsilon', 0.3),
+            use_gpu=getattr(args, 'use_gpu', True)
+        )
+        
+        # Perform reclustering
+        if is_gpu_recluster:
+            logger.info("Using GPU-accelerated HDBSCAN for reclustering")
+            gpu_data = cp.asarray(norm_data, dtype=cp.float32)
+            recluster_labels = reclusterer.fit_predict(gpu_data)
+            recluster_labels = cp.asnumpy(recluster_labels)
+        else:
+            logger.info("Using CPU HDBSCAN for reclustering")
+            recluster_labels = reclusterer.fit_predict(norm_data)
+        
+        n_recluster_clusters = len(set(recluster_labels)) - (1 if -1 in recluster_labels else 0)
+        n_recluster_noise = sum(1 for label in recluster_labels if label == -1)
+        recluster_sizes = np.bincount(recluster_labels[recluster_labels >= 0]) if n_recluster_clusters > 0 else []
+        logger.info(f"Reclustering result: {n_recluster_clusters} clusters, {n_recluster_noise} noise points, sizes: {recluster_sizes.tolist() if hasattr(recluster_sizes, 'tolist') else list(recluster_sizes)}")
+        
+        # Only use reclustering results if we got more than one cluster
+        if n_recluster_clusters > 1:
+            logger.info(f"Reclustering successful: {n_recluster_clusters} clusters found. Using reclustering results.")
+            
+            # Update cluster labels with reclustering results
+            cluster_labels = recluster_labels
+            clusterer = reclusterer  # Update clusterer for potential noise recovery
+            
+            # Attempt noise recovery on reclustered data if enabled
+            if n_recluster_noise > 0 and getattr(args, 'enable_noise_recovery', False) and not is_gpu_recluster:
+                logger.info(f"Attempting to recover {n_recluster_noise} noise points from reclustering using soft clustering...")
+                
+                noise_threshold = getattr(args, 'noise_recovery_threshold', 0.5)
+                recovered_labels, recovery_stats = soft_clustering_noise_recovery(
+                    reclusterer, norm_data, recluster_labels, noise_threshold, args.output
+                )
+                
+                # Update cluster labels with recovered points
+                cluster_labels = recovered_labels
+                
+                # Update statistics
+                n_recluster_clusters_after = len(set(cluster_labels)) - (1 if -1 in cluster_labels else 0)
+                n_recluster_noise_after = sum(1 for label in cluster_labels if label == -1)
+                logger.info(f"After reclustering noise recovery: {n_recluster_clusters_after} clusters, {n_recluster_noise_after} noise points")
+            
+            # Update formatted labels and contig clusters dataframe
+            formatted_labels = [
+                f"bin_{label}" if label != -1 else "noise" for label in cluster_labels
+            ]
+            
+            contig_clusters_df = pd.DataFrame(
+                {"contig": final_original_contig_names, "cluster": formatted_labels}
+            )
+            
+            # Update final counts
+            final_counts = contig_clusters_df["cluster"].value_counts().to_dict()
+            n_clusters = len([k for k in final_counts.keys() if k != "noise"])
+            n_noise = final_counts.get("noise", 0)
+            logger.info(f"Final clustering result after reclustering: {n_clusters} clusters, {n_noise} noise contigs")
+            logger.debug(f"Final cluster sizes: {dict(sorted(final_counts.items()))}")
+            
+            # Update clusters_df for consistency
+            clusters_df = contig_clusters_df
+        else:
+            logger.info(f"Reclustering did not improve results ({n_recluster_clusters} clusters). Keeping original single bin.")
+    else:
+        logger.info(f"Multiple bins detected ({n_clusters}). No reclustering needed.")
 
     # Filter out noise contigs for final bins.csv
     final_bins_df = contig_clusters_df[contig_clusters_df["cluster"] != "noise"].copy()
@@ -687,8 +1020,8 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
     # Use UMAP for visualization only if keeping intermediate files
     if getattr(args, "keep_intermediate", False):
         logger.debug("Performing UMAP dimensionality reduction for visualization...")
-        umap_embeddings_df = embeddings_df
-        logger.debug(f"Using original data for UMAP: {umap_embeddings_df.shape[0]} contigs")
+        umap_embeddings_df = working_embeddings_df
+        logger.debug(f"Using filtered data for UMAP: {umap_embeddings_df.shape[0]} contigs")
         
         # Create UMAP reducer
         reducer = umap.UMAP(
@@ -736,7 +1069,7 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
     # Perform chimera detection for large contigs
     if not getattr(args, 'skip_chimera_detection', False):
         logger.info("Running chimera detection on large contigs...")
-        chimera_results = detect_chimeric_contigs(embeddings_df, clusters_df, args)
+        chimera_results = detect_chimeric_contigs(working_embeddings_df, clusters_df, args)
 
     logger.info(f"Saved contig-level clusters to {bins_path}")
 

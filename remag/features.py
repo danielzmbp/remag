@@ -756,7 +756,7 @@ def _process_contig_coverage_worker(args):
 
     try:
         if total_coverage_per_base is None or bam_contig_length is None:
-            logger.warning(f"No coverage data available for contig {bam_contig_name}")
+            # No coverage data available - using zero coverage
             for original_header, data in contig_data_list:
                 for fragment_header in data["fragments"]:
                     fragment_coverage[fragment_header] = 0.0
@@ -805,15 +805,8 @@ def _process_contig_coverage_worker(args):
                 effective_start = max(0, start_pos)
                 effective_end = min(end_pos, bam_contig_length)
 
-                if effective_end != end_pos:
-                    logger.debug(
-                        f"Fragment {fragment_header} extends beyond contig end, truncating from {end_pos} to {effective_end}"
-                    )
 
                 if effective_start >= effective_end:
-                    logger.warning(
-                        f"Fragment {fragment_header} has invalid coordinates: start={effective_start}, end={effective_end}"
-                    )
                     fragment_coverage[fragment_header] = 0.0
                     fragment_coverage_std[fragment_header] = 0.0
                     continue

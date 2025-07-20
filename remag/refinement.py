@@ -97,10 +97,9 @@ def cluster_contigs_kmeans_refinement(
             cluster_contig_counts[cluster_id] = set()
         cluster_contig_counts[cluster_id].add(contig_name)
 
-    logger.debug("Contigs per cluster:")
-    for cluster_id, original_contigs in cluster_contig_counts.items():
-        count = len(original_contigs)
-        logger.debug(f"  Cluster {cluster_id}: {count} contigs")
+    total_clusters = len(cluster_contig_counts)
+    if total_clusters > 0:
+        logger.debug(f"K-means created {total_clusters} clusters")
 
     return contig_clusters_df
 
@@ -504,20 +503,8 @@ def refine_contaminated_bins(
         # No need to modify fragments_dict as it contains original sequences
 
         logger.info(f"Refinement round {refinement_round} complete!")
-        logger.info("Refinement summary:")
-        for bin_id, summary in refinement_summary.items():
-            if summary["status"] == "success":
-                logger.info(
-                    f"  {bin_id}: Split into {summary['sub_bins']} clean sub-bins"
-                )
-            elif summary["status"] == "insufficient_split":
-                logger.info(
-                    f"  {bin_id}: Insufficient splitting ({summary['sub_bins']} sub-bins), kept original"
-                )
-            else:
-                logger.info(
-                    f"  {bin_id}: {summary['status']} - {summary.get('reason', 'unknown')}"
-                )
+        success_count = sum(1 for s in refinement_summary.values() if s["status"] == "success")
+        logger.info(f"Refinement summary: {success_count}/{len(refinement_summary)} bins successfully refined")
 
         # Check if we should perform another round of refinement
         if refinement_round < max_refinement_rounds:
