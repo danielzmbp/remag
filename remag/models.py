@@ -15,6 +15,7 @@ import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 from loguru import logger
+from .utils import get_torch_device
 
 
 def get_model_path(args):
@@ -99,57 +100,39 @@ class FusionLayer(nn.Module):
 
 
 class SiameseNetwork(nn.Module):
-    def __init__(self, input_size=None, embedding_dim=128, n_kmer_features=None, n_coverage_features=None):
+    def __init__(self, n_kmer_features, n_coverage_features, embedding_dim=128):
         super(SiameseNetwork, self).__init__()
         
-        if n_kmer_features is not None and n_coverage_features is not None:
-            self.dual_encoder = True
-            self.n_kmer_features = n_kmer_features
-            self.n_coverage_features = n_coverage_features
-            
-            # Separate encoders for k-mer and coverage features
-            self.kmer_encoder = nn.Sequential(
-                nn.Linear(n_kmer_features, 256),
-                nn.BatchNorm1d(256),
-                nn.LeakyReLU(),
-                nn.Dropout(0.05),
-                nn.Linear(256, 128),
-                nn.BatchNorm1d(128),
-                nn.LeakyReLU(),
-            )
-            
-            self.coverage_encoder = nn.Sequential(
-                nn.Linear(n_coverage_features, 32),
-                nn.BatchNorm1d(32),
-                nn.LeakyReLU(),
-                nn.Dropout(0.05),
-                nn.Linear(32, 16),
-                nn.BatchNorm1d(16),
-                nn.LeakyReLU(),
-            )
-            
-            # Advanced fusion layer with cross-attention and MLP
-            self.fusion_layer = FusionLayer(
-                kmer_dim=128, 
-                coverage_dim=16, 
-                embedding_dim=embedding_dim
-            )
-            
-        else:
-            self.dual_encoder = False
-            if input_size is None:
-                raise ValueError("Either provide input_size or both n_kmer_features and n_coverage_features")
-            
-            # The base network generates the representations for downstream tasks
-            self.base_network = nn.Sequential(
-                nn.Linear(input_size, 512),
-                nn.BatchNorm1d(512),
-                nn.LeakyReLU(),
-                nn.Linear(512, 256),
-                nn.BatchNorm1d(256),
-                nn.LeakyReLU(),
-                nn.Linear(256, embedding_dim),
-            )
+        self.n_kmer_features = n_kmer_features
+        self.n_coverage_features = n_coverage_features
+        
+        # Separate encoders for k-mer and coverage features
+        self.kmer_encoder = nn.Sequential(
+            nn.Linear(n_kmer_features, 256),
+            nn.BatchNorm1d(256),
+            nn.LeakyReLU(),
+            nn.Dropout(0.05),
+            nn.Linear(256, 128),
+            nn.BatchNorm1d(128),
+            nn.LeakyReLU(),
+        )
+        
+        self.coverage_encoder = nn.Sequential(
+            nn.Linear(n_coverage_features, 32),
+            nn.BatchNorm1d(32),
+            nn.LeakyReLU(),
+            nn.Dropout(0.05),
+            nn.Linear(32, 16),
+            nn.BatchNorm1d(16),
+            nn.LeakyReLU(),
+        )
+        
+        # Advanced fusion layer with cross-attention and MLP
+        self.fusion_layer = FusionLayer(
+            kmer_dim=128, 
+            coverage_dim=16, 
+            embedding_dim=embedding_dim
+        )
         
         # Barlow Twins typically uses a larger projector with higher dimensionality
         self.projection_head = nn.Sequential(
@@ -164,20 +147,17 @@ class SiameseNetwork(nn.Module):
 
     def _encode_features(self, x):
         """Internal method to encode features using appropriate architecture"""
-        if self.dual_encoder:
-            # Split input into k-mer and coverage features
-            kmer_features = x[:, :self.n_kmer_features]
-            coverage_features = x[:, self.n_kmer_features:]
-            
-            # Encode each feature type separately
-            kmer_encoded = self.kmer_encoder(kmer_features)
-            coverage_encoded = self.coverage_encoder(coverage_features)
-            
-            # Advanced fusion with cross-attention
-            representation = self.fusion_layer(kmer_encoded, coverage_encoded)
-            return representation
-        else:
-            return self.base_network(x)
+        # Split input into k-mer and coverage features
+        kmer_features = x[:, :self.n_kmer_features]
+        coverage_features = x[:, self.n_kmer_features:]
+        
+        # Encode each feature type separately
+        kmer_encoded = self.kmer_encoder(kmer_features)
+        coverage_encoded = self.coverage_encoder(coverage_features)
+        
+        # Advanced fusion with cross-attention
+        representation = self.fusion_layer(kmer_encoded, coverage_encoded)
+        return representation
 
     def forward_one(self, x):
         # Used for training, returns projection
@@ -194,76 +174,6 @@ class SiameseNetwork(nn.Module):
         output2 = self.forward_one(x2)
         return output1, output2
 
-
-class InfoNCELoss(nn.Module):
-    """
-    Calculates the InfoNCE loss for self-supervised learning.
-    This version uses a standard implementation that leverages all samples in the batch as negatives.
-    It correctly handles masking of false negatives without corrupting the true positive pairs.
-
-    Args:
-        temperature: a float value for temperature scaling
-        eps: a small value to avoid division by zero in normalization
-    """
-
-    def __init__(self, temperature=0.07, eps=1e-6):
-        super(InfoNCELoss, self).__init__()
-        self.temperature = temperature
-        self.eps = eps
-        self.criterion = nn.CrossEntropyLoss(reduction="none")
-
-    def forward(self, output1, output2, base_ids):
-        """
-        Args:
-            output1: a tensor of shape (batch_size, embedding_dim)
-            output2: a tensor of shape (batch_size, embedding_dim)
-            base_ids: a tensor of shape (batch_size) for identifying false negatives
-        """
-        batch_size = output1.shape[0]
-        device = output1.device
-
-        # Concatenate the two sets of features to create a 2N x D tensor
-        features = torch.cat([output1, output2], dim=0)
-
-        # Normalize features for cosine similarity. Add eps for numerical stability.
-        features = nn.functional.normalize(features, p=2, dim=1, eps=self.eps)
-
-        # Create a 2N x 2N similarity matrix
-        similarity_matrix = torch.matmul(features, features.T) / self.temperature
-
-        # --- Create Labels for Positive Pairs ---
-        # The positive for feature i (from output1) is feature i + batch_size (from output2)
-        # and vice-versa.
-        labels = torch.arange(batch_size, device=device)
-        labels = torch.cat([labels + batch_size, labels], dim=0)
-
-        # We need to mask out "false negatives" (other fragments from the same contig)
-        # without masking out the "true positives".
-
-        # 1. Create a mask that identifies all pairs from the same contig
-        all_base_ids = torch.cat([base_ids, base_ids], dim=0)
-        mask_same_contig = all_base_ids.unsqueeze(1) == all_base_ids.unsqueeze(0)
-
-        # 2. Create a mask that identifies the true positive pairs
-        mask_positives = torch.zeros_like(mask_same_contig)
-        mask_positives[torch.arange(2 * batch_size), labels] = 1
-
-        # 3. Create the final mask for elements to be IGNORED in the loss.
-        # These are pairs from the same contig that are NOT the true positive pair.
-        # This also implicitly handles the self-similarity (diagonal) case because a
-        # sample is never its own positive pair in this setup.
-        mask_to_ignore = mask_same_contig & ~mask_positives.bool()
-
-        # 4. Apply the mask by setting the logits of ignored pairs to a very low value.
-        similarity_matrix[mask_to_ignore] = -1e4
-
-        # --- Calculate Loss ---
-        loss_vec = self.criterion(similarity_matrix, labels)
-
-        # Calculate the mean loss (all pairs have equal weight)
-        loss = loss_vec.mean()
-
-        return loss
 
 
 class BarlowTwinsLoss(nn.Module):
@@ -422,11 +332,7 @@ def train_siamese_network(features_df, args):
     # Load existing model if available
     if os.path.exists(model_path):
         logger.info(f"Loading existing model from {model_path}")
-        device = torch.device(
-            "cuda"
-            if torch.cuda.is_available()
-            else "mps" if torch.backends.mps.is_available() else "cpu"
-        )
+        device = get_torch_device()
         model = SiameseNetwork(
             n_kmer_features=n_kmer_features, 
             n_coverage_features=n_coverage_features,
@@ -435,11 +341,7 @@ def train_siamese_network(features_df, args):
         model.load_state_dict(torch.load(model_path, map_location=device, weights_only=False))
         return model
 
-    device = torch.device(
-        "cuda"
-        if torch.cuda.is_available()
-        else "mps" if torch.backends.mps.is_available() else "cpu"
-    )
+    device = get_torch_device()
 
     # Create dataset and dataloader
     dataset = SequenceDataset(features_df, max_positive_pairs=args.max_positive_pairs)
@@ -596,11 +498,7 @@ def generate_embeddings(model, features_df, args):
         import pandas as pd
         return pd.read_csv(embeddings_path, index_col=0)
 
-    device = torch.device(
-        "cuda"
-        if torch.cuda.is_available()
-        else "mps" if torch.backends.mps.is_available() else "cpu"
-    )
+    device = get_torch_device()
     logger.debug(f"Using device: {device}")
 
     model.eval()
@@ -642,11 +540,7 @@ def generate_embeddings(model, features_df, args):
 
 def generate_embeddings_for_fragments(model, features_df, fragment_names, args):
     """Generate embeddings for specific fragments (e.g., h1/h2 fragments for chimera detection)."""
-    device = torch.device(
-        "cuda"
-        if torch.cuda.is_available()
-        else "mps" if torch.backends.mps.is_available() else "cpu"
-    )
+    device = get_torch_device()
     logger.debug(f"Using device: {device}")
 
     model.eval()

@@ -17,7 +17,7 @@ from loguru import logger
 import os
 import json
 
-from .utils import extract_base_contig_name
+from .utils import extract_base_contig_name, get_torch_device
 import torch
 
 # Try to import cuML for GPU acceleration
@@ -412,11 +412,7 @@ def detect_chimeric_contigs(embeddings_df, clusters_df, args):
     model_path = get_model_path(args)
     if os.path.exists(model_path):
         logger.info(f"Loading trained model from {model_path}")
-        device = torch.device(
-            "cuda"
-            if torch.cuda.is_available()
-            else "mps" if torch.backends.mps.is_available() else "cpu"
-        )
+        device = get_torch_device()
         
         # Import the model class
         from .models import SiameseNetwork

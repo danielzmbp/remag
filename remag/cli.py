@@ -160,13 +160,6 @@ def validate_coverage_options(ctx, param, value):
     help="Dimensionality of contig embeddings in contrastive learning.",
 )
 @click.option(
-    "--nce-temperature",
-    type=click.FloatRange(min=0.01, max=0.5),
-    default=0.07,
-    show_default=True,
-    help="[Deprecated] Temperature parameter (not used with Barlow Twins loss).",
-)
-@click.option(
     "--base-learning-rate",
     type=click.FloatRange(min=1e-5, max=0.1),
     default=8e-3,
@@ -242,10 +235,10 @@ def validate_coverage_options(ctx, param, value):
     help="Number of random fragments per contig for data augmentation.",
 )
 @click.option(
-    "--skip-chimera-detection",
+    "--enable-chimera-detection",
     is_flag=True,
-    default=True,
-    help="Skip chimeric contig detection and splitting for large contigs.",
+    default=False,
+    help="Enable chimeric contig detection and splitting for large contigs.",
 )
 @click.option(
     "--cluster-selection-epsilon",
@@ -274,7 +267,6 @@ def main_cli(
     epochs,
     batch_size,
     embedding_dim,
-    nce_temperature,
     base_learning_rate,
     min_cluster_size,
     min_samples,
@@ -287,7 +279,7 @@ def main_cli(
     skip_refinement,
     max_refinement_rounds,
     num_augmentations,
-    skip_chimera_detection,
+    enable_chimera_detection,
     cluster_selection_epsilon,
     keep_intermediate,
     skip_kmeans_filtering,
@@ -301,7 +293,6 @@ def main_cli(
         epochs=epochs,
         batch_size=batch_size,
         embedding_dim=embedding_dim,
-        nce_temperature=nce_temperature,
         base_learning_rate=base_learning_rate,
         min_cluster_size=min_cluster_size,
         min_samples=min_samples,
@@ -314,7 +305,7 @@ def main_cli(
         skip_refinement=skip_refinement,
         max_refinement_rounds=max_refinement_rounds,
         num_augmentations=num_augmentations,
-        skip_chimera_detection=skip_chimera_detection,
+        skip_chimera_detection=not enable_chimera_detection,
         cluster_selection_epsilon=cluster_selection_epsilon,
         keep_intermediate=keep_intermediate,
         skip_kmeans_filtering=skip_kmeans_filtering,

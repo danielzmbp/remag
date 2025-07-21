@@ -7,6 +7,17 @@ import os
 import sys
 from loguru import logger
 from typing import Dict, List, Union
+import torch
+
+
+def get_torch_device():
+    """Get the appropriate torch device (CUDA, MPS, or CPU)."""
+    device = torch.device(
+        "cuda"
+        if torch.cuda.is_available()
+        else "mps" if torch.backends.mps.is_available() else "cpu"
+    )
+    return device
 
 
 def setup_logging(output_dir=None, verbose=False):
