@@ -591,152 +591,6 @@ def plot_umap(umap_df, output_dir):
 
 
 
-def soft_clustering_noise_recovery(clusterer, embeddings, cluster_labels, noise_threshold=0.5, output_dir=None):
-    """
-    Recover noise points using HDBSCAN's soft clustering membership vectors.
-    
-    Uses all_points_membership_vectors to get soft cluster assignments for all points,
-    then assigns noise points to clusters with highest membership probability above threshold.
-    
-    Args:
-        clusterer: Fitted HDBSCAN clusterer with prediction_data=True
-        embeddings: Normalized embedding matrix used for clustering (unused but kept for interface compatibility)
-        cluster_labels: Original cluster labels from HDBSCAN
-        noise_threshold: Minimum membership probability to assign noise point to cluster
-        output_dir: Directory to save debugging information
-    
-    Returns:
-        tuple: (recovered_labels, recovery_stats)
-            - recovered_labels: Updated cluster labels with recovered noise points
-            - recovery_stats: Dict with recovery statistics
-    """
-    logger.debug(f"Attempting soft clustering noise recovery with threshold={noise_threshold}")
-    
-    # Find noise points
-    noise_mask = cluster_labels == -1
-    noise_indices = np.where(noise_mask)[0]
-    n_noise_original = len(noise_indices)
-    
-    if n_noise_original == 0:
-        logger.debug("No noise points to recover")
-        return cluster_labels.copy(), {"noise_original": 0, "noise_recovered": 0, "noise_remaining": 0}
-    
-    logger.debug(f"Found {n_noise_original} noise points to attempt recovery")
-    
-    # Get soft cluster membership vectors for noise points only
-    try:
-        # More efficient: only compute for noise points using approximate_predict
-        if hasattr(clusterer, 'prediction_data_') and clusterer.prediction_data_ is not None:
-            # Use approximate_predict for noise points only - much faster
-            embeddings_noise = embeddings[noise_indices]
-            noise_predictions = hdbscan.approximate_predict(clusterer, embeddings_noise)
-            
-            # Get membership vectors for just the noise points
-            soft_clusters_noise = hdbscan.membership_vector(clusterer, embeddings_noise)
-            logger.debug(f"Generated soft clustering vectors for noise points only: {soft_clusters_noise.shape}")
-            
-            # Create full-size array and populate only noise indices
-            soft_clusters = np.zeros((len(embeddings), soft_clusters_noise.shape[1]))
-            soft_clusters[noise_indices] = soft_clusters_noise
-        else:
-            # Fallback to full computation if prediction data not available
-            soft_clusters = hdbscan.all_points_membership_vectors(clusterer)
-            logger.debug(f"Generated soft clustering vectors (fallback): {soft_clusters.shape}")
-    except Exception as e:
-        logger.warning(f"Failed to generate soft clustering vectors: {e}")
-        return cluster_labels.copy(), {"noise_original": n_noise_original, "noise_recovered": 0, "noise_remaining": n_noise_original}
-    
-    # Create copy of original labels for modification
-    recovered_labels = cluster_labels.copy()
-    
-    # Track recovery statistics
-    recovered_count = 0
-    cluster_assignments = {}
-    noise_analysis = []
-    
-    # Get valid cluster indices (non-noise clusters from original clustering)
-    valid_clusters = np.unique(cluster_labels[cluster_labels >= 0])
-    
-    # Vectorized processing of noise points
-    if len(noise_indices) > 0:
-        # Extract membership vectors for noise points only
-        noise_memberships = soft_clusters[noise_indices]
-        
-        # Find best cluster for each noise point (vectorized)
-        best_cluster_internal_indices = np.argmax(noise_memberships, axis=1)
-        best_memberships = noise_memberships[np.arange(len(noise_indices)), best_cluster_internal_indices]
-        
-        # Map internal indices to cluster labels (vectorized)
-        valid_mask = best_cluster_internal_indices < len(valid_clusters)
-        best_cluster_labels = np.full(len(noise_indices), -1, dtype=int)
-        best_cluster_labels[valid_mask] = valid_clusters[best_cluster_internal_indices[valid_mask]]
-        
-        # Apply threshold filter
-        assignment_mask = (best_memberships >= noise_threshold) & (best_cluster_labels != -1)
-        assignable_indices = noise_indices[assignment_mask]
-        assignable_labels = best_cluster_labels[assignment_mask]
-        
-        # Assign recovered points
-        recovered_labels[assignable_indices] = assignable_labels
-        recovered_count = len(assignable_indices)
-        
-        # Track cluster assignments
-        unique_labels, counts = np.unique(assignable_labels, return_counts=True)
-        cluster_assignments = dict(zip(unique_labels.astype(int), counts.astype(int)))
-        
-        # Create analysis data for debugging (only if debug logging enabled)
-        if logger.isEnabledFor(logging.DEBUG):
-            for i, noise_idx in enumerate(noise_indices):
-                membership_vector = noise_memberships[i]
-                best_cluster_internal_idx = best_cluster_internal_indices[i]
-                best_membership = best_memberships[i]
-                best_cluster_label = best_cluster_labels[i]
-                assigned = assignment_mask[i]
-                
-                noise_analysis.append({
-                    "noise_index": int(noise_idx),
-                    "membership_vector": membership_vector.tolist(),
-                    "best_cluster_internal_idx": int(best_cluster_internal_idx),
-                    "best_cluster_label": int(best_cluster_label) if best_cluster_label != -1 else None,
-                    "best_membership": float(best_membership),
-                    "assigned": bool(assigned)
-                })
-                
-                logger.debug(f"Noise point {noise_idx}: best_cluster={best_cluster_label}, membership={best_membership:.3f}, threshold={noise_threshold:.3f}")
-                
-                if assigned:
-                    logger.debug(f"Recovered noise point {noise_idx} -> cluster {best_cluster_label} (membership: {best_membership:.3f})")
-    
-    n_noise_remaining = n_noise_original - recovered_count
-    
-    # Log recovery results
-    logger.info(f"Soft clustering noise recovery: {recovered_count}/{n_noise_original} points recovered ({n_noise_remaining} remain noise)")
-    
-    if cluster_assignments:
-        assignment_summary = ", ".join([f"cluster_{k}: {v}" for k, v in sorted(cluster_assignments.items())])
-        logger.debug(f"Recovery distribution: {assignment_summary}")
-    
-    # Calculate membership statistics
-    memberships_array = np.array([point["best_membership"] for point in noise_analysis])
-    recovery_stats = {
-        "method": "soft_clustering_hdbscan",
-        "noise_original": n_noise_original,
-        "noise_recovered": recovered_count,
-        "noise_remaining": n_noise_remaining,
-        "recovery_rate": recovered_count / n_noise_original if n_noise_original > 0 else 0.0,
-        "cluster_assignments": {int(k): v for k, v in cluster_assignments.items()},
-        "membership_threshold": noise_threshold,
-        "membership_stats": {
-            "min": float(memberships_array.min()) if len(memberships_array) > 0 else 0.0,
-            "max": float(memberships_array.max()) if len(memberships_array) > 0 else 0.0,
-            "mean": float(memberships_array.mean()) if len(memberships_array) > 0 else 0.0,
-            "median": float(np.median(memberships_array)) if len(memberships_array) > 0 else 0.0,
-            "above_threshold": int(np.sum(memberships_array >= noise_threshold)) if len(memberships_array) > 0 else 0
-        }
-    }
-    
-    
-    return recovered_labels, recovery_stats
 
 
 def cluster_contigs(embeddings_df, fragments_dict, args):
@@ -857,38 +711,6 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
     cluster_sizes = np.bincount(cluster_labels[cluster_labels >= 0]) if n_clusters > 0 else []
     logger.info(f"HDBSCAN result: {n_clusters} clusters, {n_noise} noise points, sizes: {cluster_sizes.tolist() if hasattr(cluster_sizes, 'tolist') else list(cluster_sizes)}")
     
-    # Attempt to recover noise points using soft clustering (CPU only)
-    if n_noise > 0 and getattr(args, 'enable_noise_recovery', False) and not is_gpu:
-        logger.info(f"Attempting to recover {n_noise} noise points using soft clustering...")
-        
-        # Get noise recovery threshold from args or use default
-        noise_threshold = getattr(args, 'noise_recovery_threshold', 0.5)
-        
-        recovered_labels, recovery_stats = soft_clustering_noise_recovery(
-            clusterer, norm_data, cluster_labels, noise_threshold, args.output
-        )
-        
-        # Update cluster labels with recovered points
-        cluster_labels = recovered_labels
-        
-        # Update statistics
-        n_clusters_after = len(set(cluster_labels)) - (1 if -1 in cluster_labels else 0)
-        n_noise_after = sum(1 for label in cluster_labels if label == -1)
-        cluster_sizes_after = np.bincount(cluster_labels[cluster_labels >= 0]) if n_clusters_after > 0 else []
-        
-        logger.info(f"After noise recovery: {n_clusters_after} clusters, {n_noise_after} noise points, sizes: {cluster_sizes_after.tolist() if hasattr(cluster_sizes_after, 'tolist') else list(cluster_sizes_after)}")
-        
-        # Save recovery statistics only if keeping intermediate files
-        if getattr(args, "keep_intermediate", False):
-            recovery_stats_path = os.path.join(args.output, "soft_clustering_recovery_stats.json")
-            with open(recovery_stats_path, 'w') as f:
-                json.dump(recovery_stats, f, indent=2)
-            logger.debug(f"Saved noise recovery statistics to {recovery_stats_path}")
-    else:
-        if n_noise == 0:
-            logger.debug("No noise points found - skipping noise recovery")
-        else:
-            logger.debug("Noise recovery disabled by default - use --enable-noise-recovery to enable")
     
     formatted_labels = [
         f"bin_{label}" if label != -1 else "noise" for label in cluster_labels
@@ -949,24 +771,8 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
             
             # Update cluster labels with reclustering results
             cluster_labels = recluster_labels
-            clusterer = reclusterer  # Update clusterer for potential noise recovery
+            clusterer = reclusterer
             
-            # Attempt noise recovery on reclustered data if enabled
-            if n_recluster_noise > 0 and getattr(args, 'enable_noise_recovery', False) and not is_gpu_recluster:
-                logger.info(f"Attempting to recover {n_recluster_noise} noise points from reclustering using soft clustering...")
-                
-                noise_threshold = getattr(args, 'noise_recovery_threshold', 0.5)
-                recovered_labels, recovery_stats = soft_clustering_noise_recovery(
-                    reclusterer, norm_data, recluster_labels, noise_threshold, args.output
-                )
-                
-                # Update cluster labels with recovered points
-                cluster_labels = recovered_labels
-                
-                # Update statistics
-                n_recluster_clusters_after = len(set(cluster_labels)) - (1 if -1 in cluster_labels else 0)
-                n_recluster_noise_after = sum(1 for label in cluster_labels if label == -1)
-                logger.info(f"After reclustering noise recovery: {n_recluster_clusters_after} clusters, {n_recluster_noise_after} noise points")
             
             # Update formatted labels and contig clusters dataframe
             formatted_labels = [

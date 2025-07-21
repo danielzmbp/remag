@@ -96,7 +96,6 @@ REMAG uses a sophisticated multi-stage pipeline specifically designed for eukary
 3. **Representation Learning**: Trains a Siamese neural network with contrastive learning to generate meaningful contig embeddings
 4. **HDBSCAN Clustering**: 
    - HDBSCAN clustering on contig embeddings
-   - Noise point recovery using soft clustering
 5. **Chimera Detection**: Analyzes large contigs for chimeric sequences using embedding similarity
 6. **Quality Assessment**: Uses miniprot against eukaryotic core genes to detect contamination
 7. **Iterative Refinement**: Splits contaminated bins based on core gene duplications
@@ -107,10 +106,9 @@ REMAG uses a sophisticated multi-stage pipeline specifically designed for eukary
 - **Contrastive Learning**: Uses Siamese neural networks with InfoNCE loss for contig representation learning
 - **Multi-Modal Features**: Combines k-mer composition (4-mers) with coverage profiles using dual encoders
 - **Bacterial Pre-filtering**: Integrated 4CAC classifier removes bacterial contigs before main clustering
-- **Advanced Clustering**: HDBSCAN clustering with soft noise recovery
+- **Advanced Clustering**: HDBSCAN clustering
 - **Chimera Detection**: Specialized detection of chimeric contigs using embedding similarity analysis
 - **Quality-Driven Refinement**: Iterative bin splitting based on core gene duplications (miniprot + eukaryotic database)
-- **Noise Recovery**: Advanced noise point recovery using approximate HDBSCAN prediction
 - **Flexible Input**: Supports multiple BAM files (each representing a sample) and TSV coverage data
 - **Rich Visualization**: UMAP projections with clustering results
 
@@ -142,8 +140,6 @@ REMAG uses a sophisticated multi-stage pipeline specifically designed for eukary
   --num-augmentations INTEGER RANGE
                                   Number of random fragments per contig.  [default: 8; 0<=x<=64]
   --skip-chimera-detection        Skip chimera detection for large contigs.
-  --noise-recovery-threshold FLOAT RANGE
-                                  Threshold for noise point recovery (lower = more permissive).  [default: 0.3; 0.1<=x<=0.9]
   -h, --help                      Show this message and exit.
 ```
 
@@ -152,7 +148,7 @@ REMAG uses a sophisticated multi-stage pipeline specifically designed for eukary
 REMAG produces several output files:
 
 - `bins/`: Directory containing FASTA files for each bin
-- `bins.csv`: Final contig-to-bin assignments (excludes noise contigs)
+- `bins.csv`: Final contig-to-bin assignments
 - `embeddings.csv`: Contig embeddings from the neural network
 - `umap_embeddings.csv`: UMAP projections for visualization
 - `umap_plot.pdf`: UMAP visualization plot

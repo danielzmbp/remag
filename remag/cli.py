@@ -67,7 +67,7 @@ click.rich_click.OPTION_GROUPS = {
         },
         {
             "name": "Clustering",
-            "options": ["--min-cluster-size", "--min-samples", "--cluster-selection-epsilon", "--noise-recovery-threshold", "--enable-noise-recovery"],
+            "options": ["--min-cluster-size", "--min-samples", "--cluster-selection-epsilon"],
         },
         {
             "name": "Filtering & Processing",
@@ -255,19 +255,6 @@ def validate_coverage_options(ctx, param, value):
     help="HDBSCAN cluster selection epsilon for reachability-based clustering (higher = more flexible clustering).",
 )
 @click.option(
-    "--noise-recovery-threshold",
-    type=click.FloatRange(min=0, max=0.8),
-    default=0.5,
-    show_default=True,
-    help="Similarity threshold for recovering noise points into bins (lower = more permissive).",
-)
-@click.option(
-    "--enable-noise-recovery",
-    is_flag=True,
-    default=False,
-    help="Enable noise recovery using soft clustering (disabled by default).",
-)
-@click.option(
     "--keep-intermediate",
     is_flag=True,
     default=False,
@@ -302,8 +289,6 @@ def main_cli(
     num_augmentations,
     skip_chimera_detection,
     cluster_selection_epsilon,
-    noise_recovery_threshold,
-    enable_noise_recovery,
     keep_intermediate,
     skip_kmeans_filtering,
 ):
@@ -331,8 +316,6 @@ def main_cli(
         num_augmentations=num_augmentations,
         skip_chimera_detection=skip_chimera_detection,
         cluster_selection_epsilon=cluster_selection_epsilon,
-        noise_recovery_threshold=noise_recovery_threshold,
-        enable_noise_recovery=enable_noise_recovery,
         keep_intermediate=keep_intermediate,
         skip_kmeans_filtering=skip_kmeans_filtering,
     )
