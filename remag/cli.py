@@ -211,8 +211,8 @@ def validate_coverage_options(ctx, param, value):
 )
 @click.option(
     "--min-bin-size",
-    type=click.IntRange(min=50000, max=5000000),
-    default=50000,
+    type=click.IntRange(min=50000, max=10000000),
+    default=100000,
     show_default=True,
     help="Minimum total bin size in base pairs for output.",
 )
