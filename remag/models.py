@@ -22,56 +22,80 @@ def get_model_path(args):
     return os.path.join(args.output, "siamese_model.pt")
 
 
-class BilinearPooling(nn.Module):
-    def __init__(self, kmer_dim, coverage_dim, output_dim=256):
-        super(BilinearPooling, self).__init__()
-        self.kmer_dim = kmer_dim
-        self.coverage_dim = coverage_dim
-        self.output_dim = output_dim
+class FusionLayer(nn.Module):
+    def __init__(self, kmer_dim, coverage_dim, embedding_dim, hidden_dim=None):
+        super(FusionLayer, self).__init__()
         
-        # The outer product creates kmer_dim * coverage_dim features
-        self.tensor_dim = kmer_dim * coverage_dim
+        if hidden_dim is None:
+            hidden_dim = (kmer_dim + coverage_dim) // 2
         
-        # Dimensionality reduction from tensor fusion
-        self.reduction_layer = nn.Sequential(
-            nn.Linear(self.tensor_dim, output_dim * 2),
-            nn.BatchNorm1d(output_dim * 2),
-            nn.LeakyReLU(),
-            nn.Dropout(0.1),
-            nn.Linear(output_dim * 2, output_dim),
-            nn.BatchNorm1d(output_dim),
-            nn.LeakyReLU(),
+        # Cross-attention mechanism - use common dimension
+        common_dim = max(kmer_dim, coverage_dim)
+        self.kmer_to_coverage_attention = nn.MultiheadAttention(
+            embed_dim=common_dim, num_heads=4, dropout=0.1, batch_first=True
+        )
+        self.coverage_to_kmer_attention = nn.MultiheadAttention(
+            embed_dim=common_dim, num_heads=1, dropout=0.1, batch_first=True
         )
         
-    def forward(self, kmer_features, coverage_features):
-        """
-        Compute bilinear pooling using outer product (tensor fusion)
+        # Projection layers to common dimension for cross-attention
+        self.kmer_to_common = nn.Linear(kmer_dim, common_dim)
+        self.coverage_to_common = nn.Linear(coverage_dim, common_dim)
+        self.common_to_kmer = nn.Linear(common_dim, kmer_dim)
+        self.common_to_coverage = nn.Linear(common_dim, coverage_dim)
         
-        Args:
-            kmer_features: [batch_size, kmer_dim]
-            coverage_features: [batch_size, coverage_dim]
-            
-        Returns:
-            fused_features: [batch_size, output_dim]
-        """
+        # Shallow MLP for fusion
+        self.fusion_mlp = nn.Sequential(
+            nn.Linear(kmer_dim + coverage_dim, hidden_dim),
+            nn.BatchNorm1d(hidden_dim),
+            nn.LeakyReLU(0.1),
+            nn.Dropout(0.1),
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.BatchNorm1d(hidden_dim // 2),
+            nn.LeakyReLU(0.1),
+            nn.Dropout(0.05),
+            nn.Linear(hidden_dim // 2, embedding_dim),
+            nn.BatchNorm1d(embedding_dim),
+            nn.LeakyReLU(0.1),
+        )
+        
+        # Residual connection weights
+        self.alpha = nn.Parameter(torch.tensor(0.5))
+        self.beta = nn.Parameter(torch.tensor(0.5))
+        
+    def forward(self, kmer_features, coverage_features):
         batch_size = kmer_features.size(0)
         
-        # Compute outer product for each sample in the batch
-        # kmer_features: [B, kmer_dim] -> [B, kmer_dim, 1]
-        # coverage_features: [B, coverage_dim] -> [B, 1, coverage_dim]
-        kmer_expanded = kmer_features.unsqueeze(2)  # [B, kmer_dim, 1]
-        coverage_expanded = coverage_features.unsqueeze(1)  # [B, 1, coverage_dim]
+        # Project to common dimension and add sequence dimension
+        kmer_common = self.kmer_to_common(kmer_features).unsqueeze(1)
+        coverage_common = self.coverage_to_common(coverage_features).unsqueeze(1)
         
-        # Outer product: [B, kmer_dim, 1] * [B, 1, coverage_dim] -> [B, kmer_dim, coverage_dim]
-        outer_product = torch.bmm(kmer_expanded, coverage_expanded)
+        # Cross-attention: kmer attending to coverage
+        kmer_attended, _ = self.kmer_to_coverage_attention(
+            kmer_common, coverage_common, coverage_common
+        )
+        kmer_attended = kmer_attended.squeeze(1)
         
-        # Flatten the outer product tensor: [B, kmer_dim, coverage_dim] -> [B, kmer_dim * coverage_dim]
-        flattened = outer_product.view(batch_size, -1)
+        # Cross-attention: coverage attending to kmer
+        coverage_attended, _ = self.coverage_to_kmer_attention(
+            coverage_common, kmer_common, kmer_common
+        )
+        coverage_attended = coverage_attended.squeeze(1)
         
-        # Apply dimensionality reduction
-        fused_features = self.reduction_layer(flattened)
+        # Project back to original dimensions
+        kmer_attended_orig = self.common_to_kmer(kmer_attended)
+        coverage_attended_orig = self.common_to_coverage(coverage_attended)
         
-        return fused_features
+        # Residual connections
+        kmer_enhanced = self.alpha * kmer_features + (1 - self.alpha) * kmer_attended_orig
+        coverage_enhanced = self.beta * coverage_features + (1 - self.beta) * coverage_attended_orig
+        
+        # Concatenate and pass through MLP
+        fused_features = torch.cat([kmer_enhanced, coverage_enhanced], dim=1)
+        output = self.fusion_mlp(fused_features)
+        
+        return output
+
 
 
 class SiameseNetwork(nn.Module):
@@ -104,18 +128,11 @@ class SiameseNetwork(nn.Module):
                 nn.LeakyReLU(),
             )
             
-            # Bilinear pooling for tensor fusion of encoded features
-            self.bilinear_pooling = BilinearPooling(
+            # Advanced fusion layer with cross-attention and MLP
+            self.fusion_layer = FusionLayer(
                 kmer_dim=128, 
                 coverage_dim=16, 
-                output_dim=256
-            )
-            
-            # Final fusion layer from bilinear pooling output
-            self.fusion_layer = nn.Sequential(
-                nn.Linear(256, embedding_dim),
-                nn.BatchNorm1d(embedding_dim),
-                nn.LeakyReLU(),
+                embedding_dim=embedding_dim
             )
             
         else:
@@ -151,9 +168,8 @@ class SiameseNetwork(nn.Module):
             kmer_encoded = self.kmer_encoder(kmer_features)
             coverage_encoded = self.coverage_encoder(coverage_features)
             
-            # Apply bilinear pooling (tensor fusion via outer product)
-            bilinear_features = self.bilinear_pooling(kmer_encoded, coverage_encoded)
-            representation = self.fusion_layer(bilinear_features)
+            # Advanced fusion with cross-attention
+            representation = self.fusion_layer(kmer_encoded, coverage_encoded)
             return representation
         else:
             return self.base_network(x)

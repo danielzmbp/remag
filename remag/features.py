@@ -633,10 +633,26 @@ def get_features(
             bam_files, fragments_dict, cores
         )
         df = pd.concat([df, coverage_df.reindex(df.index).fillna(0.0)], axis=1)
+        
+        # Filter out fragments with zero coverage across all samples
+        coverage_columns = [col for col in coverage_df.columns if "coverage" in col.lower()]
+        if coverage_columns:
+            zero_coverage_mask = (df[coverage_columns] == 0).all(axis=1)
+            df = df[~zero_coverage_mask]
+            if zero_coverage_mask.sum() > 0:
+                logger.info(f"Filtered out {zero_coverage_mask.sum()} fragments with zero coverage across all samples")
     elif tsv_files:
         logger.debug("Calculating coverage from TSV files...")
         coverage_df = calculate_coverage_from_tsv(tsv_files, fragments_dict)
         df = pd.concat([df, coverage_df.reindex(df.index).fillna(0.0)], axis=1)
+        
+        # Filter out fragments with zero coverage across all samples
+        coverage_columns = [col for col in coverage_df.columns if "coverage" in col.lower()]
+        if coverage_columns:
+            zero_coverage_mask = (df[coverage_columns] == 0).all(axis=1)
+            df = df[~zero_coverage_mask]
+            if zero_coverage_mask.sum() > 0:
+                logger.info(f"Filtered out {zero_coverage_mask.sum()} fragments with zero coverage across all samples")
     else:
         logger.info("No coverage data provided - using k-mer features only")
 
