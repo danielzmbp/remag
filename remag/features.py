@@ -650,10 +650,22 @@ def get_features(
             f"Applied log transformation to {len(coverage_columns)} coverage features"
         )
 
-        # Scale coverage features to range [0, 1]
-        df[coverage_columns] = MinMaxScaler(feature_range=(0, 1)).fit_transform(
-            df[coverage_columns]
-        )
+        # Apply per-sample scaling to preserve within-sample relationships
+        sample_names = set()
+        for col in coverage_columns:
+            # Extract sample name from column (e.g., "sample1_coverage" -> "sample1")
+            if "_coverage" in col:
+                sample_name = col.replace("_coverage", "").replace("_std", "")
+                sample_names.add(sample_name)
+        
+        # Scale each sample's coverage columns independently
+        for sample_name in sample_names:
+            sample_cols = [col for col in coverage_columns if col.startswith(f"{sample_name}_")]
+            if sample_cols:
+                df[sample_cols] = MinMaxScaler(feature_range=(0, 1)).fit_transform(df[sample_cols])
+                logger.info(f"Applied per-sample scaling to {len(sample_cols)} features for sample '{sample_name}'")
+        
+        logger.info(f"Applied per-sample scaling to {len(sample_names)} samples")
     else:
         logger.info("Using k-mer features only")
 
@@ -1110,10 +1122,32 @@ def calculate_coverage_from_tsv(
     return coverage_features
 
 
+def _get_total_mapped_reads(bam_file: str) -> int:
+    """Calculate total number of mapped reads in a BAM file.
+    
+    Args:
+        bam_file: Path to BAM file
+        
+    Returns:
+        Total number of mapped reads
+    """
+    try:
+        with pysam.AlignmentFile(bam_file, "rb") as bamfile:
+            total_mapped = bamfile.mapped
+            logger.info(f"BAM file {os.path.basename(bam_file)}: {total_mapped:,} mapped reads")
+            return total_mapped
+    except Exception as e:
+        logger.error(f"Error calculating mapped reads for {bam_file}: {e}")
+        return 1  # Avoid division by zero
+
+
 def calculate_coverage_from_multiple_bams(
     bam_files: List[str], fragments_dict: FragmentDict, cores: int = 16
 ) -> pd.DataFrame:
     """Calculate coverage from multiple BAM files, creating separate columns for each sample.
+    
+    Coverage is normalized by total mapped reads per sample to account for different
+    sequencing depths, then scaled per-sample to preserve within-sample relationships.
 
     Args:
         bam_files: List of BAM file paths
@@ -1143,18 +1177,28 @@ def calculate_coverage_from_multiple_bams(
         )
 
         try:
+            # Calculate total mapped reads for normalization
+            total_mapped_reads = _get_total_mapped_reads(bam_file)
+            
             # Calculate coverage for this BAM file
             coverage, coverage_std = calculate_fragment_coverage(
                 bam_file, fragments_dict, cores
             )
+            
+            # Normalize by total mapped reads (convert to reads per million, RPM)
+            normalization_factor = total_mapped_reads / 1_000_000
+            normalized_coverage = {k: v / normalization_factor for k, v in coverage.items()}
+            normalized_coverage_std = {k: v / normalization_factor for k, v in coverage_std.items()}
+            
+            logger.info(f"Normalized coverage by {total_mapped_reads:,} mapped reads (factor: {normalization_factor:.2f})")
 
             # Create series for mean coverage
             sample_name = os.path.splitext(os.path.basename(bam_file))[0]
             mean_col_name = f"{sample_name}_coverage"
             std_col_name = f"{sample_name}_coverage_std"
 
-            mean_series = pd.Series(coverage, name=mean_col_name, dtype=float)
-            std_series = pd.Series(coverage_std, name=std_col_name, dtype=float)
+            mean_series = pd.Series(normalized_coverage, name=mean_col_name, dtype=float)
+            std_series = pd.Series(normalized_coverage_std, name=std_col_name, dtype=float)
 
             all_coverage_series.extend([mean_series, std_series])
 

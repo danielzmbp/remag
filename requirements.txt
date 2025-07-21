@@ -11,3 +11,9 @@ tqdm>=4.62.0
 umap-learn>=0.5.0
 xgboost>=1.6.0
 joblib>=1.1.0
+
+# Optional GPU dependencies
+# Install with: pip install -r requirements.txt -r requirements-gpu.txt
+# cuml>=22.04.0
+# cudf>=22.04.0
+# cupy-cuda11x>=9.0.0

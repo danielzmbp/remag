@@ -22,6 +22,58 @@ def get_model_path(args):
     return os.path.join(args.output, "siamese_model.pt")
 
 
+class BilinearPooling(nn.Module):
+    def __init__(self, kmer_dim, coverage_dim, output_dim=256):
+        super(BilinearPooling, self).__init__()
+        self.kmer_dim = kmer_dim
+        self.coverage_dim = coverage_dim
+        self.output_dim = output_dim
+        
+        # The outer product creates kmer_dim * coverage_dim features
+        self.tensor_dim = kmer_dim * coverage_dim
+        
+        # Dimensionality reduction from tensor fusion
+        self.reduction_layer = nn.Sequential(
+            nn.Linear(self.tensor_dim, output_dim * 2),
+            nn.BatchNorm1d(output_dim * 2),
+            nn.LeakyReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(output_dim * 2, output_dim),
+            nn.BatchNorm1d(output_dim),
+            nn.LeakyReLU(),
+        )
+        
+    def forward(self, kmer_features, coverage_features):
+        """
+        Compute bilinear pooling using outer product (tensor fusion)
+        
+        Args:
+            kmer_features: [batch_size, kmer_dim]
+            coverage_features: [batch_size, coverage_dim]
+            
+        Returns:
+            fused_features: [batch_size, output_dim]
+        """
+        batch_size = kmer_features.size(0)
+        
+        # Compute outer product for each sample in the batch
+        # kmer_features: [B, kmer_dim] -> [B, kmer_dim, 1]
+        # coverage_features: [B, coverage_dim] -> [B, 1, coverage_dim]
+        kmer_expanded = kmer_features.unsqueeze(2)  # [B, kmer_dim, 1]
+        coverage_expanded = coverage_features.unsqueeze(1)  # [B, 1, coverage_dim]
+        
+        # Outer product: [B, kmer_dim, 1] * [B, 1, coverage_dim] -> [B, kmer_dim, coverage_dim]
+        outer_product = torch.bmm(kmer_expanded, coverage_expanded)
+        
+        # Flatten the outer product tensor: [B, kmer_dim, coverage_dim] -> [B, kmer_dim * coverage_dim]
+        flattened = outer_product.view(batch_size, -1)
+        
+        # Apply dimensionality reduction
+        fused_features = self.reduction_layer(flattened)
+        
+        return fused_features
+
+
 class SiameseNetwork(nn.Module):
     def __init__(self, input_size=None, embedding_dim=128, n_kmer_features=None, n_coverage_features=None):
         super(SiameseNetwork, self).__init__()
@@ -52,14 +104,18 @@ class SiameseNetwork(nn.Module):
                 nn.LeakyReLU(),
             )
             
-            # Fusion layer to combine encoded features
-            fusion_input_size = 128 + 16  # kmer_encoder output + coverage_encoder output
+            # Bilinear pooling for tensor fusion of encoded features
+            self.bilinear_pooling = BilinearPooling(
+                kmer_dim=128, 
+                coverage_dim=16, 
+                output_dim=256
+            )
+            
+            # Final fusion layer from bilinear pooling output
             self.fusion_layer = nn.Sequential(
-                nn.Linear(fusion_input_size, 256),
-                nn.BatchNorm1d(256),
-                nn.LeakyReLU(),
-                nn.Dropout(0.05),
                 nn.Linear(256, embedding_dim),
+                nn.BatchNorm1d(embedding_dim),
+                nn.LeakyReLU(),
             )
             
         else:
@@ -95,9 +151,9 @@ class SiameseNetwork(nn.Module):
             kmer_encoded = self.kmer_encoder(kmer_features)
             coverage_encoded = self.coverage_encoder(coverage_features)
             
-            # Fuse the encoded features
-            fused_features = torch.cat([kmer_encoded, coverage_encoded], dim=1)
-            representation = self.fusion_layer(fused_features)
+            # Apply bilinear pooling (tensor fusion via outer product)
+            bilinear_features = self.bilinear_pooling(kmer_encoded, coverage_encoded)
+            representation = self.fusion_layer(bilinear_features)
             return representation
         else:
             return self.base_network(x)
@@ -349,7 +405,7 @@ def train_siamese_network(features_df, args):
     ).to(device)
     criterion = InfoNCELoss(temperature=args.nce_temperature)
 
-    base_learning_rate = getattr(args, 'base_learning_rate', 8e-3)
+    base_learning_rate = getattr(args, 'base_learning_rate', 1e-3)
     scaled_lr = (args.batch_size / 256) * base_learning_rate
     warmup_epochs = 5
     warmup_start_lr = scaled_lr * 0.1
