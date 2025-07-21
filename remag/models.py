@@ -151,10 +151,15 @@ class SiameseNetwork(nn.Module):
                 nn.Linear(256, embedding_dim),
             )
         
+        # Barlow Twins typically uses a larger projector with higher dimensionality
         self.projection_head = nn.Sequential(
-            nn.BatchNorm1d(embedding_dim),
-            nn.LeakyReLU(),
-            nn.Linear(embedding_dim, embedding_dim),
+            nn.Linear(embedding_dim, 2048),
+            nn.BatchNorm1d(2048),
+            nn.ReLU(inplace=True),
+            nn.Linear(2048, 2048),
+            nn.BatchNorm1d(2048),
+            nn.ReLU(inplace=True),
+            nn.Linear(2048, 2048),
         )
 
     def _encode_features(self, x):
@@ -283,11 +288,11 @@ class BarlowTwinsLoss(nn.Module):
     def forward(self, output1, output2, base_ids=None):
         """
         Args:
-            output1: a tensor of shape (batch_size, embedding_dim)
-            output2: a tensor of shape (batch_size, embedding_dim)  
+            output1: a tensor of shape (batch_size, projection_dim)
+            output2: a tensor of shape (batch_size, projection_dim)  
             base_ids: unused in Barlow Twins but kept for compatibility
         """
-        batch_size, embedding_dim = output1.shape
+        batch_size, projection_dim = output1.shape
         
         # Normalize embeddings along the batch dimension (zero mean, unit std)
         output1_norm = (output1 - output1.mean(dim=0)) / (output1.std(dim=0) + self.eps)
@@ -297,13 +302,13 @@ class BarlowTwinsLoss(nn.Module):
         cross_corr = torch.matmul(output1_norm.T, output2_norm) / batch_size
         
         # Create identity matrix on same device
-        identity = torch.eye(embedding_dim, device=output1.device)
+        identity = torch.eye(projection_dim, device=output1.device)
         
         # Compute invariance loss (diagonal terms should be close to 1)
         invariance_loss = torch.pow(torch.diagonal(cross_corr) - 1.0, 2).sum()
         
         # Compute redundancy reduction loss (off-diagonal terms should be close to 0)
-        off_diagonal_mask = ~torch.eye(embedding_dim, dtype=torch.bool, device=output1.device)
+        off_diagonal_mask = ~torch.eye(projection_dim, dtype=torch.bool, device=output1.device)
         redundancy_loss = torch.pow(cross_corr[off_diagonal_mask], 2).sum()
         
         # Total loss
@@ -470,11 +475,13 @@ def train_siamese_network(features_df, args):
         n_coverage_features=n_coverage_features,
         embedding_dim=args.embedding_dim
     ).to(device)
-    criterion = InfoNCELoss(temperature=args.nce_temperature)
+    criterion = BarlowTwinsLoss(lambda_param=5e-3)
 
+    # Barlow Twins uses different learning rate scaling
     base_learning_rate = getattr(args, 'base_learning_rate', 1e-3)
-    scaled_lr = (args.batch_size / 256) * base_learning_rate
-    warmup_epochs = 5
+    # Barlow Twins typically uses linear scaling rule with batch size
+    scaled_lr = (args.batch_size / 256) * base_learning_rate * 0.2  # Lower LR for Barlow Twins
+    warmup_epochs = 10  # Longer warmup for Barlow Twins
     warmup_start_lr = scaled_lr * 0.1
 
     optimizer = optim.AdamW(
@@ -501,8 +508,8 @@ def train_siamese_network(features_df, args):
 
     logger.info(f"Starting training for {args.epochs} epochs...")
 
-    # Early stopping parameters
-    patience = 10
+    # Early stopping parameters 
+    patience = 20
     best_loss = float("inf")
     best_model_state = None
     epochs_no_improve = 0

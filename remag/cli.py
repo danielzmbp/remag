@@ -164,7 +164,7 @@ def validate_coverage_options(ctx, param, value):
     type=click.FloatRange(min=0.01, max=0.5),
     default=0.07,
     show_default=True,
-    help="Temperature parameter for InfoNCE contrastive loss function.",
+    help="[Deprecated] Temperature parameter (not used with Barlow Twins loss).",
 )
 @click.option(
     "--base-learning-rate",
