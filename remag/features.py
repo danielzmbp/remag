@@ -746,18 +746,12 @@ def _map_fasta_to_bam_refs(
         # Try matching after splitting on space
         base_name_space = fasta_key.split(" ")[0]
         if base_name_space in bam_references:
-            logger.debug(
-                f"Matched '{fasta_key}' to BAM '{base_name_space}' (via split space)"
-            )
             bam_ref_map[original_header] = base_name_space
             continue
 
         # Try matching after splitting on last dot
         base_name_dot = fasta_key.rsplit(".", 1)[0] if "." in fasta_key else None
         if base_name_dot and base_name_dot in bam_references:
-            logger.debug(
-                f"Matched '{fasta_key}' to BAM '{base_name_dot}' (via split dot)"
-            )
             bam_ref_map[original_header] = base_name_dot
             continue
 

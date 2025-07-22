@@ -211,8 +211,6 @@ class BarlowTwinsLoss(nn.Module):
         # Compute cross-correlation matrix
         cross_corr = torch.matmul(output1_norm.T, output2_norm) / batch_size
         
-        # Create identity matrix on same device
-        identity = torch.eye(projection_dim, device=output1.device)
         
         # Compute invariance loss (diagonal terms should be close to 1)
         invariance_loss = torch.pow(torch.diagonal(cross_corr) - 1.0, 2).sum()
@@ -236,7 +234,6 @@ class SequenceDataset(Dataset):
         # Group fragment indices by base contig name
         self.contig_to_fragment_indices = self._group_indices_by_base_contig()
 
-        # Create base name to ID mapping
         self.base_name_to_id = {
             name: i for i, name in enumerate(self.contig_to_fragment_indices.keys())
         }
@@ -246,9 +243,6 @@ class SequenceDataset(Dataset):
             for frag_idx in fragment_indices:
                 self.index_to_base_id[frag_idx] = base_id
 
-        logger.debug(f"Found {len(self.contig_to_fragment_indices)} base contigs before filtering")
-        for base_name, indices in list(self.contig_to_fragment_indices.items())[:5]:
-            logger.debug(f"  {base_name}: {len(indices)} fragments")
         original_count = len(self.contig_to_fragment_indices)
         self.contig_to_fragment_indices = {
             base_name: indices
@@ -256,7 +250,7 @@ class SequenceDataset(Dataset):
             if len(indices) > 1
         }
         
-        logger.debug(f"After filtering: {len(self.contig_to_fragment_indices)} contigs with multiple fragments (removed {original_count - len(self.contig_to_fragment_indices)})")
+        logger.debug(f"Filtered to {len(self.contig_to_fragment_indices)} contigs with multiple fragments (removed {original_count - len(self.contig_to_fragment_indices)})")
 
         if not self.contig_to_fragment_indices:
             raise ValueError(
@@ -343,7 +337,6 @@ def train_siamese_network(features_df, args):
 
     device = get_torch_device()
 
-    # Create dataset and dataloader
     dataset = SequenceDataset(features_df, max_positive_pairs=args.max_positive_pairs)
     has_enough_data = len(dataset) > args.batch_size * 10
 
@@ -441,10 +434,8 @@ def train_siamese_network(features_df, args):
             optimizer.step()
             running_loss += loss.item()
 
-        # Update learning rate
         scheduler.step()
 
-        # Calculate average loss for this epoch
         avg_loss = running_loss / len(dataloader)
         current_lr = optimizer.param_groups[0]["lr"]
 
@@ -518,12 +509,9 @@ def generate_embeddings(model, features_df, args):
             batch_df = original_features_df.iloc[i:i+batch_size]
             batch_features = torch.tensor(batch_df.values, dtype=torch.float32).to(device)
             batch_embeddings = model.get_embedding(batch_features)
-            
-            # L2 normalize the embeddings
             batch_embeddings = torch.nn.functional.normalize(batch_embeddings, p=2, dim=1)
             
             for j, header in enumerate(batch_df.index):
-                # Remove .original suffix from header name
                 clean_header = header.replace(".original", "")
                 embeddings[clean_header] = batch_embeddings[j].cpu().numpy()
 

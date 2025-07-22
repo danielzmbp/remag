@@ -1,7 +1,8 @@
-# Utility functions for the plasclass module
-# 
-# This code is adapted from the 4CAC classifier:
-# https://github.com/Shamir-Lab/4CAC
+"""Utility functions for the 4CAC classifier module.
+
+This code is adapted from the 4CAC classifier:
+https://github.com/Shamir-Lab/4CAC
+"""
 
 complements = {"A": "T", "C": "G", "G": "C", "T": "A"}
 nt_bits = {"A": 0, "C": 1, "G": 2, "T": 3}
@@ -96,8 +97,7 @@ def count_kmers(args_array):
             except:
                 ind += 1
                 if ind > len(seq):
-                    logger.debug("test: " + str(k) + "  " + seq)
-                found = False
+                    found = False
                 break
         if found == True:
             break

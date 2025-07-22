@@ -65,8 +65,6 @@ def _iterative_kmeans_filtering(embeddings, contig_names, eukaryotic_scores,
             logger.info(f"Stopping k-means filtering: only {n_contigs} contigs remain")
             break
             
-        logger.debug(f"K-means filtering iteration {iteration}: {n_contigs} contigs")
-        
         # Perform k-means with k=2
         kmeans = KMeans(n_clusters=2, random_state=42, n_init=10)
         cluster_labels = kmeans.fit_predict(current_embeddings)
@@ -74,8 +72,6 @@ def _iterative_kmeans_filtering(embeddings, contig_names, eukaryotic_scores,
         # Analyze cluster sizes
         unique_labels, counts = np.unique(cluster_labels, return_counts=True)
         cluster_sizes = dict(zip(unique_labels, counts))
-        
-        logger.debug(f"K-means clusters: {cluster_sizes}")
         
         # Identify small cluster
         cluster_0_size = cluster_sizes.get(0, 0)
@@ -705,9 +701,6 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
     n_clusters = len(set(cluster_labels)) - (1 if -1 in cluster_labels else 0)
     n_noise = sum(1 for label in cluster_labels if label == -1)
     cluster_sizes = np.bincount(cluster_labels[cluster_labels >= 0]) if n_clusters > 0 else []
-    logger.info(f"HDBSCAN result: {n_clusters} clusters, {n_noise} noise points, sizes: {cluster_sizes.tolist() if hasattr(cluster_sizes, 'tolist') else list(cluster_sizes)}")
-    
-    
     formatted_labels = [
         f"bin_{label}" if label != -1 else "noise" for label in cluster_labels
     ]
@@ -727,8 +720,7 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
     final_counts = contig_clusters_df["cluster"].value_counts().to_dict()
     n_clusters = len([k for k in final_counts.keys() if k != "noise"])
     n_noise = final_counts.get("noise", 0)
-    logger.info(f"Clustering complete: {n_clusters} clusters, {n_noise} noise contigs")
-    logger.debug(f"Cluster sizes: {dict(sorted(final_counts.items()))}")
+    logger.info(f"Clustering complete: {n_clusters} clusters, {n_noise} noise contigs, sizes: {dict(sorted(final_counts.items()))}")
 
     # Check if only one bin was detected and perform reclustering with increased min_cluster_size
     if n_clusters == 1:
@@ -783,8 +775,7 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
             final_counts = contig_clusters_df["cluster"].value_counts().to_dict()
             n_clusters = len([k for k in final_counts.keys() if k != "noise"])
             n_noise = final_counts.get("noise", 0)
-            logger.info(f"Final clustering result after reclustering: {n_clusters} clusters, {n_noise} noise contigs")
-            logger.debug(f"Final cluster sizes: {dict(sorted(final_counts.items()))}")
+            logger.info(f"Final clustering result after reclustering: {n_clusters} clusters, {n_noise} noise contigs, sizes: {dict(sorted(final_counts.items()))}")
             
             # Update clusters_df for consistency
             clusters_df = contig_clusters_df
@@ -814,10 +805,6 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
     noise_contigs = cluster_contig_counts.get("noise", set())
     logger.info(f"Contigs classified as noise: {len(noise_contigs)}")
 
-    logger.debug("Contigs per cluster:")
-    for cluster_id, original_contigs in cluster_contig_counts.items():
-        count = len(original_contigs)
-        logger.debug(f"  Cluster {cluster_id}: {count} contigs")
 
     # Use UMAP for visualization only if keeping intermediate files
     if getattr(args, "keep_intermediate", False):

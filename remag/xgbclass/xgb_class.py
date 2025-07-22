@@ -1,9 +1,8 @@
-###
-# Define the plasclass class and provide a set of functions to enable classification
-# 
-# This code is adapted from the 4CAC classifier:
-# https://github.com/Shamir-Lab/4CAC
-###
+"""4CAC bacterial sequence classifier.
+
+This code is adapted from the 4CAC classifier:
+https://github.com/Shamir-Lab/4CAC
+"""
 
 import numpy as np
 import os
