@@ -5,26 +5,20 @@
 ## Quick Start
 
 ```bash
+# Clone the repository
+git clone https://github.com/danielzmbp/remag.git
+cd remag
+
 # Create conda environment and install
 conda create -n remag python=3.9
 conda activate remag
-pip install remag
+pip install .
 
 # Run REMAG
 remag -f contigs.fasta -b alignments.bam -o output_directory
 ```
 
 ## Installation
-
-### From PyPI (recommended)
-
-First, create and activate a conda environment:
-
-```bash
-conda create -n remag python=3.9
-conda activate remag
-pip install remag
-```
 
 ### From source
 
@@ -59,7 +53,7 @@ If you encounter `ModuleNotFoundError: No module named 'remag.cli'` when running
 1. **Activate your conda environment**: Make sure you're in the correct environment with `conda activate remag`
 2. **Check installation**: Verify REMAG is installed with `pip show remag`
 3. **Use module mode**: Try running with explicit Python: `python -m remag` instead of `remag`
-4. **Reinstall if needed**: If issues persist, try `pip uninstall remag && pip install remag`
+4. **Reinstall if needed**: If issues persist, try `pip uninstall remag && pip install .` from the repository directory
 
 **Note**: Always use a dedicated conda environment to avoid conflicts with other packages.
 
