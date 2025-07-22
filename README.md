@@ -73,14 +73,6 @@ After installation, you can use REMAG via the command line:
 remag -f contigs.fasta -b alignments.bam -o output_directory
 ```
 
-### Python script mode
-
-You can also run REMAG as a Python script:
-
-```bash
-python remag.py -f contigs.fasta -b alignments.bam -o output_directory
-```
-
 ### Python module mode
 
 ```bash
@@ -93,21 +85,18 @@ REMAG uses a sophisticated multi-stage pipeline specifically designed for eukary
 
 1. **Bacterial Pre-filtering**: Uses the integrated 4CAC classifier to identify and optionally remove bacterial contigs
 2. **Feature Extraction**: Combines k-mer composition (4-mers) with coverage profiles, using fragment-based augmentation
-3. **Representation Learning**: Trains a Siamese neural network with contrastive learning to generate meaningful contig embeddings
-4. **HDBSCAN Clustering**: 
-   - HDBSCAN clustering on contig embeddings
-5. **Chimera Detection**: Analyzes large contigs for chimeric sequences using embedding similarity
-6. **Quality Assessment**: Uses miniprot against eukaryotic core genes to detect contamination
-7. **Iterative Refinement**: Splits contaminated bins based on core gene duplications
+3. **Representation Learning**: Trains a Siamese neural network with Barlow Twins contrastive learning to generate meaningful contig embeddings
+4. **HDBSCAN Clustering**: HDBSCAN clustering on contig embeddings
+5. **Quality Assessment**: Uses miniprot against eukaryotic core genes to detect contamination
+6. **Iterative Refinement**: Splits contaminated bins based on core gene duplications
 
 ## Features
 
 - **Eukaryotic-Centric Design**: Specifically optimized for recovering eukaryotic genomes from mixed samples
-- **Contrastive Learning**: Uses Siamese neural networks with InfoNCE loss for contig representation learning
+- **Contrastive Learning**: Uses Siamese neural networks with Barlow Twins loss for contig representation learning
 - **Multi-Modal Features**: Combines k-mer composition (4-mers) with coverage profiles using dual encoders
 - **Bacterial Pre-filtering**: Integrated 4CAC classifier removes bacterial contigs before main clustering
 - **Advanced Clustering**: HDBSCAN clustering
-- **Chimera Detection**: Specialized detection of chimeric contigs using embedding similarity analysis
 - **Quality-Driven Refinement**: Iterative bin splitting based on core gene duplications (miniprot + eukaryotic database)
 - **Flexible Input**: Supports multiple BAM files (each representing a sample) and TSV coverage data
 - **Rich Visualization**: UMAP projections with clustering results
@@ -119,13 +108,16 @@ REMAG uses a sophisticated multi-stage pipeline specifically designed for eukary
   -b, --bam PATH                  Input BAM file(s) for coverage calculation. Must be indexed. Each BAM represents a sample. Supports space-separated files or glob patterns (e.g., "*.bam", "sample_*.bam"). Use quotes around glob patterns.
   -t, --tsv PATH                  Input TSV file(s) with coverage information.
   -o, --output PATH               Output directory for results.  [required]
-  --epochs INTEGER RANGE          Training epochs for neural network.  [default: 400; 1<=x<=10000]
-  --batch-size INTEGER RANGE      Batch size for training.  [default: 512; 32<=x<=8192]
-  --embedding-dim INTEGER RANGE   Embedding dimension for contrastive learning.  [default: 256; 32<=x<=512]
-  --nce-temperature FLOAT RANGE   Temperature for InfoNCE loss.  [default: 0.07; 0.01<=x<=1.0]
+  --epochs INTEGER RANGE          Training epochs for neural network.  [default: 400; 50<=x<=2000]
+  --batch-size INTEGER RANGE      Batch size for training.  [default: 2048; 64<=x<=8192]
+  --embedding-dim INTEGER RANGE   Embedding dimension for contrastive learning.  [default: 256; 64<=x<=512]
+  --base-learning-rate FLOAT RANGE
+                                  Base learning rate for optimizer.  [default: 0.0003; 0.00001<=x<=0.01]
   --min-cluster-size INTEGER RANGE
-                                  Minimum fragments per cluster.  [default: 5; 1<=x<=1000]
-  --min-samples INTEGER RANGE     Minimum samples for HDBSCAN core points.  [default: 3; 1<=x<=1000]
+                                  Minimum fragments per cluster.  [default: 2; 1<=x<=1000]
+  --min-samples INTEGER RANGE     Minimum samples for HDBSCAN core points.  [default: None; 1<=x<=1000]
+  --cluster-selection-epsilon FLOAT RANGE
+                                  Epsilon for HDBSCAN cluster selection.  [default: 0.0; 0.0<=x<=5.0]
   --min-contig-length INTEGER RANGE
                                   Minimum contig length in bp.  [default: 1000; 500<=x<=50000]
   --max-positive-pairs INTEGER RANGE
@@ -135,11 +127,12 @@ REMAG uses a sophisticated multi-stage pipeline specifically designed for eukary
   -v, --verbose                   Enable verbose logging.
   --skip-bacterial-filter         Skip bacterial contig filtering (4CAC classifier + contrastive learning).
   --skip-refinement               Skip bin refinement.
+  --skip-kmeans-filtering         Skip K-means filtering on embeddings.
   --max-refinement-rounds INTEGER RANGE
-                                  Maximum refinement rounds.  [default: 2; 1<=x<=5]
+                                  Maximum refinement rounds.  [default: 2; 1<=x<=10]
   --num-augmentations INTEGER RANGE
                                   Number of random fragments per contig.  [default: 8; 0<=x<=64]
-  --skip-chimera-detection        Skip chimera detection for large contigs.
+  --keep-intermediate             Keep intermediate files (training fragments, etc.).
   -h, --help                      Show this message and exit.
 ```
 
@@ -176,9 +169,7 @@ The package includes the pre-trained 4CAC classifier models for bacterial sequen
 
 ## Usage Examples
 
-For detailed usage examples, see the `examples/` directory:
-
-- `examples/xgbclass_example.py`: Demonstrates how to use the integrated 4CAC classifier for sequence classification
+REMAG can be used in various ways depending on your needs. The primary usage is through the command-line interface after installation.
 
 ## Acknowledgments
 
