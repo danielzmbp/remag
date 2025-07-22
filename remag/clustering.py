@@ -17,7 +17,7 @@ from loguru import logger
 import os
 import json
 
-from .utils import extract_base_contig_name, get_torch_device
+from .utils import extract_base_contig_name, get_torch_device, group_contigs_by_cluster
 import torch
 
 # Try to import cuML for GPU acceleration
@@ -790,16 +790,9 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
     # Save final bins (excluding noise)
     final_bins_df.to_csv(bins_path, index=False)
 
-    # Count contigs per cluster
+    # Count contigs per cluster using utility function
     logger.debug("Counting contigs per cluster...")
-    cluster_contig_counts = {}
-    for _, row in contig_clusters_df.iterrows():
-        cluster_id = row["cluster"]
-        contig_name = row["contig"]
-
-        if cluster_id not in cluster_contig_counts:
-            cluster_contig_counts[cluster_id] = set()
-        cluster_contig_counts[cluster_id].add(contig_name)
+    cluster_contig_counts = group_contigs_by_cluster(contig_clusters_df)
 
     # Count and report noise contigs
     noise_contigs = cluster_contig_counts.get("noise", set())

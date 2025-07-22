@@ -11,7 +11,7 @@ import shutil
 from tqdm import tqdm
 from loguru import logger
 
-from .utils import extract_base_contig_name
+from .utils import extract_base_contig_name, ContigHeaderMapper
 
 
 def get_core_gene_duplication_results_path(args):
@@ -57,25 +57,22 @@ def check_core_gene_duplications(clusters_df, fragments_dict, args,
     os.makedirs(temp_dir, exist_ok=True)
 
     # Group contigs by cluster (clusters_df is now contig-level)
+    # Use ContigHeaderMapper for efficient lookups
     if use_header_cache:
-        # Use the optimized caching approach from refinement.py
-        if not hasattr(check_core_gene_duplications, '_contig_to_header_cache'):
-            check_core_gene_duplications._contig_to_header_cache = {
-                extract_base_contig_name(header): header for header in fragments_dict.keys()
-            }
-        contig_to_header_map = check_core_gene_duplications._contig_to_header_cache
+        # Use cached mapper if available
+        if not hasattr(check_core_gene_duplications, '_mapper_cache'):
+            check_core_gene_duplications._mapper_cache = ContigHeaderMapper(fragments_dict)
+        mapper = check_core_gene_duplications._mapper_cache
     else:
-        # Use the simple approach from quality.py
-        contig_to_header_map = {
-            extract_base_contig_name(header): header for header in fragments_dict.keys()
-        }
+        # Create new mapper
+        mapper = ContigHeaderMapper(fragments_dict)
     
     cluster_contig_dict = {}
     for _, row in clusters_df.iterrows():
         contig_name = row["contig"]
         cluster_id = row["cluster"]
 
-        original_header = contig_to_header_map.get(contig_name)
+        original_header = mapper.get_header(contig_name)
         if original_header:
             if cluster_id not in cluster_contig_dict:
                 cluster_contig_dict[cluster_id] = set()

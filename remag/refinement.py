@@ -11,7 +11,7 @@ from loguru import logger
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import normalize
 
-from .utils import extract_base_contig_name
+from .utils import extract_base_contig_name, ContigHeaderMapper, group_contigs_by_cluster
 
 
 # Import here to avoid circular imports
@@ -86,16 +86,9 @@ def cluster_contigs_kmeans_refinement(
     n_clusters_found = len(contig_clusters_df["cluster"].unique())
     logger.info(f"K-means refinement found {n_clusters_found} clusters")
 
-    # Count contigs per cluster
+    # Count contigs per cluster using utility function
     logger.debug("Counting contigs per cluster...")
-    cluster_contig_counts = {}
-    for _, row in contig_clusters_df.iterrows():
-        cluster_id = row["cluster"]
-        contig_name = row["contig"]
-
-        if cluster_id not in cluster_contig_counts:
-            cluster_contig_counts[cluster_id] = set()
-        cluster_contig_counts[cluster_id].add(contig_name)
+    cluster_contig_counts = group_contigs_by_cluster(contig_clusters_df)
 
     total_clusters = len(cluster_contig_counts)
     if total_clusters > 0:
@@ -136,14 +129,12 @@ def _refine_single_bin_worker(args_tuple):
         os.makedirs(bin_refinement_dir, exist_ok=True)
 
         # Get original contigs for this bin (bin_fragments is now contig-level)
-        # Build lookup dict for O(1) contig name to header mapping
-        contig_to_header_map = {
-            extract_base_contig_name(header): header for header in fragments_dict.keys()
-        }
+        # Use ContigHeaderMapper for efficient O(1) lookups
+        mapper = ContigHeaderMapper(fragments_dict)
         bin_contigs = set()
         for _, row in bin_fragments.iterrows():
             contig_name = row["contig"]
-            header = contig_to_header_map.get(contig_name)
+            header = mapper.get_header(contig_name)
             if header:
                 bin_contigs.add(header)
 
@@ -405,14 +396,12 @@ def refine_contaminated_bins(
         if bin_contigs_df.empty:
             continue
 
-        # Get original contigs for this bin - use O(1) lookup
-        contig_to_header_map = {
-            extract_base_contig_name(header): header for header in fragments_dict.keys()
-        }
+        # Get original contigs for this bin - use ContigHeaderMapper for O(1) lookup
+        mapper = ContigHeaderMapper(fragments_dict)
         bin_contigs = set()
         for _, row in bin_contigs_df.iterrows():
             contig_name = row["contig"]
-            header = contig_to_header_map.get(contig_name)
+            header = mapper.get_header(contig_name)
             if header:
                 bin_contigs.add(header)
 

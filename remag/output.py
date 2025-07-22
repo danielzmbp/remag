@@ -6,7 +6,7 @@ import os
 from tqdm import tqdm
 from loguru import logger
 
-from .utils import extract_base_contig_name
+from .utils import extract_base_contig_name, ContigHeaderMapper
 
 
 def save_clusters_as_fasta(clusters_df, fragments_dict, args):
@@ -16,6 +16,9 @@ def save_clusters_as_fasta(clusters_df, fragments_dict, args):
 
     logger.info(f"Saving clusters as FASTA files in {bins_dir}...")
 
+    # Create mapper for efficient contig name to header lookups
+    mapper = ContigHeaderMapper(fragments_dict)
+
     # Group contigs by cluster directly
     cluster_contig_dict = {}
     for _, row in tqdm(clusters_df.iterrows(), desc="Processing contigs"):
@@ -23,11 +26,7 @@ def save_clusters_as_fasta(clusters_df, fragments_dict, args):
         cluster_id = row["cluster"]
         
         # Find the corresponding original header in fragments_dict
-        original_header = None
-        for header in fragments_dict.keys():
-            if extract_base_contig_name(header) == contig_name:
-                original_header = header
-                break
+        original_header = mapper.get_header(contig_name)
         
         if original_header:
             if cluster_id not in cluster_contig_dict:
