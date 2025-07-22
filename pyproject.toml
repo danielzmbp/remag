@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=61.0", "wheel", "setuptools-scm"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Metagenomic binning using neural networks and contrastive learning"
 readme = "README.md"
 requires-python = ">=3.8"
-license = {file = "LICENSE"}
+license = {text = "MIT"}
 authors = [
     {name = "Daniel Gómez-Pérez", email = "daniel.gomez-perez@earlham.ac.uk"},
 ]
@@ -72,6 +72,9 @@ Documentation = "https://github.com/danielzmbp/remag"
 
 [project.scripts]
 remag = "remag.cli:main"
+
+[tool.setuptools]
+license-files = ["LICENSE"]
 
 [tool.setuptools.packages.find]
 where = ["."]
