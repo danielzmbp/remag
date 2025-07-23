@@ -27,73 +27,42 @@ class FusionLayer(nn.Module):
     def __init__(self, kmer_dim, coverage_dim, embedding_dim, hidden_dim=None):
         super(FusionLayer, self).__init__()
         
-        if hidden_dim is None:
-            hidden_dim = (kmer_dim + coverage_dim) // 2
+        # Use embedding_dim as the common dimension for simplicity
+        self.kmer_proj = nn.Linear(kmer_dim, embedding_dim)
+        self.coverage_proj = nn.Linear(coverage_dim, embedding_dim)
         
-        # Cross-attention mechanism - use common dimension
-        common_dim = max(kmer_dim, coverage_dim)
-        self.kmer_to_coverage_attention = nn.MultiheadAttention(
-            embed_dim=common_dim, num_heads=4, dropout=0.1, batch_first=True
-        )
-        self.coverage_to_kmer_attention = nn.MultiheadAttention(
-            embed_dim=common_dim, num_heads=1, dropout=0.1, batch_first=True
+        # Single cross-attention layer (simplified from two separate ones)
+        self.cross_attention = nn.MultiheadAttention(
+            embed_dim=embedding_dim, num_heads=4, dropout=0.1, batch_first=True
         )
         
-        # Projection layers to common dimension for cross-attention
-        self.kmer_to_common = nn.Linear(kmer_dim, common_dim)
-        self.coverage_to_common = nn.Linear(coverage_dim, common_dim)
-        self.common_to_kmer = nn.Linear(common_dim, kmer_dim)
-        self.common_to_coverage = nn.Linear(common_dim, coverage_dim)
-        
-        # Shallow MLP for fusion
+        # Simplified fusion MLP
         self.fusion_mlp = nn.Sequential(
-            nn.Linear(kmer_dim + coverage_dim, hidden_dim),
-            nn.BatchNorm1d(hidden_dim),
-            nn.LeakyReLU(0.1),
-            nn.Dropout(0.1),
-            nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.BatchNorm1d(hidden_dim // 2),
-            nn.LeakyReLU(0.1),
-            nn.Dropout(0.05),
-            nn.Linear(hidden_dim // 2, embedding_dim),
+            nn.Linear(embedding_dim * 2, embedding_dim),
             nn.BatchNorm1d(embedding_dim),
-            nn.LeakyReLU(0.1),
+            nn.ReLU(),
+            nn.Dropout(0.1),
         )
-        
-        # Residual connection weights
-        self.alpha = nn.Parameter(torch.tensor(0.5))
-        self.beta = nn.Parameter(torch.tensor(0.5))
         
     def forward(self, kmer_features, coverage_features):
-        batch_size = kmer_features.size(0)
+        # Project to common dimension
+        kmer_proj = self.kmer_proj(kmer_features)
+        coverage_proj = self.coverage_proj(coverage_features)
         
-        # Project to common dimension and add sequence dimension
-        kmer_common = self.kmer_to_common(kmer_features).unsqueeze(1)
-        coverage_common = self.coverage_to_common(coverage_features).unsqueeze(1)
+        kmer_seq = kmer_proj.unsqueeze(1)
+        coverage_seq = coverage_proj.unsqueeze(1)
         
-        # Cross-attention: kmer attending to coverage
-        kmer_attended, _ = self.kmer_to_coverage_attention(
-            kmer_common, coverage_common, coverage_common
+        # Cross-attention: let k-mer features attend to coverage
+        attended_features, _ = self.cross_attention(
+            kmer_seq, coverage_seq, coverage_seq
         )
-        kmer_attended = kmer_attended.squeeze(1)
+        attended_features = attended_features.squeeze(1)
         
-        # Cross-attention: coverage attending to kmer
-        coverage_attended, _ = self.coverage_to_kmer_attention(
-            coverage_common, kmer_common, kmer_common
-        )
-        coverage_attended = coverage_attended.squeeze(1)
+        # Concatenate original k-mer projection with attended features
+        combined = torch.cat([kmer_proj, attended_features], dim=1)
         
-        # Project back to original dimensions
-        kmer_attended_orig = self.common_to_kmer(kmer_attended)
-        coverage_attended_orig = self.common_to_coverage(coverage_attended)
-        
-        # Residual connections
-        kmer_enhanced = self.alpha * kmer_features + (1 - self.alpha) * kmer_attended_orig
-        coverage_enhanced = self.beta * coverage_features + (1 - self.beta) * coverage_attended_orig
-        
-        # Concatenate and pass through MLP
-        fused_features = torch.cat([kmer_enhanced, coverage_enhanced], dim=1)
-        output = self.fusion_mlp(fused_features)
+        # Apply fusion MLP
+        output = self.fusion_mlp(combined)
         
         return output
 
@@ -134,15 +103,12 @@ class SiameseNetwork(nn.Module):
             embedding_dim=embedding_dim
         )
         
-        # Barlow Twins typically uses a larger projector with higher dimensionality
+        # Simplified projection head - 512 dims is sufficient for this use case
         self.projection_head = nn.Sequential(
-            nn.Linear(embedding_dim, 2048),
-            nn.BatchNorm1d(2048),
+            nn.Linear(embedding_dim, 512),
+            nn.BatchNorm1d(512),
             nn.ReLU(inplace=True),
-            nn.Linear(2048, 2048),
-            nn.BatchNorm1d(2048),
-            nn.ReLU(inplace=True),
-            nn.Linear(2048, 2048),
+            nn.Linear(512, 512),
         )
 
     def _encode_features(self, x):
@@ -352,8 +318,10 @@ def train_siamese_network(features_df, args):
     dataloader = DataLoader(dataset, **dataloader_kwargs)
 
     if len(dataloader) == 0:
-        logger.error(
-            f"DataLoader is empty! Dataset size: {len(dataset)}, Batch size: {args.batch_size}"
+        logger.warning(
+            f"DataLoader is empty (Dataset size: {len(dataset)} < Batch size: {args.batch_size}). "
+            f"Creating untrained model. This typically happens with very small datasets. "
+            f"Consider reducing batch size with --batch-size {max(1, len(dataset)//2)}."
         )
         # Create untrained model to avoid crashes
         model = SiameseNetwork(

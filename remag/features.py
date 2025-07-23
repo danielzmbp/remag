@@ -905,7 +905,6 @@ def _calculate_fragment_stats_vectorized(coverage_array, fragment_coords):
     
     # For larger numbers of fragments, use advanced indexing for speedup
     try:
-        # Create indices for all fragments at once
         all_indices = []
         fragment_starts = []
         fragment_lengths = []
@@ -1081,7 +1080,6 @@ def calculate_coverage_from_tsv(
                 logger.error(f"TSV file {tsv_file} has fewer than 2 columns")
                 continue
 
-            # Create mapping from contig headers to coverage values
             header_coverage = dict(zip(coverage_df[0], coverage_df.iloc[:, -1]))
 
             # Process each fragment
@@ -1107,7 +1105,6 @@ def calculate_coverage_from_tsv(
                 for fragment_header in data["fragments"]:
                     fragment_coverage[fragment_header] = coverage_value
 
-            # Create series with filename as column name
             col_name = os.path.splitext(os.path.basename(tsv_file))[0]
             coverage_series = pd.Series(fragment_coverage, name=col_name, dtype=float)
             all_coverage_series.append(coverage_series)
@@ -1202,7 +1199,6 @@ def calculate_coverage_from_multiple_bams(
             
             logger.info(f"Normalized coverage by {total_mapped_reads:,} mapped reads (factor: {normalization_factor:.2f})")
 
-            # Create series for mean coverage
             sample_name = os.path.splitext(os.path.basename(bam_file))[0]
             mean_col_name = f"{sample_name}_coverage"
             std_col_name = f"{sample_name}_coverage_std"
@@ -1214,7 +1210,6 @@ def calculate_coverage_from_multiple_bams(
 
         except Exception as e:
             logger.error(f"Error processing BAM file {bam_file}: {e}")
-            # Create zero coverage series for this sample
             sample_name = os.path.splitext(os.path.basename(bam_file))[0]
             mean_col_name = f"{sample_name}_coverage"
             std_col_name = f"{sample_name}_coverage_std"

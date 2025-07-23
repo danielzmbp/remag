@@ -410,7 +410,6 @@ def detect_chimeric_contigs(embeddings_df, clusters_df, args):
         logger.info(f"Loading trained model from {model_path}")
         device = get_torch_device()
         
-        # Import the model class
         from .models import SiameseNetwork
         
         # Determine feature dimensions (same logic as in train_siamese_network)

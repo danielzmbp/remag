@@ -14,7 +14,6 @@ from sklearn.preprocessing import normalize
 from .utils import extract_base_contig_name, ContigHeaderMapper, group_contigs_by_cluster
 
 
-# Import here to avoid circular imports
 from .miniprot_utils import check_core_gene_duplications, get_core_gene_duplication_results_path
 
 

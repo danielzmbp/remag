@@ -83,6 +83,5 @@ def save_clusters_as_fasta(clusters_df, fragments_dict, args):
         f"Saved {len(filtered_cluster_contigs)} bins with {total_contigs_in_bins} total contigs"
     )
     
-    # Return the set of valid bin IDs (excluding noise)
     valid_bins = set(filtered_cluster_contigs.keys()) - {"noise"}
     return valid_bins

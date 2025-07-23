@@ -20,7 +20,6 @@ def main(args):
     setup_logging(args.output, verbose=args.verbose)
     os.makedirs(args.output, exist_ok=True)
     
-    # Save parameters only if keeping intermediate files
     if getattr(args, "keep_intermediate", False):
         params_path = os.path.join(args.output, "params.json")
         with open(params_path, "w", encoding="utf-8") as f:
@@ -102,7 +101,6 @@ def main(args):
 
     logger.info("Final bins saved to bins.csv (noise contigs excluded)")
 
-    # Save clusters as FASTA files and get valid bin IDs
     logger.info("Saving bins as FASTA files...")
     valid_bins = save_clusters_as_fasta(clusters_df, fragments_dict, args)
     
