@@ -33,6 +33,24 @@ cd remag
 pip install .
 ```
 
+### Development installation
+
+For contributors and developers:
+
+```bash
+# Install with development dependencies
+pip install -e ".[dev]"
+```
+
+### GPU-accelerated installation
+
+For GPU-accelerated clustering (requires NVIDIA GPU):
+
+```bash
+# Install with RAPIDS support
+pip install "remag[gpu]"
+```
+
 ## Usage
 
 ### Command line interface
@@ -53,12 +71,19 @@ python -m remag -f contigs.fasta -b alignments.bam -o output_directory
 
 REMAG uses a sophisticated multi-stage pipeline specifically designed for eukaryotic genome recovery:
 
-1. **Bacterial Pre-filtering**: Uses the integrated 4CAC classifier to identify and optionally remove bacterial contigs
-2. **Feature Extraction**: Combines k-mer composition (4-mers) with coverage profiles, using fragment-based augmentation
-3. **Representation Learning**: Trains a Siamese neural network with Barlow Twins contrastive learning to generate meaningful contig embeddings
-4. **HDBSCAN Clustering**: HDBSCAN clustering on contig embeddings
-5. **Quality Assessment**: Uses miniprot against eukaryotic core genes to detect contamination
-6. **Iterative Refinement**: Splits contaminated bins based on core gene duplications
+1. **Bacterial Pre-filtering**: By default, REMAG automatically filters out bacterial contigs using the integrated 4CAC classifier (can be disabled with `--skip-bacterial-filter`)
+2. **Feature Extraction**: Combines k-mer composition (4-mers) with coverage profiles across multiple samples. Large contigs are split into overlapping fragments for augmentation during training
+3. **Contrastive Learning**: Trains a Siamese neural network using the Barlow Twins self-supervised loss function. This creates embeddings where fragments from the same contig are close together
+4. **HDBSCAN Clustering**: Density-based clustering on the learned contig embeddings to form bins
+5. **Quality Assessment**: Uses miniprot to align bins against a database of eukaryotic core genes to detect contamination
+6. **Iterative Refinement**: Automatically splits contaminated bins based on core gene duplications to improve bin quality
+
+## Key Features
+
+- **Automatic Bacterial Filtering**: The 4CAC classifier automatically identifies and removes bacterial sequences before binning
+- **Multi-Sample Support**: Can process coverage information from multiple samples (BAM files) simultaneously
+- **Barlow Twins Loss**: Uses a self-supervised contrastive learning approach that doesn't require negative pairs
+- **Fragment Augmentation**: Large contigs are split into multiple overlapping fragments during training to improve representation learning
 
 ## Options
 
@@ -71,17 +96,17 @@ REMAG uses a sophisticated multi-stage pipeline specifically designed for eukary
   --batch-size INTEGER RANGE      Batch size for training.  [default: 2048; 64<=x<=8192]
   --embedding-dim INTEGER RANGE   Embedding dimension for contrastive learning.  [default: 256; 64<=x<=512]
   --base-learning-rate FLOAT RANGE
-                                  Base learning rate for optimizer.  [default: 0.0003; 0.00001<=x<=0.01]
+                                  Base learning rate for optimizer.  [default: 0.008; 0.00001<=x<=0.1]
   --min-cluster-size INTEGER RANGE
-                                  Minimum fragments per cluster.  [default: 2; 1<=x<=1000]
-  --min-samples INTEGER RANGE     Minimum samples for HDBSCAN core points.  [default: None; 1<=x<=1000]
+                                  Minimum fragments per cluster.  [default: 2; 2<=x<=100]
+  --min-samples INTEGER RANGE     Minimum samples for HDBSCAN core points.  [default: None; 1<=x<=100]
   --cluster-selection-epsilon FLOAT RANGE
-                                  Epsilon for HDBSCAN cluster selection.  [default: 0.0; 0.0<=x<=5.0]
+                                  Epsilon for HDBSCAN cluster selection.  [default: 0.0; 0.0<=x<=1.0]
   --min-contig-length INTEGER RANGE
-                                  Minimum contig length in bp.  [default: 1000; 500<=x<=50000]
+                                  Minimum contig length in bp.  [default: 1000; 500<=x<=10000]
   --max-positive-pairs INTEGER RANGE
-                                  Maximum positive pairs for contrastive learning.  [default: 5000000; 10000<=x<=50000000]
-  -c, --cores INTEGER RANGE       Number of CPU cores.  [default: 8; 1<=x<=128]
+                                  Maximum positive pairs for contrastive learning.  [default: 5000000; 100000<=x<=10000000]
+  -c, --cores INTEGER RANGE       Number of CPU cores.  [default: 8; 1<=x<=64]
   --min-bin-size INTEGER RANGE    Minimum bin size in bp.  [default: 100000; 50000<=x<=10000000]
   -v, --verbose                   Enable verbose logging.
   --skip-bacterial-filter         Skip bacterial contig filtering (4CAC classifier + contrastive learning).
@@ -90,7 +115,7 @@ REMAG uses a sophisticated multi-stage pipeline specifically designed for eukary
   --max-refinement-rounds INTEGER RANGE
                                   Maximum refinement rounds.  [default: 2; 1<=x<=10]
   --num-augmentations INTEGER RANGE
-                                  Number of random fragments per contig.  [default: 8; 0<=x<=64]
+                                  Number of random fragments per contig.  [default: 8; 1<=x<=32]
   --keep-intermediate             Keep intermediate files (training fragments, etc.).
   -h, --help                      Show this message and exit.
 ```
@@ -99,16 +124,25 @@ REMAG uses a sophisticated multi-stage pipeline specifically designed for eukary
 
 REMAG produces several output files:
 
+### Core output files (always created):
 - `bins/`: Directory containing FASTA files for each bin
 - `bins.csv`: Final contig-to-bin assignments
 - `remag.log`: Detailed log file
+- `*_non_bacterial_filtered.fasta`: Filtered FASTA file with bacterial contigs removed (when bacterial filtering is enabled)
 
-If using `--keep-intermediate` option also produces:
-
+### Additional files (with `--keep-intermediate` option):
 - `embeddings.csv`: Contig embeddings from the neural network
 - `umap_embeddings.csv`: UMAP projections for visualization
-- `umap_plot.pdf`: UMAP visualization plot
-- `siamese_model.pt`: Trained neural network model
+- `umap_plot.pdf`: UMAP visualization plot with cluster assignments
+- `siamese_model.pt`: Trained Siamese neural network model
+- `params.json`: Complete run parameters for reproducibility
+- `features.csv`: Extracted k-mer and coverage features
+- `fragments.pkl`: Fragment information used during training
+- `classification_results.csv`: 4CAC bacterial classification results
+- `refinement_summary.json`: Summary of the bin refinement process
+- `kmeans_filtering_stats.json`: Statistics from k-means pre-filtering (if enabled)
+- `core_gene_duplication_results.json`: Core gene duplication analysis from refinement
+- `temp_miniprot/`: Temporary directory for miniprot alignments (removed unless --keep-intermediate)
 
 
 ## Requirements
