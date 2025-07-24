@@ -33,30 +33,6 @@ cd remag
 pip install .
 ```
 
-### Development installation
-
-```bash
-# Create and activate conda environment
-conda create -n remag python=3.9
-conda activate remag
-
-# Clone and install in development mode
-git clone https://github.com/danielzmbp/remag.git
-cd remag
-pip install -e ".[dev]"
-```
-
-### Troubleshooting Installation
-
-If you encounter `ModuleNotFoundError: No module named 'remag.cli'` when running `remag`:
-
-1. **Activate your conda environment**: Make sure you're in the correct environment with `conda activate remag`
-2. **Check installation**: Verify REMAG is installed with `pip show remag`
-3. **Use module mode**: Try running with explicit Python: `python -m remag` instead of `remag`
-4. **Reinstall if needed**: If issues persist, try `pip uninstall remag && pip install .` from the repository directory
-
-**Note**: Always use a dedicated conda environment to avoid conflicts with other packages.
-
 ## Usage
 
 ### Command line interface
@@ -83,17 +59,6 @@ REMAG uses a sophisticated multi-stage pipeline specifically designed for eukary
 4. **HDBSCAN Clustering**: HDBSCAN clustering on contig embeddings
 5. **Quality Assessment**: Uses miniprot against eukaryotic core genes to detect contamination
 6. **Iterative Refinement**: Splits contaminated bins based on core gene duplications
-
-## Features
-
-- **Eukaryotic-Centric Design**: Specifically optimized for recovering eukaryotic genomes from mixed samples
-- **Contrastive Learning**: Uses Siamese neural networks with Barlow Twins loss for contig representation learning
-- **Multi-Modal Features**: Combines k-mer composition (4-mers) with coverage profiles using dual encoders
-- **Bacterial Pre-filtering**: Integrated 4CAC classifier removes bacterial contigs before main clustering
-- **Advanced Clustering**: HDBSCAN clustering
-- **Quality-Driven Refinement**: Iterative bin splitting based on core gene duplications (miniprot + eukaryotic database)
-- **Flexible Input**: Supports multiple BAM files (each representing a sample) and TSV coverage data
-- **Rich Visualization**: UMAP projections with clustering results
 
 ## Options
 
@@ -136,11 +101,15 @@ REMAG produces several output files:
 
 - `bins/`: Directory containing FASTA files for each bin
 - `bins.csv`: Final contig-to-bin assignments
+- `remag.log`: Detailed log file
+
+If using `--keep-intermediate` option also produces:
+
 - `embeddings.csv`: Contig embeddings from the neural network
 - `umap_embeddings.csv`: UMAP projections for visualization
 - `umap_plot.pdf`: UMAP visualization plot
 - `siamese_model.pt`: Trained neural network model
-- `remag.log`: Detailed log file
+
 
 ## Requirements
 
@@ -159,18 +128,15 @@ REMAG produces several output files:
 - rich-click (≥1.5.0)
 - joblib (≥1.1.0)
 
-The package includes the pre-trained 4CAC classifier models for bacterial sequence filtering. The 4CAC classifier code is adapted from the [Shamir-Lab/4CAC repository](https://github.com/Shamir-Lab/4CAC).
-
-## Usage Examples
-
-REMAG can be used in various ways depending on your needs. The primary usage is through the command-line interface after installation.
+The package includes a pre-trained 4CAC classifier model for bacterial contig filtering. The 4CAC classifier code and models are adapted from the [Shamir-Lab/4CAC repository](https://github.com/Shamir-Lab/4CAC).
 
 ## Acknowledgments
 
 The integrated 4CAC classifier (`xgbclass` module) is adapted from the work by Shamir Lab:
 
 - **Repository**: [Shamir-Lab/4CAC](https://github.com/Shamir-Lab/4CAC)
-- **Paper**: 4CAC - 4-class contamination assessment classifier for prokaryotic genome assemblies
+- **Paper**: Pu L, Shamir R. 4CAC: 4-class classifier of metagenome contigs using machine learning and assembly graphs. Nucleic Acids Res. 2024;52(19):e94–e94.
+   
 
 ## License
 
