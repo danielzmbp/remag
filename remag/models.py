@@ -75,6 +75,28 @@ class SiameseNetwork(nn.Module):
         self.n_kmer_features = n_kmer_features
         self.n_coverage_features = n_coverage_features
         
+        # Adaptively size the coverage encoder based on number of samples
+        # Assume ~2 features per sample (mean + std), so n_samples ≈ n_coverage_features / 2
+        n_samples_estimate = max(1, n_coverage_features // 2)
+        
+        # Scale hidden dimensions based on number of samples
+        # More samples = more complex co-abundance patterns = larger encoder
+        if n_samples_estimate <= 2:
+            coverage_hidden1 = 32
+            coverage_hidden2 = 16
+        elif n_samples_estimate <= 5:
+            coverage_hidden1 = 64
+            coverage_hidden2 = 32
+        elif n_samples_estimate <= 10:
+            coverage_hidden1 = 128
+            coverage_hidden2 = 64
+        else:
+            coverage_hidden1 = 256
+            coverage_hidden2 = 128
+            
+        logger.debug(f"Coverage encoder sized for ~{n_samples_estimate} samples: "
+                    f"{n_coverage_features} -> {coverage_hidden1} -> {coverage_hidden2}")
+        
         # Separate encoders for k-mer and coverage features
         self.kmer_encoder = nn.Sequential(
             nn.Linear(n_kmer_features, 256),
@@ -87,19 +109,22 @@ class SiameseNetwork(nn.Module):
         )
         
         self.coverage_encoder = nn.Sequential(
-            nn.Linear(n_coverage_features, 32),
-            nn.BatchNorm1d(32),
+            nn.Linear(n_coverage_features, coverage_hidden1),
+            nn.BatchNorm1d(coverage_hidden1),
             nn.LeakyReLU(),
             nn.Dropout(0.05),
-            nn.Linear(32, 16),
-            nn.BatchNorm1d(16),
+            nn.Linear(coverage_hidden1, coverage_hidden2),
+            nn.BatchNorm1d(coverage_hidden2),
             nn.LeakyReLU(),
         )
+        
+        # Store final coverage dimension for fusion layer
+        self.coverage_final_dim = coverage_hidden2
         
         # Advanced fusion layer with cross-attention and MLP
         self.fusion_layer = FusionLayer(
             kmer_dim=128, 
-            coverage_dim=16, 
+            coverage_dim=self.coverage_final_dim, 
             embedding_dim=embedding_dim
         )
         

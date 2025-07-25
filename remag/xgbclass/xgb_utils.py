@@ -73,7 +73,6 @@ def count_kmers(args_array):
     valid_chars = set("ATGC")
     if not all(c in valid_chars for c in seq.upper()):
         # Skip sequences with invalid characters (like N)
-        # Return zero vector
         kmer_freqs = np.zeros(sum([vec_lens[k] for k in ks]))
         shared_list[ret_ind] = kmer_freqs
         return
@@ -87,7 +86,6 @@ def count_kmers(args_array):
     ind = 0
     bit_mers = [0 for k in ks]
 
-    # get the first set of kmers
     while True:
         found = True
         for i, k in enumerate(ks):
@@ -105,7 +103,7 @@ def count_kmers(args_array):
     # count all other kmers
     while (
         ind < len(seq) - ks[-1]
-    ):  # iterate through sequence until last k-mer for largest k
+    ):
         for i, k in enumerate(ks):
             try:
                 c = nt_bits[seq[ind + k]]
