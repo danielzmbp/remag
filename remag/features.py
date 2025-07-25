@@ -14,7 +14,7 @@ from multiprocessing import Pool
 from typing import Dict, List, Tuple, Optional, Set
 from tqdm import tqdm
 from loguru import logger
-from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
 from .utils import open_file, fasta_iter, FragmentDict, CoverageDict
 
@@ -666,22 +666,23 @@ def get_features(
             f"Applied log transformation to {len(coverage_columns)} coverage features"
         )
 
-        # Apply per-sample scaling to preserve within-sample relationships
+        # Apply global scaling to preserve co-abundance relationships across samples
+        # Option 1: Scale all coverage features together (preserves relative differences between samples)
+        logger.info("Applying global scaling to preserve co-abundance patterns across samples")
+        
+        # Use StandardScaler instead of MinMaxScaler to preserve relative differences
+        from sklearn.preprocessing import StandardScaler
+        scaler = StandardScaler()
+        df[coverage_columns] = scaler.fit_transform(df[coverage_columns])
+        logger.info(f"Applied global StandardScaler to {len(coverage_columns)} coverage features")
+        
+        # Log sample information for debugging
         sample_names = set()
         for col in coverage_columns:
-            # Extract sample name from column (e.g., "sample1_coverage" -> "sample1")
             if "_coverage" in col:
                 sample_name = col.replace("_coverage", "").replace("_std", "")
                 sample_names.add(sample_name)
-        
-        # Scale each sample's coverage columns independently
-        for sample_name in sample_names:
-            sample_cols = [col for col in coverage_columns if col.startswith(f"{sample_name}_")]
-            if sample_cols:
-                df[sample_cols] = MinMaxScaler(feature_range=(0, 1)).fit_transform(df[sample_cols])
-                logger.info(f"Applied per-sample scaling to {len(sample_cols)} features for sample '{sample_name}'")
-        
-        logger.info(f"Applied per-sample scaling to {len(sample_names)} samples")
+        logger.info(f"Processing coverage from {len(sample_names)} samples: {sorted(sample_names)}")
     else:
         logger.info("Using k-mer features only")
 
