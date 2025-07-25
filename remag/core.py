@@ -17,8 +17,12 @@ from .output import save_clusters_as_fasta
 
 
 def main(args):
-    setup_logging(args.output, verbose=args.verbose)
-    os.makedirs(args.output, exist_ok=True)
+    try:
+        setup_logging(args.output, verbose=args.verbose)
+        os.makedirs(args.output, exist_ok=True)
+    except Exception as e:
+        logger.error(f"Failed to initialize output directory: {e}")
+        sys.exit(1)
     
     if getattr(args, "keep_intermediate", False):
         params_path = os.path.join(args.output, "params.json")
@@ -45,16 +49,20 @@ def main(args):
     logger.info(
         f"Generating features with {args.num_augmentations} augmentations per contig..."
     )
-    features_df, fragments_dict = get_features(
-        input_fasta,  # Use filtered FASTA if bacterial filtering was applied
-        args.bam,
-        args.tsv,
-        args.output,
-        args.min_contig_length,
-        args.cores,
-        args.num_augmentations,
-        args,  # Pass args for keep_intermediate check
-    )
+    try:
+        features_df, fragments_dict = get_features(
+            input_fasta,  # Use filtered FASTA if bacterial filtering was applied
+            args.bam,
+            args.tsv,
+            args.output,
+            args.min_contig_length,
+            args.cores,
+            args.num_augmentations,
+            args,  # Pass args for keep_intermediate check
+        )
+    except Exception as e:
+        logger.error(f"Failed to generate features: {e}")
+        sys.exit(1)
 
     if features_df.empty:
         logger.error("No features generated. Exiting.")
@@ -64,10 +72,18 @@ def main(args):
         classification_results_path = get_classification_results_path(args.fasta, args.output)
 
     logger.info("Training neural network and generating embeddings...")
-    model = train_siamese_network(features_df, args)
-    embeddings_df = generate_embeddings(model, features_df, args)
+    try:
+        model = train_siamese_network(features_df, args)
+        embeddings_df = generate_embeddings(model, features_df, args)
+    except Exception as e:
+        logger.error(f"Failed to train model or generate embeddings: {e}")
+        sys.exit(1)
 
-    clusters_df = cluster_contigs(embeddings_df, fragments_dict, args)
+    try:
+        clusters_df = cluster_contigs(embeddings_df, fragments_dict, args)
+    except Exception as e:
+        logger.error(f"Failed to cluster contigs: {e}")
+        sys.exit(1)
 
     # Check for duplicated core genes using miniprot
     logger.info("Checking for duplicated core genes...")
