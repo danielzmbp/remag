@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "remag"
 version = "0.1.0"
-description = "Metagenomic binning using neural networks and contrastive learning"
+description = "Recovery of high-quality eukaryotic genomes from complex metagenomes"
 readme = "README.md"
 requires-python = ">=3.8"
 license = {text = "MIT"}
