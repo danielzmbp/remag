@@ -47,3 +47,7 @@ upload_to_zenodo.sh
 *.bai
 *.fasta.gz
 *.fai
+
+# Project-specific files to exclude
+CLAUDE.md
+generate_bins.py
