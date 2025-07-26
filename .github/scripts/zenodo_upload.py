@@ -71,7 +71,7 @@ def update_metadata(deposition, version):
             {
                 "name": "Gómez-Pérez, Daniel",
                 "affiliation": "Earlham Institute",
-                "orcid": "0000-0000-0000-0000"  # Replace with actual ORCID
+                "orcid": "0000-0002-9938-9444"
             }
         ],
         "keywords": [
@@ -140,6 +140,9 @@ def publish_deposition(deposition, token, use_sandbox=False):
         f"{base_url}/deposit/depositions/{deposition['id']}/actions/publish",
         headers=headers
     )
+    if r.status_code != 202:
+        print(f"Publish failed with status {r.status_code}")
+        print(f"Response: {r.text}")
     r.raise_for_status()
     
     return r.json()
