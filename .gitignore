@@ -1,4 +1,49 @@
+# Build artifacts
 build/
-remag.egg-info/
-remag/__pycache__/
+dist/
+*.egg-info/
+*.egg
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
 venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Testing
+.coverage
+.pytest_cache/
+htmlcov/
+.tox/
+
+# Documentation
+docs/_build/
+docs/.doctrees/
+
+# Temporary files
+*.log
+.DS_Store
+.zenodo_doi
+.zenodo_deposition_id
+upload_to_zenodo.sh
+.pypirc
+
+# Generated files
+*.bam
+*.bai
+*.fasta.gz
+*.fai

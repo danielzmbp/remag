@@ -65,15 +65,24 @@ Follow semantic versioning (MAJOR.MINOR.PATCH):
 
 ## Release Checklist
 
+### Pre-release
 - [ ] All tests passing
+- [ ] Code is properly formatted (`black .` and `isort .`)
 - [ ] Documentation updated
-- [ ] CHANGELOG.md updated
+- [ ] CHANGELOG.md updated (move items from [Unreleased] to new version)
 - [ ] Version bumped in pyproject.toml
-- [ ] Create release tag
-- [ ] Verify PyPI upload
-- [ ] Verify Zenodo DOI
-- [ ] Submit Bioconda PR
-- [ ] Update citation info with new DOI
+- [ ] All changes committed and pushed
+
+### Release
+- [ ] Create release tag (`git tag -a vX.Y.Z -m "Release version X.Y.Z"`)
+- [ ] Push tag (`git push origin vX.Y.Z`)
+- [ ] Monitor workflow (`gh run list --workflow=release.yml --limit 1`)
+
+### Post-release
+- [ ] Verify PyPI upload at https://pypi.org/project/remag/
+- [ ] Verify Zenodo DOI (check Actions logs)
+- [ ] Submit Bioconda PR (recipe in `.github/bioconda-recipe/meta.yaml`)
+- [ ] Update citation info if major release
 
 ## Troubleshooting
 
