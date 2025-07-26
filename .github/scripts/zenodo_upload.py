@@ -23,7 +23,21 @@ def get_zenodo_deposition(token, use_sandbox=False):
         # Get the deposition
         r = requests.get(f"{base_url}/deposit/depositions/{deposition_id}", headers=headers)
         if r.status_code == 200:
-            return r.json()
+            deposition = r.json()
+            # If it's published, create a new version
+            if deposition.get('state') == 'done':
+                print(f"Creating new version of deposition {deposition_id}")
+                r = requests.post(
+                    f"{base_url}/deposit/depositions/{deposition_id}/actions/newversion",
+                    headers=headers
+                )
+                r.raise_for_status()
+                # Get the new draft
+                new_version_url = r.json()['links']['latest_draft']
+                r = requests.get(new_version_url, headers=headers)
+                r.raise_for_status()
+                return r.json()
+            return deposition
     
     # Create new deposition
     r = requests.post(f"{base_url}/deposit/depositions", headers=headers, json={})
@@ -87,6 +101,16 @@ def upload_files(deposition, token, use_sandbox=False):
     base_url = SANDBOX_URL if use_sandbox else ZENODO_URL
     headers = {"Authorization": f"Bearer {token}"}
     
+    # First, delete any existing files if this is a new version
+    if 'files' in deposition:
+        for file_info in deposition['files']:
+            print(f"Removing old file: {file_info['filename']}")
+            r = requests.delete(
+                f"{base_url}/deposit/depositions/{deposition['id']}/files/{file_info['id']}",
+                headers=headers
+            )
+            r.raise_for_status()
+    
     # Upload all files in dist/
     dist_path = Path("dist")
     if not dist_path.exists():
@@ -98,10 +122,12 @@ def upload_files(deposition, token, use_sandbox=False):
             print(f"Uploading {file_path.name}...")
             
             with open(file_path, 'rb') as f:
-                r = requests.put(
-                    f"{base_url}/deposit/depositions/{deposition['id']}/files/{file_path.name}",
+                # Use POST for new files instead of PUT
+                files = {'file': (file_path.name, f)}
+                r = requests.post(
+                    f"{base_url}/deposit/depositions/{deposition['id']}/files",
                     headers=headers,
-                    data=f
+                    files=files
                 )
                 r.raise_for_status()
 
