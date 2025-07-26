@@ -106,9 +106,18 @@ jobs:
     - name: Update Bioconda recipe
       run: |
         python .github/scripts/update_bioconda.py
+        echo "Recipe generated in .github/bioconda-recipe/meta.yaml"
+        echo "::notice title=Bioconda Recipe::Recipe generated! Check the workflow artifacts or use 'gh run download' to get the recipe."
+        python .github/scripts/generate_bioconda_pr.py || true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         BIOCONDA_TOKEN: ${{ secrets.BIOCONDA_TOKEN }}
+    
+    - name: Upload Bioconda recipe as artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: bioconda-recipe
+        path: .github/bioconda-recipe/meta.yaml
 
   zenodo-upload:
     needs: github-release
