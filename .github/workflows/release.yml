@@ -112,7 +112,6 @@ jobs:
   zenodo-upload:
     needs: github-release
     runs-on: ubuntu-latest
-    if: ${{ secrets.ZENODO_TOKEN != '' }}
     steps:
     - uses: actions/checkout@v4
     
@@ -130,7 +129,11 @@ jobs:
     - name: Upload to Zenodo
       run: |
         pip install requests
-        python .github/scripts/zenodo_upload.py
+        if [ -n "$ZENODO_TOKEN" ]; then
+          python .github/scripts/zenodo_upload.py
+        else
+          echo "ZENODO_TOKEN not set, skipping Zenodo upload"
+        fi
       env:
         ZENODO_TOKEN: ${{ secrets.ZENODO_TOKEN }}
         GITHUB_REF: ${{ github.ref }}
