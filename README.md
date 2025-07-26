@@ -5,20 +5,25 @@
 ## Quick Start
 
 ```bash
-# Clone the repository
-git clone https://github.com/danielzmbp/remag.git
-cd remag
-
-# Create conda environment and install
-conda create -n remag python=3.9
-conda activate remag
-pip install .
+# Install from PyPI
+pip install remag
 
 # Run REMAG
 remag -f contigs.fasta -b alignments.bam -o output_directory
 ```
 
 ## Installation
+
+### From PyPI (recommended)
+
+```bash
+# Create conda environment (optional but recommended)
+conda create -n remag python=3.9
+conda activate remag
+
+# Install from PyPI
+pip install remag
+```
 
 ### From source
 
