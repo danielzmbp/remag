@@ -1,5 +1,7 @@
 # REMAG
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.16443991.svg)](https://doi.org/10.5281/zenodo.16443991)
+
 **RE**covery of eukaryotic genomes using contrastive learning. A specialized metagenomic binning tool designed for recovering high-quality eukaryotic genomes from mixed prokaryotic-eukaryotic samples.
 
 ## Quick Start
@@ -185,6 +187,17 @@ MIT License - see LICENSE file for details.
 
 If you use REMAG in your research, please cite:
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.16443991.svg)](https://doi.org/10.5281/zenodo.16443991)
+
+```bibtex
+@software{gomez_perez_2025_remag,
+  author       = {Gómez-Pérez, Daniel},
+  title        = {REMAG: Recovering high-quality Eukaryotic genomes from complex metagenomes},
+  year         = 2025,
+  publisher    = {Zenodo},
+  doi          = {10.5281/zenodo.16443991},
+  url          = {https://doi.org/10.5281/zenodo.16443991}
+}
 ```
-[Citation information will be added when available]
-```
+
+Note: The DOI 10.5281/zenodo.16443991 represents all versions and will always resolve to the latest release. A manuscript describing REMAG is in preparation.
