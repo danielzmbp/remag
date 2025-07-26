@@ -1,0 +1,18 @@
+# Include license and readme
+include LICENSE
+include README.md
+
+# Include the CLAUDE.md file
+include CLAUDE.md
+
+# Include requirements file
+include requirements.txt
+
+# Include all package data files
+recursive-include remag/xgbclass/models *.json
+recursive-include remag/db *.faa.gz
+
+# Exclude build artifacts and cache
+global-exclude __pycache__
+global-exclude *.py[co]
+global-exclude .DS_Store

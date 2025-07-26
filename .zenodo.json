@@ -1,0 +1,28 @@
+{
+    "title": "REMAG: Recovering high-quality Eukaryotic genomes from complex metagenomes",
+    "description": "<p>REMAG is a specialized metagenomic binning tool designed for recovering high-quality eukaryotic genomes from mixed prokaryotic-eukaryotic samples. It uses contrastive learning with Siamese neural networks to generate meaningful contig embeddings for clustering.</p><p><strong>Key Features:</strong></p><ul><li>Bacterial filtering using 4CAC XGBoost classifier</li><li>Contrastive learning with Siamese neural networks</li><li>HDBSCAN clustering for genome binning</li><li>Quality assessment using eukaryotic core genes</li><li>Iterative refinement for contamination removal</li></ul>",
+    "upload_type": "software",
+    "license": "MIT",
+    "creators": [
+        {
+            "name": "Gómez-Pérez, Daniel",
+            "affiliation": "Earlham Institute"
+        }
+    ],
+    "keywords": [
+        "metagenomics",
+        "binning",
+        "eukaryotes",
+        "machine learning",
+        "contrastive learning",
+        "bioinformatics"
+    ],
+    "related_identifiers": [
+        {
+            "relation": "isSupplementTo",
+            "identifier": "https://github.com/danielzmbp/remag",
+            "resource_type": "software"
+        }
+    ],
+    "access_right": "open"
+}
