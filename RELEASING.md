@@ -51,10 +51,26 @@ This document describes the automated release process for REMAG.
    - Upload to Zenodo and get DOI
    - Generate Bioconda recipe
 
-4. **Manual Bioconda Submission**
-   - Check `.github/bioconda-recipe/meta.yaml`
-   - Submit PR to bioconda-recipes repository
-   - Recipe will be automatically tested
+4. **Bioconda Submission Options**
+
+   **Option A: Download recipe from workflow**
+   ```bash
+   # After release workflow completes
+   gh run download --name bioconda-recipe
+   # Recipe will be in meta.yaml
+   ```
+   
+   **Option B: Check workflow logs**
+   - The release workflow prints full instructions
+   - Copy the generated recipe from the logs
+   
+   **Option C: Manual trigger (if you have PAT)**
+   ```bash
+   gh workflow run bioconda-pr.yml -f version=0.2.0
+   ```
+   
+   Then submit PR to bioconda-recipes with the generated recipe.
+   Note: Full automation requires a Personal Access Token with repo permissions.
 
 ## Version Numbering
 

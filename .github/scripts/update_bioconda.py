@@ -39,21 +39,21 @@ def create_bioconda_recipe(package_name, version):
     
     sha256 = calculate_sha256(source_url)
     
-    recipe = f'''{% set name = "remag" %}
-{% set version = "{version.lstrip('v')}" %}
+    recipe = f'''{{% set name = "remag" %}}
+{{% set version = "{version.lstrip('v')}" %}}
 
 package:
-  name: {{ name|lower }}
-  version: {{ version }}
+  name: {{{{ name|lower }}}}
+  version: {{{{ version }}}}
 
 source:
-  url: https://pypi.io/packages/source/{{ name[0] }}/{{ name }}/{{ name }}-{{ version }}.tar.gz
+  url: https://pypi.io/packages/source/{{{{ name[0] }}}}/{{{{ name }}}}/{{{{ name }}}}-{{{{ version }}}}.tar.gz
   sha256: {sha256}
 
 build:
   number: 0
   noarch: python
-  script: {{ PYTHON }} -m pip install . -vv --no-deps --no-build-isolation
+  script: {{{{ PYTHON }}}} -m pip install . -vv --no-deps --no-build-isolation
   entry_points:
     - remag = remag.cli:main
 
@@ -90,7 +90,7 @@ test:
 
 about:
   home: https://github.com/danielzmbp/remag
-  summary: 'Recovering high-quality Eukaryotic genomes from complex metagenomes'
+  summary: 'Recovery of high-quality eukaryotic genomes from complex metagenomes'
   description: |
     REMAG is a specialized metagenomic binning tool designed for recovering 
     high-quality eukaryotic genomes from mixed prokaryotic-eukaryotic samples. 
