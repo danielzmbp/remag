@@ -59,7 +59,7 @@ click.rich_click.OPTION_GROUPS = {
     "remag": [
         {
             "name": "Input/Output",
-            "options": ["--fasta", "--bam", "--tsv", "--output"],
+            "options": ["--fasta", "--coverage", "--output"],
         },
         {
             "name": "Contrastive Learning",
@@ -75,34 +75,43 @@ click.rich_click.OPTION_GROUPS = {
         },
         {
             "name": "General",
-            "options": ["--cores", "--verbose"],
+            "options": ["--threads", "--verbose"],
         },
     ]
 }
 
 
 def validate_coverage_options(ctx, param, value):
-    """Validate that either --bam or --tsv is provided, but not both."""
-    if param.name == "tsv":
-        bam = ctx.params.get("bam")
-        if bam and value:
-            raise click.BadParameter("--bam and --tsv are mutually exclusive.")
-    elif param.name == "bam":
-        tsv = ctx.params.get("tsv")
-        if tsv and value:
-            raise click.BadParameter("--bam and --tsv are mutually exclusive.")
+    """Validate and categorize coverage files by extension."""
+    if param.name != "coverage" or not value:
+        return value
 
-        if value:
-            # Flatten the list of lists that might come from multiple -b calls
-            flattened_files = []
-            for item in value:
-                if isinstance(item, list):
-                    flattened_files.extend(item)
-                else:
-                    flattened_files.append(item)
-            return flattened_files
-
-    return value
+    # Flatten the list of lists that might come from multiple -c calls
+    flattened_files = []
+    for item in value:
+        if isinstance(item, list):
+            flattened_files.extend(item)
+        else:
+            flattened_files.append(item)
+    
+    # Categorize files by extension
+    bam_cram_files = []
+    tsv_files = []
+    
+    for file_path in flattened_files:
+        ext = file_path.lower().split('.')[-1]
+        if ext in ['bam', 'cram']:
+            bam_cram_files.append(file_path)
+        elif ext in ['tsv', 'txt']:
+            tsv_files.append(file_path)
+        else:
+            raise click.BadParameter(f"Unsupported coverage file format: {file_path}. Supported formats: BAM, CRAM, TSV")
+    
+    # Don't allow mixing BAM/CRAM with TSV files
+    if bam_cram_files and tsv_files:
+        raise click.BadParameter("Cannot mix BAM/CRAM files with TSV files. Use either alignment files or pre-computed coverage files, not both.")
+    
+    return flattened_files
 
 
 @click.command(name="remag")
@@ -116,20 +125,12 @@ def validate_coverage_options(ctx, param, value):
     help="Input FASTA file containing contigs to bin into genomes. Supports gzipped files.",
 )
 @click.option(
-    "-b",
-    "--bam",
+    "-c",
+    "--coverage",
     type=SpaceSeparatedPaths(),
     multiple=True,
     callback=validate_coverage_options,
-    help="Indexed BAM files for coverage calculation. Each file represents one sample. Supports space-separated paths and glob patterns (e.g., '*.bam').",
-)
-@click.option(
-    "-t",
-    "--tsv",
-    multiple=True,
-    type=click.Path(exists=True, readable=True, path_type=str),
-    callback=validate_coverage_options,
-    help="Pre-computed coverage data in TSV format. Alternative to BAM files.",
+    help="Coverage files for calculation. Supports BAM, CRAM (indexed), and TSV formats. Each file represents one sample. Auto-detects format by extension. Supports space-separated paths and glob patterns (e.g., '*.bam', '*.cram', '*.tsv').",
 )
 @click.option(
     "-o",
@@ -195,8 +196,8 @@ def validate_coverage_options(ctx, param, value):
     help="Maximum number of positive pairs for contrastive learning training.",
 )
 @click.option(
-    "-c",
-    "--cores",
+    "-t",
+    "--threads",
     type=click.IntRange(min=1, max=64),
     default=8,
     show_default=True,
@@ -261,8 +262,7 @@ def validate_coverage_options(ctx, param, value):
 )
 def main_cli(
     fasta,
-    bam,
-    tsv,
+    coverage,
     output,
     epochs,
     batch_size,
@@ -272,7 +272,7 @@ def main_cli(
     min_samples,
     min_contig_length,
     max_positive_pairs,
-    cores,
+    threads,
     min_bin_size,
     verbose,
     skip_bacterial_filter,
@@ -290,9 +290,9 @@ def main_cli(
     import psutil
     
     max_cores = multiprocessing.cpu_count()
-    if cores > max_cores:
-        click.echo(f"Warning: Requested {cores} cores but only {max_cores} available. Using {max_cores}.", err=True)
-        cores = max_cores
+    if threads > max_cores:
+        click.echo(f"Warning: Requested {threads} threads but only {max_cores} available. Using {max_cores}.", err=True)
+        threads = max_cores
     
     # Check available memory for batch size
     available_memory_gb = psutil.virtual_memory().available / (1024**3)
@@ -301,10 +301,22 @@ def main_cli(
         recommended_batch_size = int((available_memory_gb * 0.8) / 0.001)
         click.echo(f"Warning: Batch size {batch_size} may exceed available memory ({available_memory_gb:.1f}GB). "
                    f"Consider reducing to {recommended_batch_size}.", err=True)
+    # Separate coverage files by type
+    bam_cram_files = []
+    tsv_files = []
+    
+    if coverage:
+        for file_path in coverage:
+            ext = file_path.lower().split('.')[-1]
+            if ext in ['bam', 'cram']:
+                bam_cram_files.append(file_path)
+            elif ext in ['tsv', 'txt']:
+                tsv_files.append(file_path)
+    
     args = argparse.Namespace(
         fasta=fasta,
-        bam=bam if bam else None,
-        tsv=list(tsv) if tsv else None,
+        bam=bam_cram_files if bam_cram_files else None,
+        tsv=tsv_files if tsv_files else None,
         output=output,
         epochs=epochs,
         batch_size=batch_size,
@@ -314,7 +326,7 @@ def main_cli(
         min_samples=min_samples,
         min_contig_length=min_contig_length,
         max_positive_pairs=max_positive_pairs,
-        cores=cores,
+        cores=threads,
         min_bin_size=min_bin_size,
         verbose=verbose,
         skip_bacterial_filter=skip_bacterial_filter,

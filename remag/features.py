@@ -495,7 +495,7 @@ def get_features(
 
     Args:
         fasta_file: Path to input FASTA file
-        bam_files: Optional list of BAM files for coverage features (each represents a sample)
+        bam_files: Optional list of alignment files (BAM/CRAM) for coverage features (each represents a sample)
         tsv_files: Optional TSV files for coverage features
         output_dir: Output directory
         min_contig_length: Minimum contig length
@@ -628,7 +628,7 @@ def get_features(
 
     # Calculate coverage
     if bam_files:
-        logger.debug("Calculating coverage from BAM files...")
+        logger.debug("Calculating coverage from alignment files...")
         coverage_df = calculate_coverage_from_multiple_bams(
             bam_files, fragments_dict, cores
         )
@@ -667,14 +667,14 @@ def get_features(
         )
 
         # Apply global scaling to preserve co-abundance relationships across samples
-        # Option 1: Scale all coverage features together (preserves relative differences between samples)
+        # Scale all coverage features together (preserves relative differences between samples)
         logger.info("Applying global scaling to preserve co-abundance patterns across samples")
         
-        # Use StandardScaler instead of MinMaxScaler to preserve relative differences
-        from sklearn.preprocessing import StandardScaler
-        scaler = StandardScaler()
+        # Use MinMaxScaler to scale features to [0, 1] range
+        from sklearn.preprocessing import MinMaxScaler
+        scaler = MinMaxScaler(feature_range=(0, 1))
         df[coverage_columns] = scaler.fit_transform(df[coverage_columns])
-        logger.info(f"Applied global StandardScaler to {len(coverage_columns)} coverage features")
+        logger.info(f"Applied MinMaxScaler (0-1 range) to {len(coverage_columns)} coverage features")
         
         # Log sample information for debugging
         sample_names = set()
@@ -706,25 +706,49 @@ def get_features(
 
 
 # Coverage calculation helper functions
-def _validate_bam_file(bam_file: str) -> bool:
-    """Validate BAM file and create index if needed."""
-    if not os.path.exists(bam_file):
-        logger.error(f"BAM file not found at {bam_file}")
+def _validate_alignment_file(alignment_file: str) -> bool:
+    """Validate BAM/CRAM file and create index if needed."""
+    if not os.path.exists(alignment_file):
+        logger.error(f"Alignment file not found at {alignment_file}")
         return False
 
-    bai_filepath = bam_file + ".bai"
-    alt_bai_filepath = os.path.splitext(bam_file)[0] + ".bai"
+    file_ext = alignment_file.lower().split('.')[-1]
+    
+    if file_ext == 'bam':
+        # Check for .bai index file (both .bam.bai and .bai extensions)
+        bai_filepath = alignment_file + ".bai"
+        alt_bai_filepath = os.path.splitext(alignment_file)[0] + ".bai"
 
-    if not os.path.exists(bai_filepath) and not os.path.exists(alt_bai_filepath):
-        logger.info(f"BAM index (.bai) not found for {bam_file}, creating index...")
-        try:
-            pysam.index(bam_file)
-            logger.debug(f"BAM index created at {bai_filepath}")
-            return True
-        except Exception as e:
-            logger.error(f"Error creating BAM index: {e}")
-            logger.error("Please ensure samtools is installed and in your PATH.")
-            return False
+        if not os.path.exists(bai_filepath) and not os.path.exists(alt_bai_filepath):
+            logger.info(f"BAM index (.bai) not found for {alignment_file}, creating index...")
+            try:
+                pysam.index(alignment_file)
+                logger.debug(f"BAM index created at {bai_filepath}")
+                return True
+            except Exception as e:
+                logger.error(f"Error creating BAM index: {e}")
+                logger.error("Please ensure samtools is installed and in your PATH.")
+                return False
+    
+    elif file_ext == 'cram':
+        # Check for .crai index file (both .cram.crai and .crai extensions)
+        crai_filepath = alignment_file + ".crai"
+        alt_crai_filepath = os.path.splitext(alignment_file)[0] + ".crai"
+
+        if not os.path.exists(crai_filepath) and not os.path.exists(alt_crai_filepath):
+            logger.info(f"CRAM index (.crai) not found for {alignment_file}, creating index...")
+            try:
+                pysam.index(alignment_file)
+                logger.debug(f"CRAM index created at {crai_filepath}")
+                return True
+            except Exception as e:
+                logger.error(f"Error creating CRAM index: {e}")
+                logger.error("Please ensure samtools is installed and in your PATH.")
+                return False
+    
+    else:
+        logger.error(f"Unsupported alignment file format: {alignment_file}. Supported formats: BAM, CRAM")
+        return False
 
     return True
 
@@ -953,7 +977,7 @@ def calculate_fragment_coverage(
     fragment_coverage: CoverageDict = {}
     fragment_coverage_std: CoverageDict = {}
 
-    if not _validate_bam_file(bam_file):
+    if not _validate_alignment_file(bam_file):
         return {}, {}
 
     try:
@@ -962,7 +986,7 @@ def calculate_fragment_coverage(
             bam_lengths = dict(zip(bamfile.references, bamfile.lengths))
 
             if not bam_references:
-                logger.error("BAM file contains no reference sequences.")
+                logger.error("Alignment file contains no reference sequences.")
                 return {}, {}
 
             # Map FASTA headers to BAM references
@@ -1041,7 +1065,7 @@ def calculate_fragment_coverage(
                         fragment_coverage_std[fragment_header] = 0.0
 
     except Exception as e:
-        logger.error(f"Error processing BAM file {bam_file}: {e}")
+        logger.error(f"Error processing alignment file {bam_file}: {e}")
         return {}, {}
 
     # Assign zero coverage to any missing fragments
@@ -1131,10 +1155,10 @@ def calculate_coverage_from_tsv(
 
 
 def _get_total_mapped_reads(bam_file: str) -> int:
-    """Calculate total number of mapped reads in a BAM file.
+    """Calculate total number of mapped reads in an alignment file.
     
     Args:
-        bam_file: Path to BAM file
+        bam_file: Path to alignment file (BAM/CRAM)
         
     Returns:
         Total number of mapped reads
@@ -1142,7 +1166,7 @@ def _get_total_mapped_reads(bam_file: str) -> int:
     try:
         with pysam.AlignmentFile(bam_file, "rb") as bamfile:
             total_mapped = bamfile.mapped
-            logger.info(f"BAM file {os.path.basename(bam_file)}: {total_mapped:,} mapped reads")
+            logger.info(f"Alignment file {os.path.basename(bam_file)}: {total_mapped:,} mapped reads")
             return total_mapped
     except Exception as e:
         logger.error(f"Error calculating mapped reads for {bam_file}: {e}")
@@ -1152,23 +1176,23 @@ def _get_total_mapped_reads(bam_file: str) -> int:
 def calculate_coverage_from_multiple_bams(
     bam_files: List[str], fragments_dict: FragmentDict, cores: int = 16
 ) -> pd.DataFrame:
-    """Calculate coverage from multiple BAM files, creating separate columns for each sample.
+    """Calculate coverage from multiple alignment files (BAM/CRAM), creating separate columns for each sample.
     
     Coverage is normalized by total mapped reads per sample to account for different
     sequencing depths, then scaled per-sample to preserve within-sample relationships.
 
     Args:
-        bam_files: List of BAM file paths
+        bam_files: List of alignment file paths (BAM/CRAM)
         fragments_dict: Dictionary containing fragment sequences
         cores: Number of cores for processing
 
     Returns:
-        DataFrame with coverage columns for each BAM file (mean and std)
+        DataFrame with coverage columns for each alignment file (mean and std)
     """
     if not bam_files:
         return pd.DataFrame()
 
-    logger.info(f"Calculating coverage from {len(bam_files)} BAM files...")
+    logger.info(f"Calculating coverage from {len(bam_files)} alignment files...")
 
     # Get all fragment headers for consistent indexing
     all_fragment_headers = [
@@ -1181,14 +1205,14 @@ def calculate_coverage_from_multiple_bams(
 
     for i, bam_file in enumerate(bam_files):
         logger.info(
-            f"Processing BAM file {i+1}/{len(bam_files)}: {os.path.basename(bam_file)}"
+            f"Processing alignment file {i+1}/{len(bam_files)}: {os.path.basename(bam_file)}"
         )
 
         try:
             # Calculate total mapped reads for normalization
             total_mapped_reads = _get_total_mapped_reads(bam_file)
             
-            # Calculate coverage for this BAM file
+            # Calculate coverage for this alignment file
             coverage, coverage_std = calculate_fragment_coverage(
                 bam_file, fragments_dict, cores
             )
@@ -1210,7 +1234,7 @@ def calculate_coverage_from_multiple_bams(
             all_coverage_series.extend([mean_series, std_series])
 
         except Exception as e:
-            logger.error(f"Error processing BAM file {bam_file}: {e}")
+            logger.error(f"Error processing alignment file {bam_file}: {e}")
             sample_name = os.path.splitext(os.path.basename(bam_file))[0]
             mean_col_name = f"{sample_name}_coverage"
             std_col_name = f"{sample_name}_coverage_std"
@@ -1222,7 +1246,7 @@ def calculate_coverage_from_multiple_bams(
             all_coverage_series.extend([mean_series, std_series])
 
     if not all_coverage_series:
-        logger.warning("No coverage data could be loaded from any BAM files.")
+        logger.warning("No coverage data could be loaded from any alignment files.")
         return pd.DataFrame(index=all_fragment_headers)
 
     # Combine all coverage series into a single dataframe
