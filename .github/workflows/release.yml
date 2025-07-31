@@ -147,3 +147,8 @@ jobs:
       env:
         ZENODO_TOKEN: ${{ secrets.ZENODO_TOKEN }}
         GITHUB_REF: ${{ github.ref }}
+
+  docker-build:
+    needs: pypi-publish
+    uses: ./.github/workflows/docker-publish.yml
+    secrets: inherit
