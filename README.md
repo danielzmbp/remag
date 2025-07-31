@@ -11,7 +11,7 @@
 pip install remag
 
 # Run REMAG
-remag -f contigs.fasta -b alignments.bam -o output_directory
+remag -f contigs.fasta -c alignments.bam -o output_directory
 ```
 
 ## Installation
@@ -65,13 +65,13 @@ pip install "remag[gpu]"
 After installation, you can use REMAG via the command line:
 
 ```bash
-remag -f contigs.fasta -b alignments.bam -o output_directory
+remag -f contigs.fasta -c alignments.bam -o output_directory
 ```
 
 ### Python module mode
 
 ```bash
-python -m remag -f contigs.fasta -b alignments.bam -o output_directory
+python -m remag -f contigs.fasta -c alignments.bam -o output_directory
 ```
 
 ## How REMAG Works
@@ -88,7 +88,7 @@ REMAG uses a sophisticated multi-stage pipeline specifically designed for eukary
 ## Key Features
 
 - **Automatic Bacterial Filtering**: The 4CAC classifier automatically identifies and removes bacterial sequences before binning
-- **Multi-Sample Support**: Can process coverage information from multiple samples (BAM files) simultaneously
+- **Multi-Sample Support**: Can process coverage information from multiple samples (BAM/CRAM files) simultaneously
 - **Barlow Twins Loss**: Uses a self-supervised contrastive learning approach that doesn't require negative pairs
 - **Fragment Augmentation**: Large contigs are split into multiple overlapping fragments during training to improve representation learning
 
@@ -96,8 +96,7 @@ REMAG uses a sophisticated multi-stage pipeline specifically designed for eukary
 
 ```
   -f, --fasta PATH                Input FASTA file with contigs to bin. Can be gzipped.  [required]
-  -b, --bam PATH                  Input BAM file(s) for coverage calculation. Must be indexed. Each BAM represents a sample. Supports space-separated files or glob patterns (e.g., "*.bam", "sample_*.bam"). Use quotes around glob patterns.
-  -t, --tsv PATH                  Input TSV file(s) with coverage information.
+  -c, --coverage PATH             Coverage files for calculation. Supports BAM, CRAM (indexed), and TSV formats. Auto-detects format by extension. Each file represents one sample. Supports space-separated paths and glob patterns (e.g., "*.bam", "*.cram", "*.tsv"). Use quotes around glob patterns.
   -o, --output PATH               Output directory for results.  [required]
   --epochs INTEGER RANGE          Training epochs for neural network.  [default: 400; 50<=x<=2000]
   --batch-size INTEGER RANGE      Batch size for training.  [default: 2048; 64<=x<=8192]
@@ -113,7 +112,7 @@ REMAG uses a sophisticated multi-stage pipeline specifically designed for eukary
                                   Minimum contig length in bp.  [default: 1000; 500<=x<=10000]
   --max-positive-pairs INTEGER RANGE
                                   Maximum positive pairs for contrastive learning.  [default: 5000000; 100000<=x<=10000000]
-  -c, --cores INTEGER RANGE       Number of CPU cores.  [default: 8; 1<=x<=64]
+  -t, --threads INTEGER RANGE     Number of CPU threads.  [default: 8; 1<=x<=64]
   --min-bin-size INTEGER RANGE    Minimum bin size in bp.  [default: 100000; 50000<=x<=10000000]
   -v, --verbose                   Enable verbose logging.
   --skip-bacterial-filter         Skip bacterial contig filtering (4CAC classifier + contrastive learning).
