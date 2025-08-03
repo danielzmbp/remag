@@ -7,10 +7,17 @@
 ## Quick Start
 
 ```bash
-# Install from PyPI
+# Install via pip (recommended)
 pip install remag
 
-# Run REMAG
+# Or via conda
+conda install -c bioconda remag
+
+# Or use Docker
+docker run --rm -v $(pwd):/data danielzmbp/remag:latest \
+  -f /data/contigs.fasta -c /data/alignments.bam -o /data/output
+
+# Run REMAG (if installed locally)
 remag -f contigs.fasta -c alignments.bam -o output_directory
 ```
 
@@ -25,6 +32,32 @@ conda activate remag
 
 # Install from PyPI
 pip install remag
+```
+
+### From conda (bioconda)
+
+```bash
+# Install directly from bioconda
+conda install -c bioconda remag
+
+# Or create a new environment
+conda create -n remag -c bioconda remag
+conda activate remag
+```
+
+### Using Docker
+
+```bash
+# Pull and run the latest version
+docker run --rm -v $(pwd):/data danielzmbp/remag:latest \
+  -f /data/contigs.fasta -c /data/alignments.bam -o /data/output
+
+# Or use a specific version
+docker run --rm -v $(pwd):/data danielzmbp/remag:0.1.2 \
+  -f /data/contigs.fasta -c /data/alignments.bam -o /data/output
+
+# For interactive use
+docker run -it --rm -v $(pwd):/data danielzmbp/remag:latest /bin/bash
 ```
 
 ### From source
