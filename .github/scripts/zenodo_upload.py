@@ -31,12 +31,24 @@ def get_zenodo_deposition(token, use_sandbox=False):
                     f"{base_url}/deposit/depositions/{deposition_id}/actions/newversion",
                     headers=headers
                 )
+                if r.status_code != 201:
+                    print(f"Failed to create new version: {r.status_code} - {r.text}")
+                    # Fallback: create completely new deposition
+                    print("Falling back to creating new deposition...")
+                    r = requests.post(f"{base_url}/deposit/depositions", headers=headers, json={})
+                    r.raise_for_status()
+                    deposition = r.json()
+                    deposition_file.write_text(str(deposition['id']))
+                    return deposition
                 r.raise_for_status()
                 # Get the new draft
                 new_version_url = r.json()['links']['latest_draft']
                 r = requests.get(new_version_url, headers=headers)
                 r.raise_for_status()
-                return r.json()
+                new_deposition = r.json()
+                # Update stored ID to the new draft ID
+                deposition_file.write_text(str(new_deposition['id']))
+                return new_deposition
             return deposition
     
     # Create new deposition
