@@ -1,18 +1,15 @@
 name: Docker Build and Publish
 
+# This workflow builds and publishes Docker images
+# It's called by the release workflow for tags, or can be triggered manually
 on:
-  push:
-    tags:
-      - 'v*.*.*'
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
       tag_name:
         description: 'Tag name for the Docker image'
         required: false
         default: 'latest'
-  workflow_call:  # Allow this workflow to be called by other workflows
+  workflow_call:  # Called by release.yml for tag-based releases
 
 env:
   DOCKER_REPO: ${{ secrets.DOCKER_USERNAME }}/remag
