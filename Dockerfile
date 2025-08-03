@@ -21,8 +21,9 @@ RUN pip install --no-cache-dir build && \
 # Final stage
 FROM python:3.9-slim
 
-# Install runtime dependencies
+# Install runtime dependencies and build tools for packages that need compilation
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
     libgomp1 \
     samtools \
     && rm -rf /var/lib/apt/lists/*
@@ -37,7 +38,10 @@ COPY --from=builder /app/dist/*.whl /tmp/
 # Install PyTorch CPU version first to avoid downloading large CUDA versions
 RUN pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu && \
     pip install --no-cache-dir /tmp/*.whl && \
-    rm -rf /tmp/*.whl
+    rm -rf /tmp/*.whl && \
+    apt-get purge -y build-essential && \
+    apt-get autoremove -y && \
+    rm -rf /var/lib/apt/lists/*
 
 # Switch to non-root user
 USER remag
