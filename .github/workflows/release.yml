@@ -1,5 +1,7 @@
 name: Release
 
+# Main release workflow triggered by version tags
+# Handles: PyPI, GitHub release, Bioconda recipe, Zenodo, Docker
 on:
   push:
     tags:
