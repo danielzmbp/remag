@@ -1,5 +1,5 @@
 # Multi-stage build for REMAG
-FROM python:3.9-slim as builder
+FROM python:3.9-slim AS builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -10,15 +10,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Set working directory
 WORKDIR /app
 
-# Copy only requirements first to leverage Docker cache
+# Copy source code
 COPY pyproject.toml README.md ./
 COPY remag ./remag
 
-# Build the package and download all dependencies
+# Build the package
 RUN pip install --no-cache-dir build && \
-    python -m build --wheel && \
-    pip wheel --no-cache-dir --wheel-dir=/wheels ./dist/*.whl && \
-    pip wheel --no-cache-dir --wheel-dir=/wheels torch torchvision --index-url https://download.pytorch.org/whl/cpu
+    python -m build --wheel
 
 # Final stage
 FROM python:3.9-slim
@@ -32,16 +30,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Create non-root user
 RUN useradd -m -s /bin/bash remag
 
-# Set working directory
-WORKDIR /app
+# Copy the built wheel from builder
+COPY --from=builder /app/dist/*.whl /tmp/
 
-# Copy wheels from builder
-COPY --from=builder /wheels /wheels
-COPY --from=builder /app/dist/*.whl /wheels/
-
-# Install REMAG and all dependencies from wheels
-RUN pip install --no-cache-dir --no-index --find-links=/wheels remag && \
-    rm -rf /wheels
+# Install REMAG and all dependencies
+# Install PyTorch CPU version first to avoid downloading large CUDA versions
+RUN pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu && \
+    pip install --no-cache-dir /tmp/*.whl && \
+    rm -rf /tmp/*.whl
 
 # Switch to non-root user
 USER remag
