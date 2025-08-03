@@ -102,14 +102,16 @@ def upload_files(deposition, token, use_sandbox=False):
     headers = {"Authorization": f"Bearer {token}"}
     
     # First, delete any existing files if this is a new version
-    if 'files' in deposition:
+    if 'files' in deposition and deposition['files']:
         for file_info in deposition['files']:
             print(f"Removing old file: {file_info['filename']}")
             r = requests.delete(
                 f"{base_url}/deposit/depositions/{deposition['id']}/files/{file_info['id']}",
                 headers=headers
             )
-            r.raise_for_status()
+            # Don't fail if file deletion fails (might already be deleted)
+            if r.status_code not in [204, 404]:
+                print(f"Warning: Could not delete file {file_info['filename']}: {r.status_code}")
     
     # Upload all files in dist/
     dist_path = Path("dist")
@@ -129,6 +131,10 @@ def upload_files(deposition, token, use_sandbox=False):
                     headers=headers,
                     files=files
                 )
+                if r.status_code != 201:
+                    print(f"Upload failed with status {r.status_code}")
+                    print(f"Response: {r.text}")
+                    print(f"URL: {base_url}/deposit/depositions/{deposition['id']}/files")
                 r.raise_for_status()
 
 def publish_deposition(deposition, token, use_sandbox=False):
@@ -165,6 +171,8 @@ def main():
         # Get or create deposition
         print("Getting Zenodo deposition...")
         deposition = get_zenodo_deposition(token, use_sandbox)
+        print(f"Using deposition ID: {deposition['id']}")
+        print(f"Deposition state: {deposition.get('state', 'unknown')}")
         
         # Update metadata
         print("Updating metadata...")
