@@ -12,6 +12,7 @@ on:
         description: 'Tag name for the Docker image'
         required: false
         default: 'latest'
+  workflow_call:  # Allow this workflow to be called by other workflows
 
 env:
   DOCKER_REPO: ${{ secrets.DOCKER_USERNAME }}/remag
