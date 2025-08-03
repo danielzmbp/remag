@@ -1,5 +1,7 @@
 name: Create Bioconda PR
 
+# Creates pull request to bioconda-recipes repository
+# Triggered when GitHub release is published or manually
 on:
   workflow_dispatch:
     inputs:
