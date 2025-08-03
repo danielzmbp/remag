@@ -14,9 +14,10 @@ WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY remag ./remag
 
-# Build the package
+# Build the package and download all dependencies
 RUN pip install --no-cache-dir build && \
     python -m build --wheel && \
+    pip wheel --no-cache-dir --wheel-dir=/wheels ./dist/*.whl && \
     pip wheel --no-cache-dir --wheel-dir=/wheels torch torchvision --index-url https://download.pytorch.org/whl/cpu
 
 # Final stage
@@ -38,8 +39,8 @@ WORKDIR /app
 COPY --from=builder /wheels /wheels
 COPY --from=builder /app/dist/*.whl /wheels/
 
-# Install REMAG and dependencies
-RUN pip install --no-cache-dir --no-index --find-links=/wheels /wheels/remag*.whl && \
+# Install REMAG and all dependencies from wheels
+RUN pip install --no-cache-dir --no-index --find-links=/wheels remag && \
     rm -rf /wheels
 
 # Switch to non-root user
