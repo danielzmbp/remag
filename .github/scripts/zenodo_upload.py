@@ -136,7 +136,23 @@ def upload_files(deposition, token, use_sandbox=False):
             print(f"Uploading {file_path.name}...")
             
             with open(file_path, 'rb') as f:
-                # Use POST for new files instead of PUT
+                # Try the bucket upload method first (for new versions)
+                if 'links' in deposition and 'bucket' in deposition['links']:
+                    bucket_url = deposition['links']['bucket']
+                    print(f"Trying bucket upload to: {bucket_url}/{file_path.name}")
+                    r = requests.put(
+                        f"{bucket_url}/{file_path.name}",
+                        headers=headers,
+                        data=f
+                    )
+                    if r.status_code in [200, 201]:
+                        print(f"Successfully uploaded {file_path.name} via bucket")
+                        continue
+                    else:
+                        print(f"Bucket upload failed: {r.status_code} - {r.text}")
+                
+                # Fallback to traditional file upload
+                f.seek(0)  # Reset file pointer
                 files = {'file': (file_path.name, f)}
                 r = requests.post(
                     f"{base_url}/deposit/depositions/{deposition['id']}/files",
@@ -185,6 +201,9 @@ def main():
         deposition = get_zenodo_deposition(token, use_sandbox)
         print(f"Using deposition ID: {deposition['id']}")
         print(f"Deposition state: {deposition.get('state', 'unknown')}")
+        print(f"Available links: {list(deposition.get('links', {}).keys())}")
+        if 'bucket' in deposition.get('links', {}):
+            print(f"Bucket URL: {deposition['links']['bucket']}")
         
         # Update metadata
         print("Updating metadata...")
