@@ -9,6 +9,14 @@ import rich_click as click
 from .core import main as run_remag
 from .utils import setup_logging
 
+try:
+    from importlib.metadata import version
+except ImportError:
+    # Python < 3.8
+    from importlib_metadata import version
+
+__version__ = version("remag")
+
 
 class SpaceSeparatedPaths(click.ParamType):
     """Custom click type that accepts space-separated file paths."""
@@ -116,7 +124,7 @@ def validate_coverage_options(ctx, param, value):
 
 @click.command(name="remag")
 @click.help_option("--help", "-h")
-@click.version_option(version="0.1.0", prog_name="REMAG")
+@click.version_option(version=__version__, prog_name="REMAG")
 @click.option(
     "-f",
     "--fasta",
