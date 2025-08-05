@@ -1,5 +1,6 @@
-# Git files
-.git
+# Git files (keep .git for setuptools-scm but exclude large files)
+.git/objects/pack
+.git/objects/info
 .gitignore
 .github
 
