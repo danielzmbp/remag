@@ -74,28 +74,7 @@ class SiameseNetwork(nn.Module):
         
         self.n_kmer_features = n_kmer_features
         self.n_coverage_features = n_coverage_features
-        
-        # Adaptively size the coverage encoder based on number of samples
-        # Assume ~2 features per sample (mean + std), so n_samples ≈ n_coverage_features / 2
-        n_samples_estimate = max(1, n_coverage_features // 2)
-        
-        # Scale hidden dimensions based on number of samples
-        # More samples = more complex co-abundance patterns = larger encoder
-        if n_samples_estimate <= 2:
-            coverage_hidden1 = 32
-            coverage_hidden2 = 16
-        elif n_samples_estimate <= 5:
-            coverage_hidden1 = 64
-            coverage_hidden2 = 32
-        elif n_samples_estimate <= 10:
-            coverage_hidden1 = 128
-            coverage_hidden2 = 64
-        else:
-            coverage_hidden1 = 256
-            coverage_hidden2 = 128
-            
-        logger.debug(f"Coverage encoder sized for ~{n_samples_estimate} samples: "
-                    f"{n_coverage_features} -> {coverage_hidden1} -> {coverage_hidden2}")
+        self.has_coverage = n_coverage_features > 0
         
         # Separate encoders for k-mer and coverage features
         self.kmer_encoder = nn.Sequential(
@@ -108,25 +87,56 @@ class SiameseNetwork(nn.Module):
             nn.LeakyReLU(),
         )
         
-        self.coverage_encoder = nn.Sequential(
-            nn.Linear(n_coverage_features, coverage_hidden1),
-            nn.BatchNorm1d(coverage_hidden1),
-            nn.LeakyReLU(),
-            nn.Dropout(0.05),
-            nn.Linear(coverage_hidden1, coverage_hidden2),
-            nn.BatchNorm1d(coverage_hidden2),
-            nn.LeakyReLU(),
-        )
-        
-        # Store final coverage dimension for fusion layer
-        self.coverage_final_dim = coverage_hidden2
-        
-        # Advanced fusion layer with cross-attention and MLP
-        self.fusion_layer = FusionLayer(
-            kmer_dim=128, 
-            coverage_dim=self.coverage_final_dim, 
-            embedding_dim=embedding_dim
-        )
+        if self.has_coverage:
+            # Adaptively size the coverage encoder based on number of samples
+            # Assume ~2 features per sample (mean + std), so n_samples ≈ n_coverage_features / 2
+            n_samples_estimate = max(1, n_coverage_features // 2)
+            
+            # Scale hidden dimensions based on number of samples
+            # More samples = more complex co-abundance patterns = larger encoder
+            if n_samples_estimate <= 2:
+                coverage_hidden1 = 32
+                coverage_hidden2 = 16
+            elif n_samples_estimate <= 5:
+                coverage_hidden1 = 64
+                coverage_hidden2 = 32
+            elif n_samples_estimate <= 10:
+                coverage_hidden1 = 128
+                coverage_hidden2 = 64
+            else:
+                coverage_hidden1 = 256
+                coverage_hidden2 = 128
+                
+            logger.debug(f"Coverage encoder sized for ~{n_samples_estimate} samples: "
+                        f"{n_coverage_features} -> {coverage_hidden1} -> {coverage_hidden2}")
+            
+            self.coverage_encoder = nn.Sequential(
+                nn.Linear(n_coverage_features, coverage_hidden1),
+                nn.BatchNorm1d(coverage_hidden1),
+                nn.LeakyReLU(),
+                nn.Dropout(0.05),
+                nn.Linear(coverage_hidden1, coverage_hidden2),
+                nn.BatchNorm1d(coverage_hidden2),
+                nn.LeakyReLU(),
+            )
+            
+            # Store final coverage dimension for fusion layer
+            self.coverage_final_dim = coverage_hidden2
+            
+            # Advanced fusion layer with cross-attention and MLP
+            self.fusion_layer = FusionLayer(
+                kmer_dim=128, 
+                coverage_dim=self.coverage_final_dim, 
+                embedding_dim=embedding_dim
+            )
+        else:
+            # No coverage features - use a simple projection
+            self.kmer_projection = nn.Sequential(
+                nn.Linear(128, embedding_dim),
+                nn.BatchNorm1d(embedding_dim),
+                nn.ReLU(),
+                nn.Dropout(0.1),
+            )
         
         # Simplified projection head - 512 dims is sufficient for this use case
         self.projection_head = nn.Sequential(
@@ -140,14 +150,21 @@ class SiameseNetwork(nn.Module):
         """Internal method to encode features using appropriate architecture"""
         # Split input into k-mer and coverage features
         kmer_features = x[:, :self.n_kmer_features]
-        coverage_features = x[:, self.n_kmer_features:]
         
-        # Encode each feature type separately
+        # Encode k-mer features
         kmer_encoded = self.kmer_encoder(kmer_features)
-        coverage_encoded = self.coverage_encoder(coverage_features)
         
-        # Advanced fusion with cross-attention
-        representation = self.fusion_layer(kmer_encoded, coverage_encoded)
+        if self.has_coverage:
+            # Normal path with coverage features
+            coverage_features = x[:, self.n_kmer_features:]
+            coverage_encoded = self.coverage_encoder(coverage_features)
+            
+            # Advanced fusion with cross-attention
+            representation = self.fusion_layer(kmer_encoded, coverage_encoded)
+        else:
+            # No coverage features - use simple projection
+            representation = self.kmer_projection(kmer_encoded)
+        
         return representation
 
     def forward_one(self, x):
