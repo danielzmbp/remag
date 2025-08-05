@@ -10,11 +10,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Set working directory
 WORKDIR /app
 
-# Copy source code
+# Copy source code and git metadata for versioning
 COPY pyproject.toml README.md ./
 COPY remag ./remag
+COPY .git ./.git
 
 # Build the package
+# If VERSION build arg is provided, use it as fallback for setuptools-scm
+ARG VERSION
+ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_REMAG=${VERSION}
 RUN pip install --no-cache-dir build && \
     python -m build --wheel
 
@@ -36,7 +40,8 @@ COPY --from=builder /app/dist/*.whl /tmp/
 
 # Install REMAG and all dependencies
 # Install PyTorch CPU version first to avoid downloading large CUDA versions
-RUN pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu && \
+# Let pip resolve versions based on pyproject.toml constraints
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && \
     pip install --no-cache-dir /tmp/*.whl && \
     rm -rf /tmp/*.whl && \
     apt-get purge -y build-essential && \
@@ -49,6 +54,8 @@ USER remag
 # Set environment variables
 ENV PATH="/home/remag/.local/bin:${PATH}"
 ENV PYTHONUNBUFFERED=1
+# Set default log level to INFO to match pip version behavior
+ENV LOG_LEVEL=INFO
 
 # Create working directory for user
 WORKDIR /data
