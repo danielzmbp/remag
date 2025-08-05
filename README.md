@@ -60,6 +60,21 @@ docker run --rm -v $(pwd):/data danielzmbp/remag:0.1.2 \
 docker run -it --rm -v $(pwd):/data danielzmbp/remag:latest /bin/bash
 ```
 
+### Using Singularity
+
+```bash
+# Pull and run the latest version
+singularity run docker://danielzmbp/remag:latest \
+  -f contigs.fasta -c alignments.bam -o output_directory
+
+# For interactive use
+singularity shell docker://danielzmbp/remag:latest
+
+# Build a local Singularity image file (optional)
+singularity build remag.sif docker://danielzmbp/remag:latest
+singularity run remag.sif -f contigs.fasta -c alignments.bam -o output_directory
+```
+
 ### From source
 
 ```bash
