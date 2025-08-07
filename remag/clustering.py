@@ -16,6 +16,8 @@ from sklearn.cluster import KMeans
 from loguru import logger
 import os
 import json
+import igraph as ig
+import leidenalg
 
 from .utils import extract_base_contig_name, get_torch_device, group_contigs_by_cluster
 import torch
@@ -184,6 +186,147 @@ def _iterative_kmeans_filtering(embeddings, contig_names, eukaryotic_scores,
                f"({total_removed} removed in {iteration} iterations)")
     
     return current_embeddings, current_contig_names, final_stats
+
+
+def _construct_knn_graph(embeddings, k=15, similarity_threshold=0.1):
+    """
+    Construct a k-NN graph from multidimensional embeddings using cosine similarity.
+    
+    Args:
+        embeddings: Numpy array of L2-normalized embeddings (n_samples x embedding_dim)
+        k: Number of nearest neighbors for each node
+        similarity_threshold: Minimum cosine similarity to create an edge (0-1)
+        
+    Returns:
+        igraph.Graph: Weighted graph with cosine similarity weights
+    """
+    logger.info(f"Constructing k-NN graph from {len(embeddings)} embeddings (k={k})")
+    
+    # Calculate cosine similarity matrix (since embeddings are L2-normalized)
+    similarity_matrix = np.dot(embeddings, embeddings.T)
+    
+    # Create adjacency lists for efficient graph construction
+    edges = []
+    weights = []
+    
+    for i in range(len(embeddings)):
+        # Get k nearest neighbors (excluding self)
+        similarities = similarity_matrix[i]
+        
+        # Get indices of k+1 highest similarities (including self)
+        top_k_indices = np.argpartition(similarities, -(k+1))[-(k+1):]
+        top_k_similarities = similarities[top_k_indices]
+        
+        # Sort by similarity (highest first) and exclude self
+        sorted_indices = np.argsort(top_k_similarities)[::-1]
+        top_k_indices = top_k_indices[sorted_indices]
+        top_k_similarities = top_k_similarities[sorted_indices]
+        
+        # Remove self-connection and apply similarity threshold
+        for j_idx, similarity in zip(top_k_indices, top_k_similarities):
+            if j_idx != i and similarity >= similarity_threshold:
+                edges.append((i, j_idx))
+                weights.append(float(similarity))
+    
+    logger.info(f"Created {len(edges)} edges with similarity >= {similarity_threshold}")
+    
+    # Create igraph from edge list
+    g = ig.Graph()
+    g.add_vertices(len(embeddings))
+    g.add_edges(edges)
+    g.es['weight'] = weights
+    
+    # Make graph undirected by averaging edge weights
+    g = g.as_undirected(mode='mean')
+    
+    logger.info(f"Graph created: {g.vcount()} nodes, {g.ecount()} edges")
+    
+    return g
+
+
+def _leiden_clustering(embeddings, k=15, similarity_threshold=0.1, resolution=1.0, random_state=42):
+    """
+    Perform Leiden clustering on embeddings by first constructing a k-NN graph.
+    
+    Args:
+        embeddings: Numpy array of L2-normalized embeddings (n_samples x embedding_dim)
+        k: Number of nearest neighbors for graph construction
+        similarity_threshold: Minimum cosine similarity to create an edge
+        resolution: Resolution parameter for Leiden algorithm (higher = more clusters)
+        random_state: Random seed for reproducibility
+        
+    Returns:
+        numpy.array: Cluster labels (-1 for isolated nodes, 0+ for clusters)
+    """
+    logger.info(f"Starting Leiden clustering with k={k}, resolution={resolution}")
+    
+    # Construct k-NN graph
+    graph = _construct_knn_graph(embeddings, k=k, similarity_threshold=similarity_threshold)
+    
+    # Check if graph has edges
+    if graph.ecount() == 0:
+        logger.warning("No edges in graph - all nodes will be noise")
+        return np.full(len(embeddings), -1, dtype=int)
+    
+    # Find connected components
+    components = graph.connected_components()
+    n_components = len(components)
+    logger.info(f"Graph has {n_components} connected components")
+    
+    if n_components == 1:
+        logger.info("Single connected component - running Leiden on full graph")
+        # Run Leiden on the entire graph
+        partition = leidenalg.find_partition(
+            graph, 
+            leidenalg.RBConfigurationVertexPartition,
+            resolution_parameter=resolution,
+            seed=random_state
+        )
+        cluster_labels = np.array(partition.membership)
+        
+    else:
+        # Handle multiple components separately
+        logger.info(f"Multiple components detected - running Leiden on each component")
+        cluster_labels = np.full(graph.vcount(), -1, dtype=int)
+        current_cluster_id = 0
+        
+        for component in components:
+            if len(component) < 2:
+                # Single-node component -> noise
+                continue
+                
+            # Extract subgraph for this component
+            subgraph = graph.induced_subgraph(component)
+            
+            # Run Leiden on subgraph
+            sub_partition = leidenalg.find_partition(
+                subgraph,
+                leidenalg.RBConfigurationVertexPartition,
+                resolution_parameter=resolution,
+                seed=random_state
+            )
+            
+            # Map back to original indices
+            for i, cluster_id in enumerate(sub_partition.membership):
+                original_idx = component[i]
+                cluster_labels[original_idx] = current_cluster_id + cluster_id
+            
+            # Update cluster ID offset for next component
+            current_cluster_id += len(set(sub_partition.membership))
+    
+    # Report clustering results
+    unique_labels = np.unique(cluster_labels)
+    n_clusters = len(unique_labels) - (1 if -1 in unique_labels else 0)
+    n_noise = np.sum(cluster_labels == -1)
+    
+    logger.info(f"Leiden clustering complete: {n_clusters} clusters, {n_noise} noise points")
+    
+    # Log cluster sizes
+    if n_clusters > 0:
+        cluster_sizes = np.bincount(cluster_labels[cluster_labels >= 0])
+        logger.info(f"Cluster sizes: {cluster_sizes.tolist()}")
+    
+    return cluster_labels
 
 
 def _create_hdbscan_clusterer(min_cluster_size, min_samples, cluster_selection_epsilon=0.3, use_gpu=True):
@@ -674,29 +817,51 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
         else:
             logger.info("K-means pre-filtering disabled by --skip-kmeans-filtering flag")
     
-    # Use HDBSCAN clustering on filtered data
-    logger.info("Using HDBSCAN clustering")
-    precluster_success = False
+    # Choose clustering method based on user preference
+    clustering_method = getattr(args, 'clustering_method', 'hdbscan')
     
-    # Create HDBSCAN clusterer (GPU-accelerated if available)
-    logger.info(f"Running HDBSCAN on {len(working_contig_names)} contigs (min_cluster_size={args.min_cluster_size}, min_samples={args.min_samples})")
-    clusterer, is_gpu = _create_hdbscan_clusterer(
-        args.min_cluster_size, 
-        args.min_samples,
-        getattr(args, 'cluster_selection_epsilon', 0.3),
-        use_gpu=getattr(args, 'use_gpu', True)
-    )
-    
-    if is_gpu:
-        logger.info("Using GPU-accelerated HDBSCAN clustering")
-        # Convert to GPU arrays for cuML
-        gpu_data = cp.asarray(norm_data, dtype=cp.float32)
-        cluster_labels = clusterer.fit_predict(gpu_data)
-        # Convert back to CPU numpy array
-        cluster_labels = cp.asnumpy(cluster_labels)
+    if clustering_method == 'leiden':
+        logger.info("Using Leiden clustering")
+        leiden_resolution = getattr(args, 'leiden_resolution', 1.0)
+        leiden_k_neighbors = getattr(args, 'leiden_k_neighbors', 15)
+        leiden_similarity_threshold = getattr(args, 'leiden_similarity_threshold', 0.1)
+        
+        logger.info(f"Running Leiden on {len(working_contig_names)} contigs "
+                   f"(resolution={leiden_resolution}, k={leiden_k_neighbors}, "
+                   f"similarity_threshold={leiden_similarity_threshold})")
+        
+        cluster_labels = _leiden_clustering(
+            norm_data,
+            k=leiden_k_neighbors,
+            similarity_threshold=leiden_similarity_threshold,
+            resolution=leiden_resolution,
+            random_state=42
+        )
+        
     else:
-        logger.info("Using CPU HDBSCAN clustering")
-        cluster_labels = clusterer.fit_predict(norm_data)
+        # Use HDBSCAN clustering on filtered data
+        logger.info("Using HDBSCAN clustering")
+        precluster_success = False
+        
+        # Create HDBSCAN clusterer (GPU-accelerated if available)
+        logger.info(f"Running HDBSCAN on {len(working_contig_names)} contigs (min_cluster_size={args.min_cluster_size}, min_samples={args.min_samples})")
+        clusterer, is_gpu = _create_hdbscan_clusterer(
+            args.min_cluster_size, 
+            args.min_samples,
+            getattr(args, 'cluster_selection_epsilon', 0.3),
+            use_gpu=getattr(args, 'use_gpu', True)
+        )
+        
+        if is_gpu:
+            logger.info("Using GPU-accelerated HDBSCAN clustering")
+            # Convert to GPU arrays for cuML
+            gpu_data = cp.asarray(norm_data, dtype=cp.float32)
+            cluster_labels = clusterer.fit_predict(gpu_data)
+            # Convert back to CPU numpy array
+            cluster_labels = cp.asnumpy(cluster_labels)
+        else:
+            logger.info("Using CPU HDBSCAN clustering")
+            cluster_labels = clusterer.fit_predict(norm_data)
     n_clusters = len(set(cluster_labels)) - (1 if -1 in cluster_labels else 0)
     n_noise = sum(1 for label in cluster_labels if label == -1)
     cluster_sizes = np.bincount(cluster_labels[cluster_labels >= 0]) if n_clusters > 0 else []
@@ -721,31 +886,47 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
     n_noise = final_counts.get("noise", 0)
     logger.info(f"Clustering complete: {n_clusters} clusters, {n_noise} noise contigs, sizes: {dict(sorted(final_counts.items()))}")
 
-    # Check if only one bin was detected and perform reclustering with increased min_cluster_size
+    # Check if only one bin was detected and perform reclustering
     if n_clusters == 1:
-        logger.info("Only one bin detected. Attempting reclustering with increased min_cluster_size...")
-        
-        # Increase min_cluster_size by 1
-        new_min_cluster_size = args.min_cluster_size + 1
-        logger.info(f"Reclustering with min_cluster_size={new_min_cluster_size} (original: {args.min_cluster_size})")
-        
-        # Create new HDBSCAN clusterer with increased min_cluster_size
-        reclusterer, is_gpu_recluster = _create_hdbscan_clusterer(
-            new_min_cluster_size, 
-            args.min_samples,
-            getattr(args, 'cluster_selection_epsilon', 0.3),
-            use_gpu=getattr(args, 'use_gpu', True)
-        )
-        
-        # Perform reclustering
-        if is_gpu_recluster:
-            logger.info("Using GPU-accelerated HDBSCAN for reclustering")
-            gpu_data = cp.asarray(norm_data, dtype=cp.float32)
-            recluster_labels = reclusterer.fit_predict(gpu_data)
-            recluster_labels = cp.asnumpy(recluster_labels)
+        if clustering_method == 'leiden':
+            logger.info("Only one bin detected. Attempting reclustering with increased resolution...")
+            
+            # Increase resolution by 0.5
+            new_resolution = leiden_resolution + 0.5
+            logger.info(f"Reclustering with resolution={new_resolution} (original: {leiden_resolution})")
+            
+            # Perform Leiden reclustering
+            recluster_labels = _leiden_clustering(
+                norm_data,
+                k=leiden_k_neighbors,
+                similarity_threshold=leiden_similarity_threshold,
+                resolution=new_resolution,
+                random_state=42
+            )
         else:
-            logger.info("Using CPU HDBSCAN for reclustering")
-            recluster_labels = reclusterer.fit_predict(norm_data)
+            logger.info("Only one bin detected. Attempting reclustering with increased min_cluster_size...")
+            
+            # Increase min_cluster_size by 1
+            new_min_cluster_size = args.min_cluster_size + 1
+            logger.info(f"Reclustering with min_cluster_size={new_min_cluster_size} (original: {args.min_cluster_size})")
+            
+            # Create new HDBSCAN clusterer with increased min_cluster_size
+            reclusterer, is_gpu_recluster = _create_hdbscan_clusterer(
+                new_min_cluster_size, 
+                args.min_samples,
+                getattr(args, 'cluster_selection_epsilon', 0.3),
+                use_gpu=getattr(args, 'use_gpu', True)
+            )
+            
+            # Perform reclustering
+            if is_gpu_recluster:
+                logger.info("Using GPU-accelerated HDBSCAN for reclustering")
+                gpu_data = cp.asarray(norm_data, dtype=cp.float32)
+                recluster_labels = reclusterer.fit_predict(gpu_data)
+                recluster_labels = cp.asnumpy(recluster_labels)
+            else:
+                logger.info("Using CPU HDBSCAN for reclustering")
+                recluster_labels = reclusterer.fit_predict(norm_data)
         
         n_recluster_clusters = len(set(recluster_labels)) - (1 if -1 in recluster_labels else 0)
         n_recluster_noise = sum(1 for label in recluster_labels if label == -1)
