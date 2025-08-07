@@ -116,10 +116,34 @@ def create_pr_to_bioconda():
     # This would typically fork bioconda-recipes, create a branch,
     # add the recipe, and create a PR. For now, we'll just save the recipe.
     
-    version = os.environ.get('GITHUB_REF', '').replace('refs/tags/', '')
+    github_ref = os.environ.get('GITHUB_REF', '')
+    
+    # Handle different ref types
+    if github_ref.startswith('refs/tags/'):
+        version = github_ref.replace('refs/tags/', '')
+    elif github_ref.startswith('refs/heads/'):
+        # If triggered from a branch, try to get the latest tag
+        print(f"Warning: Running from branch {github_ref}, looking for latest release...")
+        # For manual runs, we should specify version explicitly
+        version = os.environ.get('RELEASE_VERSION', '')
+        if not version:
+            print("No version specified. Use RELEASE_VERSION environment variable.")
+            sys.exit(1)
+    else:
+        version = github_ref
+    
+    # Clean up version (remove 'v' prefix if present)
+    if version.startswith('v'):
+        version = version[1:]
+    
     if not version:
         print("No version tag found")
         sys.exit(1)
+    
+    print(f"Creating recipe for version: {version}")
+    
+    # Wait a bit for PyPI to update if this is a fresh release
+    time.sleep(10)
     
     recipe = create_bioconda_recipe('remag', version)
     
