@@ -16,11 +16,9 @@ COPY remag ./remag
 COPY .git ./.git
 
 # Build the package
-# If VERSION build arg is provided, use it as fallback for setuptools-scm
 ARG VERSION
-ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_REMAG=${VERSION}
-RUN pip install --no-cache-dir build && \
-    python -m build --wheel
+RUN pip install --no-cache-dir build setuptools-scm && \
+    SETUPTOOLS_SCM_PRETEND_VERSION=${VERSION:-0.0.0} python -m build --wheel
 
 # Final stage
 FROM python:3.9-slim
