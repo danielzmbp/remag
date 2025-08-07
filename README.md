@@ -60,6 +60,27 @@ docker run --rm -v $(pwd):/data danielzmbp/remag:0.1.2 \
 docker run -it --rm -v $(pwd):/data danielzmbp/remag:latest /bin/bash
 ```
 
+### Using Singularity
+
+```bash
+# Build Singularity image from Docker Hub
+singularity build remag_v0.1.2.sif docker://danielzmbp/remag:v0.1.2
+
+# Or build latest version
+singularity build remag_latest.sif docker://danielzmbp/remag:latest
+
+# Run with Singularity
+singularity run --bind $(pwd):/data remag_v0.1.2.sif \
+  -f /data/contigs.fasta -c /data/alignments.bam -o /data/output
+
+# Or use exec for direct command execution
+singularity exec --bind $(pwd):/data remag_v0.1.2.sif \
+  remag -f /data/contigs.fasta -c /data/alignments.bam -o /data/output
+
+# For interactive shell
+singularity shell --bind $(pwd):/data remag_v0.1.2.sif
+```
+
 ### From source
 
 ```bash
@@ -131,26 +152,26 @@ REMAG uses a sophisticated multi-stage pipeline specifically designed for eukary
   -f, --fasta PATH                Input FASTA file with contigs to bin. Can be gzipped.  [required]
   -c, --coverage PATH             Coverage files for calculation. Supports BAM, CRAM (indexed), and TSV formats. Auto-detects format by extension. Each file represents one sample. Supports space-separated paths and glob patterns (e.g., "*.bam", "*.cram", "*.tsv"). Use quotes around glob patterns.
   -o, --output PATH               Output directory for results.  [required]
-  --epochs INTEGER RANGE          Training epochs for neural network.  [default: 400; 50<=x<=2000]
-  --batch-size INTEGER RANGE      Batch size for training.  [default: 2048; 64<=x<=8192]
+  --epochs INTEGER RANGE          Training epochs for neural network.  [default: 400; 20<=x<=2000]
+  --batch-size INTEGER RANGE      Batch size for training.  [default: 2048; 16<=x<=8192]
   --embedding-dim INTEGER RANGE   Embedding dimension for contrastive learning.  [default: 256; 64<=x<=512]
   --base-learning-rate FLOAT RANGE
-                                  Base learning rate for optimizer.  [default: 0.008; 0.00001<=x<=0.1]
+                                  Base learning rate for contrastive learning training (scaled by batch size).  [default: 0.008; 0.00001<=x<=0.1]
   --min-cluster-size INTEGER RANGE
-                                  Minimum fragments per cluster.  [default: 2; 2<=x<=100]
-  --min-samples INTEGER RANGE     Minimum samples for HDBSCAN core points.  [default: None; 1<=x<=100]
+                                  Minimum number of contigs required to form a cluster/bin.  [default: 2; 2<=x<=100]
+  --min-samples INTEGER RANGE     Minimum samples for HDBSCAN core points. If None, uses min-cluster-size.  [default: None; 1<=x<=100]
   --cluster-selection-epsilon FLOAT RANGE
-                                  Epsilon for HDBSCAN cluster selection.  [default: 0.0; 0.0<=x<=1.0]
+                                  HDBSCAN cluster selection epsilon for reachability-based clustering (higher = more flexible clustering).  [default: 0.0; 0.0<=x<=1.0]
   --min-contig-length INTEGER RANGE
-                                  Minimum contig length in bp.  [default: 1000; 500<=x<=10000]
+                                  Minimum contig length in base pairs for binning consideration.  [default: 1000; 500<=x<=10000]
   --max-positive-pairs INTEGER RANGE
-                                  Maximum positive pairs for contrastive learning.  [default: 5000000; 100000<=x<=10000000]
-  -t, --threads INTEGER RANGE     Number of CPU threads.  [default: 8; 1<=x<=64]
-  --min-bin-size INTEGER RANGE    Minimum bin size in bp.  [default: 100000; 50000<=x<=10000000]
+                                  Maximum number of positive pairs for contrastive learning training.  [default: 5000000; 100000<=x<=10000000]
+  -t, --threads INTEGER RANGE     Number of CPU cores to use for parallel processing.  [default: 8; 1<=x<=64]
+  --min-bin-size INTEGER RANGE    Minimum total bin size in base pairs for output.  [default: 100000; 50000<=x<=10000000]
   -v, --verbose                   Enable verbose logging.
   --skip-bacterial-filter         Skip bacterial contig filtering (4CAC classifier + contrastive learning).
   --skip-refinement               Skip bin refinement.
-  --skip-kmeans-filtering         Skip K-means filtering on embeddings.
+  --skip-kmeans-filtering         Skip K-means pre-filtering to remove small, low-confidence clusters.
   --max-refinement-rounds INTEGER RANGE
                                   Maximum refinement rounds.  [default: 2; 1<=x<=10]
   --num-augmentations INTEGER RANGE

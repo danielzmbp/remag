@@ -75,7 +75,7 @@ click.rich_click.OPTION_GROUPS = {
         },
         {
             "name": "Clustering",
-            "options": ["--min-cluster-size", "--min-samples", "--cluster-selection-epsilon"],
+            "options": ["--min-cluster-size", "--min-samples", "--cluster-selection-epsilon", "--clustering-method", "--leiden-resolution", "--leiden-k-neighbors", "--leiden-similarity-threshold"],
         },
         {
             "name": "Filtering & Processing",
@@ -257,6 +257,34 @@ def validate_coverage_options(ctx, param, value):
     help="HDBSCAN cluster selection epsilon for reachability-based clustering (higher = more flexible clustering).",
 )
 @click.option(
+    "--clustering-method",
+    type=click.Choice(["hdbscan", "leiden"]),
+    default="leiden",
+    show_default=True,
+    help="Clustering algorithm to use: 'hdbscan' (density-based) or 'leiden' (graph-based).",
+)
+@click.option(
+    "--leiden-resolution",
+    type=click.FloatRange(min=0.1, max=5.0),
+    default=1.0,
+    show_default=True,
+    help="Resolution parameter for Leiden clustering (higher = more clusters). Only used with --clustering-method leiden.",
+)
+@click.option(
+    "--leiden-k-neighbors",
+    type=click.IntRange(min=5, max=100),
+    default=15,
+    show_default=True,
+    help="Number of nearest neighbors for k-NN graph construction in Leiden clustering. Only used with --clustering-method leiden.",
+)
+@click.option(
+    "--leiden-similarity-threshold",
+    type=click.FloatRange(min=0.0, max=1.0),
+    default=0.1,
+    show_default=True,
+    help="Minimum cosine similarity threshold for k-NN graph edges in Leiden clustering. Only used with --clustering-method leiden.",
+)
+@click.option(
     "--keep-intermediate",
     is_flag=True,
     default=False,
@@ -289,6 +317,10 @@ def main_cli(
     num_augmentations,
     enable_chimera_detection,
     cluster_selection_epsilon,
+    clustering_method,
+    leiden_resolution,
+    leiden_k_neighbors,
+    leiden_similarity_threshold,
     keep_intermediate,
     skip_kmeans_filtering,
 ):
@@ -343,6 +375,10 @@ def main_cli(
         num_augmentations=num_augmentations,
         skip_chimera_detection=not enable_chimera_detection,
         cluster_selection_epsilon=cluster_selection_epsilon,
+        clustering_method=clustering_method,
+        leiden_resolution=leiden_resolution,
+        leiden_k_neighbors=leiden_k_neighbors,
+        leiden_similarity_threshold=leiden_similarity_threshold,
         keep_intermediate=keep_intermediate,
         skip_kmeans_filtering=skip_kmeans_filtering,
     )
