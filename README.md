@@ -135,7 +135,7 @@ REMAG uses a sophisticated multi-stage pipeline specifically designed for eukary
 1. **Bacterial Pre-filtering**: By default, REMAG automatically filters out bacterial contigs using the integrated 4CAC classifier (can be disabled with `--skip-bacterial-filter`)
 2. **Feature Extraction**: Combines k-mer composition (4-mers) with coverage profiles across multiple samples. Large contigs are split into overlapping fragments for augmentation during training
 3. **Contrastive Learning**: Trains a Siamese neural network using the Barlow Twins self-supervised loss function. This creates embeddings where fragments from the same contig are close together
-4. **HDBSCAN Clustering**: Density-based clustering on the learned contig embeddings to form bins
+4. **Clustering**: Graph-based Leiden clustering (default) or density-based HDBSCAN on the learned contig embeddings to form bins
 5. **Quality Assessment**: Uses miniprot to align bins against a database of eukaryotic core genes to detect contamination
 6. **Iterative Refinement**: Automatically splits contaminated bins based on core gene duplications to improve bin quality
 
@@ -162,6 +162,11 @@ REMAG uses a sophisticated multi-stage pipeline specifically designed for eukary
   --min-samples INTEGER RANGE     Minimum samples for HDBSCAN core points. If None, uses min-cluster-size.  [default: None; 1<=x<=100]
   --cluster-selection-epsilon FLOAT RANGE
                                   HDBSCAN cluster selection epsilon for reachability-based clustering (higher = more flexible clustering).  [default: 0.0; 0.0<=x<=1.0]
+  --clustering-method CHOICE      Clustering algorithm to use: 'hdbscan' (density-based) or 'leiden' (graph-based).  [default: leiden]
+  --leiden-resolution FLOAT       Resolution parameter for Leiden clustering (higher = more clusters).  [default: 1.0; 0.1<=x<=5.0]
+  --leiden-k-neighbors INTEGER    Number of nearest neighbors for k-NN graph construction in Leiden clustering.  [default: 15; 5<=x<=100]
+  --leiden-similarity-threshold FLOAT
+                                  Minimum cosine similarity threshold for k-NN graph edges in Leiden clustering.  [default: 0.1; 0.0<=x<=1.0]
   --min-contig-length INTEGER RANGE
                                   Minimum contig length in base pairs for binning consideration.  [default: 1000; 500<=x<=10000]
   --max-positive-pairs INTEGER RANGE
@@ -211,7 +216,9 @@ REMAG produces several output files:
 - PyTorch (≥1.11.0)
 - scikit-learn (≥1.0.0)
 - XGBoost (≥1.6.0) - for 4CAC classifier
-- HDBSCAN (≥0.8.28)
+- HDBSCAN (≥0.8.28) - for density-based clustering option
+- leidenalg (≥0.9.0) - for graph-based clustering (default)
+- igraph (≥0.10.0) - for graph construction in Leiden clustering
 - UMAP (≥0.5.0)
 - pandas (≥1.3.0)
 - numpy (≥1.21.0)
