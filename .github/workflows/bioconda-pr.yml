@@ -30,7 +30,9 @@ jobs:
         else
           VERSION="v${{ github.event.inputs.version }}"
         fi
+        # Store both with and without 'v' prefix
         echo "version=${VERSION}" >> $GITHUB_OUTPUT
+        echo "version_clean=${VERSION#v}" >> $GITHUB_OUTPUT
     
     - name: Generate Bioconda recipe
       run: |
@@ -38,6 +40,7 @@ jobs:
         python .github/scripts/update_bioconda.py
       env:
         GITHUB_REF: "refs/tags/${{ steps.version.outputs.version }}"
+        RELEASE_VERSION: "${{ steps.version.outputs.version_clean }}"
     
     - name: Fork and clone bioconda-recipes
       run: |
