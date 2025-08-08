@@ -6,10 +6,8 @@ import warnings
 warnings.filterwarnings("ignore", category=FutureWarning, module="sklearn")
 
 import hdbscan
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import umap
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.preprocessing import normalize
 from sklearn.cluster import KMeans
@@ -659,66 +657,6 @@ def detect_chimeric_contigs(embeddings_df, clusters_df, args):
     return chimera_results
 
 
-def plot_umap(umap_df, output_dir):
-    """Create UMAP scatter plot and save as PDF."""
-    plt.figure(figsize=(12, 8))
-
-    noise_label = "noise"
-    noise_mask = umap_df["cluster"] == noise_label
-    if noise_mask.any():
-        plt.scatter(
-            umap_df[noise_mask]["UMAP1"],
-            umap_df[noise_mask]["UMAP2"],
-            c="lightgray",
-            alpha=0.5,
-            s=20,
-            label=f"Noise ({noise_mask.sum()})",
-        )
-
-    actual_cluster_ids_series = umap_df["cluster"][
-        ~noise_mask & ~umap_df["cluster"].isna()
-    ]
-    try:
-        actual_cluster_ids = sorted(actual_cluster_ids_series.unique())
-    except (IndexError, ValueError):
-        actual_cluster_ids = list(actual_cluster_ids_series.unique())
-
-    n_actual_clusters = len(actual_cluster_ids)
-
-    if n_actual_clusters > 0:
-        # Use tab20 colormap for better cluster distinction
-        import matplotlib.cm as cm
-        if n_actual_clusters <= 20:
-            colors = cm.tab20(np.linspace(0, 1, n_actual_clusters))
-        else:
-            # Pre-generate tab20 colors and cycle efficiently
-            base_colors = cm.tab20(np.linspace(0, 1, 20))
-            colors = [base_colors[i % 20] for i in range(n_actual_clusters)]
-
-        for i, cluster_id in enumerate(actual_cluster_ids):
-            cluster_mask = umap_df["cluster"] == cluster_id
-            cluster_count = cluster_mask.sum()
-            plt.scatter(
-                umap_df[cluster_mask]["UMAP1"],
-                umap_df[cluster_mask]["UMAP2"],
-                c=[colors[i]],
-                s=30,
-                label=f"{cluster_id} ({cluster_count})",
-                alpha=0.7,
-            )
-        plt.legend(bbox_to_anchor=(1.05, 1), loc="upper left")
-    elif not noise_mask.any():
-        logger.warning("No clusters or noise found in UMAP data")
-
-    plt.title("UMAP projection of contig embeddings")
-    plt.xlabel("UMAP1")
-    plt.ylabel("UMAP2")
-
-    plt.tight_layout()
-    plot_path = os.path.join(output_dir, "umap_plot.pdf")
-    plt.savefig(plot_path, bbox_inches="tight", dpi=300)
-    plt.close()
-    logger.info(f"Saved UMAP plot to {plot_path}")
 
 
 
@@ -979,54 +917,9 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
     logger.info(f"Contigs classified as noise: {len(noise_contigs)}")
 
 
-    # Use UMAP for visualization only if keeping intermediate files
+    # Note about visualization
     if getattr(args, "keep_intermediate", False):
-        logger.debug("Performing UMAP dimensionality reduction for visualization...")
-        umap_embeddings_df = working_embeddings_df
-        logger.debug(f"Using filtered data for UMAP: {umap_embeddings_df.shape[0]} contigs")
-        
-        # Create UMAP reducer
-        reducer = umap.UMAP(
-            n_neighbors=15,
-            min_dist=0.1,
-            n_components=2,
-            metric="cosine",
-            random_state=42,
-            n_jobs=1,  # Set to 1 to avoid warning about random_state + parallelism
-        )
-
-        # Fit and transform the embeddings
-        logger.debug(f"Running UMAP on {umap_embeddings_df.shape[0]} contigs...")
-        umap_embeddings = reducer.fit_transform(umap_embeddings_df.values)
-
-        # Save UMAP embeddings for visualization
-        umap_df = pd.DataFrame(
-            umap_embeddings, columns=["UMAP1", "UMAP2"], index=umap_embeddings_df.index
-        )
-        # Map clusters to UMAP data (removing fragment suffixes for matching)
-        umap_original_names = [
-            extract_base_contig_name(name) for name in umap_embeddings_df.index
-        ]
-        umap_clusters = []
-        for original_name in umap_original_names:
-            cluster_assignment = contig_clusters_df[
-                contig_clusters_df["contig"] == original_name
-            ]["cluster"]
-            if not cluster_assignment.empty:
-                umap_clusters.append(cluster_assignment.iloc[0])
-            else:
-                umap_clusters.append("noise")
-
-        umap_df["cluster"] = umap_clusters
-        
-        # Save UMAP embeddings and plot
-        umap_path = os.path.join(args.output, "umap_embeddings.csv")
-        umap_df.to_csv(umap_path)
-        logger.debug(f"Saved UMAP embeddings to {umap_path}")
-
-        # Create and save UMAP plot
-        logger.debug("Creating UMAP visualization plot...")
-        plot_umap(umap_df, args.output)
+        logger.info("Embeddings saved to embeddings.csv. Use scripts/plot_features.py for UMAP visualization with plotting dependencies.")
 
     # Perform chimera detection for large contigs
     if not getattr(args, 'skip_chimera_detection', False):
