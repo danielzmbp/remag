@@ -14,7 +14,7 @@ from multiprocessing import Pool
 from typing import Dict, List, Tuple, Optional, Set
 from tqdm import tqdm
 from loguru import logger
-from sklearn.preprocessing import MinMaxScaler, StandardScaler
+from sklearn.preprocessing import MinMaxScaler
 
 from .utils import open_file, fasta_iter, FragmentDict, CoverageDict
 

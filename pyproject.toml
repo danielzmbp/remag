@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "remag"
-dynamic = ["version"]
+version = "0.1.5"
 description = "Recovery of high-quality eukaryotic genomes from complex metagenomes"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -36,7 +36,6 @@ classifiers = [
 ]
 dependencies = [
     "hdbscan>=0.8.28",
-    "matplotlib>=3.5.0",
     "numpy>=1.21.0",
     "pandas>=1.3.0",
     "pysam>=0.18.0",
@@ -45,7 +44,6 @@ dependencies = [
     "loguru>=0.6.0",
     "scikit-learn>=1.0.0",
     "tqdm>=4.62.0",
-    "umap-learn>=0.5.0",
     "xgboost>=1.6.0",
     "joblib>=1.1.0",
     "psutil>=5.8.0",
@@ -58,6 +56,10 @@ gpu = [
     "cuml>=22.04.0",
     "cudf>=22.04.0",
     "cupy-cuda11x>=9.0.0",
+]
+plotting = [
+    "matplotlib>=3.5.0",
+    "umap-learn>=0.5.0",
 ]
 dev = [
     "pytest>=7.0.0",

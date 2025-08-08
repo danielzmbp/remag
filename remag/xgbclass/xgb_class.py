@@ -6,7 +6,6 @@ https://github.com/Shamir-Lab/4CAC
 
 import numpy as np
 import os
-from sklearn.preprocessing import StandardScaler
 from xgboost import XGBClassifier
 from joblib import load
 from loguru import logger
