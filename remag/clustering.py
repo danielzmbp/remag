@@ -11,6 +11,7 @@ import pandas as pd
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.preprocessing import normalize
 from sklearn.cluster import KMeans
+from sklearn.neighbors import NearestNeighbors
 from loguru import logger
 import os
 import json
@@ -186,44 +187,50 @@ def _iterative_kmeans_filtering(embeddings, contig_names, eukaryotic_scores,
     return current_embeddings, current_contig_names, final_stats
 
 
-def _construct_knn_graph(embeddings, k=15, similarity_threshold=0.1):
+def _construct_knn_graph(embeddings, k=15, similarity_threshold=0.1, n_jobs=1):
     """
     Construct a k-NN graph from multidimensional embeddings using cosine similarity.
+    Optimized for memory efficiency and parallelization.
     
     Args:
         embeddings: Numpy array of L2-normalized embeddings (n_samples x embedding_dim)
         k: Number of nearest neighbors for each node
         similarity_threshold: Minimum cosine similarity to create an edge (0-1)
+        n_jobs: Number of parallel jobs for k-NN search
         
     Returns:
         igraph.Graph: Weighted graph with cosine similarity weights
     """
-    logger.info(f"Constructing k-NN graph from {len(embeddings)} embeddings (k={k})")
+    logger.info(f"Constructing k-NN graph from {len(embeddings)} embeddings (k={k}, n_jobs={n_jobs})")
     
-    # Calculate cosine similarity matrix (since embeddings are L2-normalized)
-    similarity_matrix = np.dot(embeddings, embeddings.T)
+    # Use sklearn's NearestNeighbors for efficient, parallelized k-NN search
+    # Since embeddings are L2-normalized, cosine similarity = dot product
+    nbrs = NearestNeighbors(
+        n_neighbors=k+1,  # +1 because it includes self
+        metric='cosine',
+        algorithm='brute',  # brute force is often fastest for high-dimensional data
+        n_jobs=n_jobs
+    )
+    nbrs.fit(embeddings)
     
-    # Create adjacency lists for efficient graph construction
+    # Find k-NN for all points efficiently
+    distances, indices = nbrs.kneighbors(embeddings)
+    
+    # Convert distances to similarities (cosine distance = 1 - cosine similarity)
+    similarities = 1 - distances
+    
+    # Build edge list efficiently
     edges = []
     weights = []
     
     for i in range(len(embeddings)):
-        # Get k nearest neighbors (excluding self)
-        similarities = similarity_matrix[i]
-        
-        # Get indices of k+1 highest similarities (including self)
-        top_k_indices = np.argpartition(similarities, -(k+1))[-(k+1):]
-        top_k_similarities = similarities[top_k_indices]
-        
-        # Sort by similarity (highest first) and exclude self
-        sorted_indices = np.argsort(top_k_similarities)[::-1]
-        top_k_indices = top_k_indices[sorted_indices]
-        top_k_similarities = top_k_similarities[sorted_indices]
-        
-        # Remove self-connection and apply similarity threshold
-        for j_idx, similarity in zip(top_k_indices, top_k_similarities):
-            if j_idx != i and similarity >= similarity_threshold:
-                edges.append((i, j_idx))
+        # Skip self (first neighbor) and apply similarity threshold
+        for j in range(1, k+1):  # Skip index 0 (self)
+            neighbor_idx = indices[i, j]
+            similarity = similarities[i, j]
+            
+            if similarity >= similarity_threshold:
+                edges.append((i, neighbor_idx))
                 weights.append(float(similarity))
     
     logger.info(f"Created {len(edges)} edges with similarity >= {similarity_threshold}")
@@ -242,7 +249,7 @@ def _construct_knn_graph(embeddings, k=15, similarity_threshold=0.1):
     return g
 
 
-def _leiden_clustering(embeddings, k=15, similarity_threshold=0.1, resolution=1.0, random_state=42):
+def _leiden_clustering(embeddings, k=15, similarity_threshold=0.1, resolution=1.0, random_state=42, n_jobs=1):
     """
     Perform Leiden clustering on embeddings by first constructing a k-NN graph.
     
@@ -252,14 +259,15 @@ def _leiden_clustering(embeddings, k=15, similarity_threshold=0.1, resolution=1.
         similarity_threshold: Minimum cosine similarity to create an edge
         resolution: Resolution parameter for Leiden algorithm (higher = more clusters)
         random_state: Random seed for reproducibility
+        n_jobs: Number of parallel jobs for k-NN graph construction
         
     Returns:
         numpy.array: Cluster labels (-1 for isolated nodes, 0+ for clusters)
     """
-    logger.info(f"Starting Leiden clustering with k={k}, resolution={resolution}")
+    logger.info(f"Starting Leiden clustering with k={k}, resolution={resolution}, n_jobs={n_jobs}")
     
-    # Construct k-NN graph
-    graph = _construct_knn_graph(embeddings, k=k, similarity_threshold=similarity_threshold)
+    # Construct k-NN graph with parallelization
+    graph = _construct_knn_graph(embeddings, k=k, similarity_threshold=similarity_threshold, n_jobs=n_jobs)
     
     # Check if graph has edges
     if graph.ecount() == 0:
@@ -773,7 +781,8 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
             k=leiden_k_neighbors,
             similarity_threshold=leiden_similarity_threshold,
             resolution=leiden_resolution,
-            random_state=42
+            random_state=42,
+            n_jobs=getattr(args, 'cores', 1)
         )
         
     else:
@@ -839,7 +848,8 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
                 k=leiden_k_neighbors,
                 similarity_threshold=leiden_similarity_threshold,
                 resolution=new_resolution,
-                random_state=42
+                random_state=42,
+                n_jobs=getattr(args, 'cores', 1)
             )
         else:
             logger.info("Only one bin detected. Attempting reclustering with increased min_cluster_size...")
