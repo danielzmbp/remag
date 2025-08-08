@@ -8,6 +8,9 @@ include CLAUDE.md
 # Include requirements file
 include requirements.txt
 
+# Include scripts directory
+recursive-include scripts *.py
+
 # Include all package data files
 recursive-include remag/xgbclass/models *.json
 recursive-include remag/db *.faa.gz
