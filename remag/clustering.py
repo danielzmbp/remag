@@ -23,11 +23,11 @@ import torch
 # Try to import cuML for GPU acceleration
 try:
     import cuml
-    import cudf
+    import cudf  
     import cupy as cp
     CUML_AVAILABLE = True
     logger.debug("cuML GPU acceleration is available")
-except ImportError:
+except Exception:
     CUML_AVAILABLE = False
     logger.debug("cuML not available, using CPU-only HDBSCAN")
 
