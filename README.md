@@ -47,7 +47,7 @@ conda activate remag
 # Add optional plotting dependencies if needed
 conda install -c conda-forge matplotlib umap-learn
 
-# Add GPU dependencies if needed (requires NVIDIA GPU and CUDA)
+# Add GPU dependencies if needed (requires NVIDIA GPU and CUDA)  
 conda install -c rapidsai -c conda-forge cuml cudf cupy
 ```
 
@@ -121,13 +121,6 @@ pip install -e ".[dev]"
 
 ### Optional Features Installation
 
-For GPU-accelerated clustering (requires NVIDIA GPU):
-
-```bash
-# Install with RAPIDS support
-pip install "remag[gpu]"
-```
-
 For visualization capabilities:
 
 ```bash
@@ -135,11 +128,16 @@ For visualization capabilities:
 pip install "remag[plotting]"
 ```
 
-For all features:
+For GPU-accelerated clustering (requires NVIDIA GPU and CUDA):
 
 ```bash
-# Install with both GPU and plotting support
-pip install "remag[gpu,plotting]"
+# GPU packages must be installed via conda due to CUDA dependencies
+pip install remag  # Install core package first
+conda install -c rapidsai -c conda-forge cuml cudf cupy
+
+# Or in one step with conda
+conda install -c bioconda remag
+conda install -c rapidsai -c conda-forge cuml cudf cupy
 ```
 
 ## Usage
@@ -275,8 +273,9 @@ This creates:
 ### Optional dependencies:
 - **For visualization**: matplotlib (≥3.5.0), umap-learn (≥0.5.0)
   - Install with: `pip install remag[plotting]`
-- **For GPU acceleration**: cuml (≥22.04.0), cudf (≥22.04.0), cupy-cuda11x (≥9.0.0)
-  - Install with: `pip install remag[gpu]`
+- **For GPU acceleration**: cuml, cudf, cupy (RAPIDS packages)
+  - Install with: `conda install -c rapidsai -c conda-forge cuml cudf cupy`
+  - **Note**: GPU packages are not available via pip due to CUDA dependencies
 
 The package includes a pre-trained 4CAC classifier model for bacterial contig filtering. The 4CAC classifier code and models are adapted from the [Shamir-Lab/4CAC repository](https://github.com/Shamir-Lab/4CAC).
 

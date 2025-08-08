@@ -14,15 +14,10 @@ leidenalg>=0.9.0
 igraph>=0.10.0
 
 # Optional dependencies:
-# For GPU acceleration: pip install remag[gpu]
 # For plotting features: pip install remag[plotting]
-# Both: pip install remag[gpu,plotting]
+#   - matplotlib>=3.5.0
+#   - umap-learn>=0.5.0
 
-# GPU dependencies:
-# cuml>=22.04.0
-# cudf>=22.04.0
-# cupy-cuda11x>=9.0.0
-
-# Plotting dependencies:
-# matplotlib>=3.5.0
-# umap-learn>=0.5.0
+# For GPU acceleration (conda only):
+#   conda install -c rapidsai -c conda-forge cuml cudf cupy
+# Note: GPU packages not available via pip due to CUDA dependencies
