@@ -1,5 +1,4 @@
 hdbscan>=0.8.28
-matplotlib>=3.5.0
 numpy>=1.21.0
 pandas>=1.3.0
 pysam>=0.18.0
@@ -8,15 +7,22 @@ torch>=1.11.0
 loguru>=0.6.0
 scikit-learn>=1.0.0
 tqdm>=4.62.0
-umap-learn>=0.5.0
 xgboost>=1.6.0
 joblib>=1.1.0
 psutil>=5.8.0
 leidenalg>=0.9.0
 igraph>=0.10.0
 
-# Optional GPU dependencies
-# Install with: pip install -r requirements.txt -r requirements-gpu.txt
+# Optional dependencies:
+# For GPU acceleration: pip install remag[gpu]
+# For plotting features: pip install remag[plotting]
+# Both: pip install remag[gpu,plotting]
+
+# GPU dependencies:
 # cuml>=22.04.0
 # cudf>=22.04.0
 # cupy-cuda11x>=9.0.0
+
+# Plotting dependencies:
+# matplotlib>=3.5.0
+# umap-learn>=0.5.0

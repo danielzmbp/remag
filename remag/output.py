@@ -6,7 +6,7 @@ import os
 from tqdm import tqdm
 from loguru import logger
 
-from .utils import extract_base_contig_name, ContigHeaderMapper
+from .utils import ContigHeaderMapper
 
 
 def save_clusters_as_fasta(clusters_df, fragments_dict, args):

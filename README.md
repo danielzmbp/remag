@@ -37,13 +37,21 @@ pip install remag
 ### From conda (bioconda)
 
 ```bash
-# Install directly from bioconda
+# Install directly from bioconda (core dependencies only)
 conda install -c bioconda remag
 
 # Or create a new environment
 conda create -n remag -c bioconda remag
 conda activate remag
+
+# Add optional plotting dependencies if needed
+conda install -c conda-forge matplotlib umap-learn
+
+# Add GPU dependencies if needed (requires NVIDIA GPU and CUDA)
+conda install -c rapidsai -c conda-forge cuml cudf cupy
 ```
+
+**Note**: Bioconda installs only the core dependencies. Optional features (plotting, GPU acceleration) must be installed separately using conda or pip extras.
 
 ### Using Docker
 
@@ -111,13 +119,27 @@ For contributors and developers:
 pip install -e ".[dev]"
 ```
 
-### GPU-accelerated installation
+### Optional Features Installation
 
 For GPU-accelerated clustering (requires NVIDIA GPU):
 
 ```bash
 # Install with RAPIDS support
 pip install "remag[gpu]"
+```
+
+For visualization capabilities:
+
+```bash
+# Install with plotting dependencies
+pip install "remag[plotting]"
+```
+
+For all features:
+
+```bash
+# Install with both GPU and plotting support
+pip install "remag[gpu,plotting]"
 ```
 
 ## Usage
@@ -205,8 +227,6 @@ REMAG produces several output files:
 
 ### Additional files (with `--keep-intermediate` option):
 - `embeddings.csv`: Contig embeddings from the neural network
-- `umap_embeddings.csv`: UMAP projections for visualization
-- `umap_plot.pdf`: UMAP visualization plot with cluster assignments
 - `siamese_model.pt`: Trained Siamese neural network model
 - `params.json`: Complete run parameters for reproducibility
 - `features.csv`: Extracted k-mer and coverage features
@@ -217,9 +237,25 @@ REMAG produces several output files:
 - `core_gene_duplication_results.json`: Core gene duplication analysis from refinement
 - `temp_miniprot/`: Temporary directory for miniprot alignments (removed unless --keep-intermediate)
 
+### Visualization (optional, requires plotting dependencies):
+To generate UMAP visualization plots:
+
+```bash
+# Install plotting dependencies if not already installed
+pip install remag[plotting]
+
+# Generate UMAP visualization from embeddings
+python scripts/plot_features.py --features output_directory/embeddings.csv --clusters output_directory/bins.csv --output output_directory
+```
+
+This creates:
+- `umap_coordinates.csv`: UMAP projections for visualization
+- `umap_plot.pdf`: UMAP visualization plot with cluster assignments
+
 
 ## Requirements
 
+### Core dependencies (always installed):
 - Python 3.8+
 - PyTorch (≥1.11.0)
 - scikit-learn (≥1.0.0)
@@ -227,15 +263,20 @@ REMAG produces several output files:
 - HDBSCAN (≥0.8.28) - for density-based clustering option
 - leidenalg (≥0.9.0) - for graph-based clustering (default)
 - igraph (≥0.10.0) - for graph construction in Leiden clustering
-- UMAP (≥0.5.0)
 - pandas (≥1.3.0)
 - numpy (≥1.21.0)
-- matplotlib (≥3.5.0)
 - pysam (≥0.18.0)
 - loguru (≥0.6.0)
 - tqdm (≥4.62.0)
 - rich-click (≥1.5.0)
 - joblib (≥1.1.0)
+- psutil (≥5.8.0)
+
+### Optional dependencies:
+- **For visualization**: matplotlib (≥3.5.0), umap-learn (≥0.5.0)
+  - Install with: `pip install remag[plotting]`
+- **For GPU acceleration**: cuml (≥22.04.0), cudf (≥22.04.0), cupy-cuda11x (≥9.0.0)
+  - Install with: `pip install remag[gpu]`
 
 The package includes a pre-trained 4CAC classifier model for bacterial contig filtering. The 4CAC classifier code and models are adapted from the [Shamir-Lab/4CAC repository](https://github.com/Shamir-Lab/4CAC).
 

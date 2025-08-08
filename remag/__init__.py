@@ -5,8 +5,8 @@ REMAG: Recovery of eukaryotic genomes using contrastive learning
 try:
     from ._version import __version__
 except ImportError:
-    # Fallback for development or when _version.py doesn't exist
-    __version__ = "0.0.0+unknown"
+    # Fallback for Bioconda/conda installations without git
+    __version__ = "0.1.5"
 
 __author__ = "Daniel Gómez-Pérez"
 __email__ = "daniel.gomez-perez@earlham.ac.uk"
