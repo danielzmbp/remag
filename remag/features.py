@@ -666,11 +666,8 @@ def get_features(
             f"Applied log transformation to {len(coverage_columns)} coverage features"
         )
 
-        # Apply global scaling to preserve co-abundance relationships across samples
-        # Scale all coverage features together (preserves relative differences between samples)
         logger.info("Applying global scaling to preserve co-abundance patterns across samples")
         
-        # Use MinMaxScaler to scale features to [0, 1] range
         from sklearn.preprocessing import MinMaxScaler
         scaler = MinMaxScaler(feature_range=(0, 1))
         df[coverage_columns] = scaler.fit_transform(df[coverage_columns])
