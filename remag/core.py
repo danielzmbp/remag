@@ -85,14 +85,14 @@ def main(args):
         logger.error(f"Failed to cluster contigs: {e}")
         sys.exit(1)
 
-    # Check for duplicated core genes using miniprot
+    # Check for duplicated core genes using miniprot (using compleasm-style thresholds)
     logger.info("Checking for duplicated core genes...")
     clusters_df = check_core_gene_duplications(
         clusters_df, 
         fragments_dict, 
         args,
-        target_coverage_threshold=0.50,
-        identity_threshold=0.50,
+        target_coverage_threshold=0.60,  # Match compleasm standard (60%)
+        identity_threshold=0.40,  # Match compleasm standard (40%)
         use_header_cache=False
     )
 
