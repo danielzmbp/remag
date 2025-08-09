@@ -23,12 +23,24 @@ remag -f contigs.fasta -c alignments.bam -o output_directory
 
 ## Installation
 
+### External Dependencies
+
+REMAG requires miniprot for core gene duplication analysis:
+
+```bash
+# Install miniprot (required for core gene analysis)
+conda install -c bioconda miniprot
+```
+
 ### From PyPI (recommended)
 
 ```bash
 # Create conda environment (optional but recommended)
 conda create -n remag python=3.9
 conda activate remag
+
+# Install miniprot first
+conda install -c bioconda miniprot
 
 # Install from PyPI
 pip install remag

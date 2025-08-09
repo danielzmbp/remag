@@ -14,6 +14,11 @@ from loguru import logger
 from .utils import extract_base_contig_name, ContigHeaderMapper
 
 
+def check_miniprot_available():
+    """Check if miniprot is available in PATH."""
+    return shutil.which("miniprot") is not None
+
+
 def get_core_gene_duplication_results_path(args):
     """Get the path for the core gene duplication results file."""
     return os.path.join(args.output, "core_gene_duplication_results.json")
@@ -40,6 +45,16 @@ def check_core_gene_duplications(clusters_df, fragments_dict, args,
     Returns:
         DataFrame: Updated clusters_df with duplication information
     """
+    # Check if miniprot is available
+    if not check_miniprot_available():
+        logger.error("miniprot not found in PATH")
+        logger.error("Install miniprot with: conda install -c bioconda miniprot")
+        logger.warning("Skipping core gene duplication analysis")
+        clusters_df["has_duplicated_core_genes"] = False
+        clusters_df["duplicated_core_genes_count"] = 0
+        clusters_df["total_core_genes_found"] = 0
+        return clusters_df
+
     db_path = os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "db", "refseq_db.faa.gz"
     )
@@ -48,6 +63,8 @@ def check_core_gene_duplications(clusters_df, fragments_dict, args,
             "Eukaryotic database not found, skipping core gene duplication check"
         )
         clusters_df["has_duplicated_core_genes"] = False
+        clusters_df["duplicated_core_genes_count"] = 0
+        clusters_df["total_core_genes_found"] = 0
         return clusters_df
 
     logger.info("Checking for duplicated core genes using miniprot...")
@@ -104,8 +121,9 @@ def check_core_gene_duplications(clusters_df, fragments_dict, args,
 
             # Run miniprot
             miniprot_output = os.path.join(temp_dir, f"{cluster_id}.paf")
+            miniprot_stderr = os.path.join(temp_dir, f"{cluster_id}.stderr")
             db_to_use = db_path  # Use the compressed file directly
-            cmd = f'miniprot -t {args.cores} "{bin_fasta}" "{db_to_use}" > "{miniprot_output}" 2>/dev/null'
+            cmd = f'miniprot -t {args.cores} "{bin_fasta}" "{db_to_use}" > "{miniprot_output}" 2>"{miniprot_stderr}"'
 
             if args.verbose:
                 logger.debug(f"Running miniprot command: {cmd}")
@@ -213,6 +231,15 @@ def check_core_gene_duplications(clusters_df, fragments_dict, args,
                     }
 
                 else:
+                    # Log miniprot error if available
+                    error_msg = f"miniprot failed for {cluster_id} (exit code: {result})"
+                    if os.path.exists(miniprot_stderr) and os.path.getsize(miniprot_stderr) > 0:
+                        with open(miniprot_stderr, "r") as stderr_file:
+                            stderr_content = stderr_file.read().strip()
+                            if stderr_content:
+                                error_msg += f" - Error: {stderr_content}"
+                    logger.warning(error_msg)
+                    
                     duplication_results[cluster_id] = {
                         "has_duplications": False,
                         "duplicated_genes": {},
