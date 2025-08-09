@@ -6,61 +6,78 @@
 
 ## Quick Start
 
+### Option 1: Using Conda (Recommended - handles all dependencies)
 ```bash
-# Install via pip (recommended)
-pip install remag
+# Create environment and install everything
+conda create -n remag -c bioconda -c conda-forge remag miniprot
+conda activate remag
 
-# Or via conda
-conda install -c bioconda remag
+# Run REMAG
+remag -f contigs.fasta -c alignments.bam -o output_directory
+```
 
-# Or use Docker
+### Option 2: Using Docker (No local installation needed)
+```bash
 docker run --rm -v $(pwd):/data danielzmbp/remag:latest \
   -f /data/contigs.fasta -c /data/alignments.bam -o /data/output
+```
 
-# Run REMAG (if installed locally)
+### Option 3: Using pip
+```bash
+# Create environment first
+conda create -n remag python=3.9
+conda activate remag
+
+# Install dependencies and REMAG
+conda install -c bioconda miniprot
+pip install remag
+
+# Run REMAG
 remag -f contigs.fasta -c alignments.bam -o output_directory
 ```
 
 ## Installation
 
-### External Dependencies
+### Recommended: Conda Installation
 
-REMAG requires miniprot for core gene duplication analysis:
+This is the easiest method as conda handles all dependencies automatically:
 
 ```bash
-# Install miniprot (required for core gene analysis)
-conda install -c bioconda miniprot
+# Create a new environment with all dependencies
+conda create -n remag -c bioconda -c conda-forge remag miniprot
+conda activate remag
+
+# Verify installation
+remag --help
 ```
 
-### From PyPI (recommended)
+### Alternative: PyPI Installation
+
+If you prefer pip, you'll need to install the external dependency separately:
 
 ```bash
-# Create conda environment (optional but recommended)
+# Step 1: Create and activate environment
 conda create -n remag python=3.9
 conda activate remag
 
-# Install miniprot first
+# Step 2: Install external dependency
 conda install -c bioconda miniprot
 
-# Install from PyPI
+# Step 3: Install REMAG from PyPI
 pip install remag
 ```
 
-### From conda (bioconda)
+### Advanced Conda Setup
+
+For additional features:
 
 ```bash
-# Install directly from bioconda (core dependencies only)
-conda install -c bioconda remag
-
-# Or create a new environment
-conda create -n remag -c bioconda remag
+# Basic installation
+conda create -n remag -c bioconda remag miniprot
 conda activate remag
 
-# Add optional plotting dependencies if needed
+# Add optional plotting capabilities
 conda install -c conda-forge matplotlib umap-learn
-
-# Add GPU dependencies if needed (requires NVIDIA GPU and CUDA)  
-conda install -c rapidsai -c conda-forge cuml cudf cupy
 ```
 
 **Note**: Bioconda installs only the core dependencies. Optional features (plotting, GPU acceleration) must be installed separately using conda or pip extras.
@@ -140,17 +157,6 @@ For visualization capabilities:
 pip install "remag[plotting]"
 ```
 
-For GPU-accelerated clustering (requires NVIDIA GPU and CUDA):
-
-```bash
-# GPU packages must be installed via conda due to CUDA dependencies
-pip install remag  # Install core package first
-conda install -c rapidsai -c conda-forge cuml cudf cupy
-
-# Or in one step with conda
-conda install -c bioconda remag
-conda install -c rapidsai -c conda-forge cuml cudf cupy
-```
 
 ## Usage
 
@@ -285,9 +291,6 @@ This creates:
 ### Optional dependencies:
 - **For visualization**: matplotlib (≥3.5.0), umap-learn (≥0.5.0)
   - Install with: `pip install remag[plotting]`
-- **For GPU acceleration**: cuml, cudf, cupy (RAPIDS packages)
-  - Install with: `conda install -c rapidsai -c conda-forge cuml cudf cupy`
-  - **Note**: GPU packages are not available via pip due to CUDA dependencies
 
 The package includes a pre-trained 4CAC classifier model for bacterial contig filtering. The 4CAC classifier code and models are adapted from the [Shamir-Lab/4CAC repository](https://github.com/Shamir-Lab/4CAC).
 
