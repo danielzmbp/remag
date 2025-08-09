@@ -31,12 +31,10 @@ class FusionLayer(nn.Module):
         self.kmer_proj = nn.Linear(kmer_dim, embedding_dim)
         self.coverage_proj = nn.Linear(coverage_dim, embedding_dim)
         
-        # Single cross-attention layer (simplified from two separate ones)
         self.cross_attention = nn.MultiheadAttention(
             embed_dim=embedding_dim, num_heads=4, dropout=0.1, batch_first=True
         )
         
-        # Simplified fusion MLP
         self.fusion_mlp = nn.Sequential(
             nn.Linear(embedding_dim * 2, embedding_dim),
             nn.BatchNorm1d(embedding_dim),
@@ -138,7 +136,6 @@ class SiameseNetwork(nn.Module):
                 nn.Dropout(0.1),
             )
         
-        # Simplified projection head - 512 dims is sufficient for this use case
         self.projection_head = nn.Sequential(
             nn.Linear(embedding_dim, 512),
             nn.BatchNorm1d(512),
@@ -382,11 +379,9 @@ def train_siamese_network(features_df, args):
     ).to(device)
     criterion = BarlowTwinsLoss(lambda_param=5e-3)
 
-    # Barlow Twins uses different learning rate scaling
     base_learning_rate = getattr(args, 'base_learning_rate', 1e-3)
-    # Barlow Twins typically uses linear scaling rule with batch size
-    scaled_lr = (args.batch_size / 256) * base_learning_rate * 0.2  # Lower LR for Barlow Twins
-    warmup_epochs = 10  # Longer warmup for Barlow Twins
+    scaled_lr = (args.batch_size / 256) * base_learning_rate * 0.2
+    warmup_epochs = 10
     warmup_start_lr = scaled_lr * 0.1
 
     optimizer = optim.AdamW(
@@ -438,7 +433,6 @@ def train_siamese_network(features_df, args):
             loss = criterion(output1, output2, base_ids)
             loss.backward()
             
-            # Gradient clipping for stability
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             
             optimizer.step()
