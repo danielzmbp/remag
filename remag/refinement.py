@@ -221,7 +221,7 @@ def _refine_single_bin_worker(args_tuple):
             duplication_results,
         )
 
-        # Check for duplicated core genes in refined bins
+        # Check for duplicated core genes in refined bins (using compleasm-style thresholds)
         logger.debug(
             f"Worker: Checking core gene duplications in {bin_id} refined sub-bins..."
         )
@@ -229,8 +229,8 @@ def _refine_single_bin_worker(args_tuple):
             refined_clusters_df, 
             refined_fragments_dict, 
             refined_args,
-            target_coverage_threshold=0.60,
-            identity_threshold=0.40,
+            target_coverage_threshold=0.60,  # Match compleasm standard (60%)
+            identity_threshold=0.40,  # Match compleasm standard (40%)
             use_header_cache=True
         )
 
