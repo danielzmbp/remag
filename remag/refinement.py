@@ -32,7 +32,8 @@ def refine_bin_with_leiden_clustering(
     logger.info(f"Refining bin {bin_id} using Leiden clustering on existing embeddings...")
     
     # Extract embeddings for contigs in this bin
-    bin_embedding_names = [f"{contig}.original" for contig in bin_contigs]
+    # Note: embeddings are saved without the .original suffix
+    bin_embedding_names = bin_contigs
     
     # Filter to contigs that have embeddings
     available_embeddings = [name for name in bin_embedding_names if name in embeddings_df.index]
@@ -82,8 +83,8 @@ def refine_bin_with_leiden_clustering(
         return None
     
     # Create cluster assignments DataFrame
-    # Convert embedding names back to contig names
-    contig_names = [name.replace('.original', '') for name in available_embeddings]
+    # Embeddings already use base contig names without .original suffix
+    contig_names = available_embeddings
     
     # Format cluster labels with bin prefix
     formatted_labels = [
@@ -330,8 +331,7 @@ def refine_contaminated_bins(
         tuple: (refined_clusters_df, refined_fragments_dict, refinement_summary)
     """
     # Load embeddings from CSV file
-    from .models import get_embeddings_csv_path
-    embeddings_csv_path = get_embeddings_csv_path(args.output)
+    embeddings_csv_path = os.path.join(args.output, "embeddings.csv")
     
     if not os.path.exists(embeddings_csv_path):
         logger.error(f"Embeddings file not found at {embeddings_csv_path}")
