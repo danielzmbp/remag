@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2025-08-10
+
+### Changed
+- Removed HDBSCAN dependency, now uses Leiden clustering exclusively
+- Improved refinement process with better embedding name handling
+- Cleaned up unused refinement functions for better maintainability
+
+### Fixed
+- Fixed embedding name mismatch in refinement module that was causing failures
+- Improved error handling for miniprot dependency checks
+- Better GPU import exception handling for environments without CUDA
+
+### Performance
+- Parallelized Leiden k-NN graph construction for faster clustering
+- Optimized refinement workflow by removing redundant functions
+
+### Documentation
+- Restructured installation documentation for clarity
+- Updated build configuration and documentation consistency
+
 ## [0.1.5] - 2025-08-07
 
 ### Fixed
@@ -94,7 +114,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Various bug fixes and improvements
 
-[Unreleased]: https://github.com/danielzmbp/remag/compare/v0.1.5...HEAD
+[Unreleased]: https://github.com/danielzmbp/remag/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/danielzmbp/remag/compare/v0.1.5...v0.2.0
 [0.1.5]: https://github.com/danielzmbp/remag/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/danielzmbp/remag/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/danielzmbp/remag/compare/v0.1.2...v0.1.3
