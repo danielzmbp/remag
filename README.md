@@ -181,7 +181,7 @@ REMAG uses a sophisticated multi-stage pipeline specifically designed for eukary
 1. **Bacterial Pre-filtering**: By default, REMAG automatically filters out bacterial contigs using the integrated 4CAC classifier (can be disabled with `--skip-bacterial-filter`)
 2. **Feature Extraction**: Combines k-mer composition (4-mers) with coverage profiles across multiple samples. Large contigs are split into overlapping fragments for augmentation during training
 3. **Contrastive Learning**: Trains a Siamese neural network using the Barlow Twins self-supervised loss function. This creates embeddings where fragments from the same contig are close together
-4. **Clustering**: Graph-based Leiden clustering (default) or density-based HDBSCAN on the learned contig embeddings to form bins
+4. **Clustering**: Graph-based Leiden clustering on the learned contig embeddings to form bins
 5. **Quality Assessment**: Uses miniprot to align bins against a database of eukaryotic core genes to detect contamination
 6. **Iterative Refinement**: Automatically splits contaminated bins based on core gene duplications to improve bin quality
 
@@ -205,10 +205,6 @@ REMAG uses a sophisticated multi-stage pipeline specifically designed for eukary
                                   Base learning rate for contrastive learning training (scaled by batch size).  [default: 0.008; 0.00001<=x<=0.1]
   --min-cluster-size INTEGER RANGE
                                   Minimum number of contigs required to form a cluster/bin.  [default: 2; 2<=x<=100]
-  --min-samples INTEGER RANGE     Minimum samples for HDBSCAN core points. If None, uses min-cluster-size.  [default: None; 1<=x<=100]
-  --cluster-selection-epsilon FLOAT RANGE
-                                  HDBSCAN cluster selection epsilon for reachability-based clustering (higher = more flexible clustering).  [default: 0.0; 0.0<=x<=1.0]
-  --clustering-method CHOICE      Clustering algorithm to use: 'hdbscan' (density-based) or 'leiden' (graph-based).  [default: leiden]
   --leiden-resolution FLOAT       Resolution parameter for Leiden clustering (higher = more clusters).  [default: 1.0; 0.1<=x<=5.0]
   --leiden-k-neighbors INTEGER    Number of nearest neighbors for k-NN graph construction in Leiden clustering.  [default: 15; 5<=x<=100]
   --leiden-similarity-threshold FLOAT
@@ -276,8 +272,7 @@ This creates:
 - PyTorch (≥1.11.0)
 - scikit-learn (≥1.0.0)
 - XGBoost (≥1.6.0) - for 4CAC classifier
-- HDBSCAN (≥0.8.28) - for density-based clustering option
-- leidenalg (≥0.9.0) - for graph-based clustering (default)
+- leidenalg (≥0.9.0) - for graph-based clustering
 - igraph (≥0.10.0) - for graph construction in Leiden clustering
 - pandas (≥1.3.0)
 - numpy (≥1.21.0)
