@@ -5,7 +5,6 @@ Clustering module for REMAG
 import warnings
 warnings.filterwarnings("ignore", category=FutureWarning, module="sklearn")
 
-import hdbscan
 import numpy as np
 import pandas as pd
 from sklearn.metrics.pairwise import cosine_similarity
@@ -21,16 +20,6 @@ import leidenalg
 from .utils import extract_base_contig_name, get_torch_device, group_contigs_by_cluster
 import torch
 
-# Try to import cuML for GPU acceleration
-try:
-    import cuml
-    import cudf  
-    import cupy as cp
-    CUML_AVAILABLE = True
-    logger.debug("cuML GPU acceleration is available")
-except Exception:
-    CUML_AVAILABLE = False
-    logger.debug("cuML not available, using CPU-only HDBSCAN")
 
 
 def _iterative_kmeans_filtering(embeddings, contig_names, eukaryotic_scores, 
@@ -334,33 +323,6 @@ def _leiden_clustering(embeddings, k=15, similarity_threshold=0.1, resolution=1.
     
     return cluster_labels
 
-
-def _create_hdbscan_clusterer(min_cluster_size, min_samples, cluster_selection_epsilon=0.3, use_gpu=True):
-    """Create HDBSCAN clusterer, preferring GPU if available."""
-    if use_gpu and CUML_AVAILABLE:
-        try:
-            clusterer = cuml.HDBSCAN(
-                min_cluster_size=min_cluster_size,
-                min_samples=min_samples,
-                metric="euclidean",
-                cluster_selection_method="eom",
-                prediction_data=True
-            )
-            return clusterer, True  # GPU clusterer
-        except Exception as e:
-            logger.warning(f"GPU clustering failed, falling back to CPU: {e}")
-    
-    # CPU fallback
-    clusterer = hdbscan.HDBSCAN(
-        min_cluster_size=min_cluster_size,
-        min_samples=min_samples,
-        metric="euclidean",
-        cluster_selection_method="eom",
-        cluster_selection_epsilon=cluster_selection_epsilon,
-        prediction_data=True,
-        core_dist_n_jobs=-1,
-    )
-    return clusterer, False  # CPU clusterer
 
 
 def _permutation_anova_chimera_test(h1_embeddings, h2_embeddings, n_permutations=1000, alpha=0.05):
@@ -747,7 +709,7 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
             working_contig_names = list(working_embeddings_df.index)
             norm_data = working_embeddings_df.values
             
-            logger.info(f"K-means filtering: {len(working_contig_names)}/{len(contig_names)} contigs selected for HDBSCAN")
+            logger.info(f"K-means filtering: {len(working_contig_names)}/{len(contig_names)} contigs selected for clustering")
         else:
             logger.info("K-means filtering: no contigs removed, proceeding with all data")
         
@@ -763,52 +725,24 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
         else:
             logger.info("K-means pre-filtering disabled by --skip-kmeans-filtering flag")
     
-    # Choose clustering method based on user preference
-    clustering_method = getattr(args, 'clustering_method', 'hdbscan')
+    # Use Leiden clustering (the only clustering method)
+    logger.info("Using Leiden clustering")
+    leiden_resolution = getattr(args, 'leiden_resolution', 1.0)
+    leiden_k_neighbors = getattr(args, 'leiden_k_neighbors', 15)
+    leiden_similarity_threshold = getattr(args, 'leiden_similarity_threshold', 0.1)
     
-    if clustering_method == 'leiden':
-        logger.info("Using Leiden clustering")
-        leiden_resolution = getattr(args, 'leiden_resolution', 1.0)
-        leiden_k_neighbors = getattr(args, 'leiden_k_neighbors', 15)
-        leiden_similarity_threshold = getattr(args, 'leiden_similarity_threshold', 0.1)
-        
-        logger.info(f"Running Leiden on {len(working_contig_names)} contigs "
-                   f"(resolution={leiden_resolution}, k={leiden_k_neighbors}, "
-                   f"similarity_threshold={leiden_similarity_threshold})")
-        
-        cluster_labels = _leiden_clustering(
-            norm_data,
-            k=leiden_k_neighbors,
-            similarity_threshold=leiden_similarity_threshold,
-            resolution=leiden_resolution,
-            random_state=42,
-            n_jobs=getattr(args, 'cores', 1)
-        )
-        
-    else:
-        # Use HDBSCAN clustering on filtered data
-        logger.info("Using HDBSCAN clustering")
-        precluster_success = False
-        
-        # Create HDBSCAN clusterer (GPU-accelerated if available)
-        logger.info(f"Running HDBSCAN on {len(working_contig_names)} contigs (min_cluster_size={args.min_cluster_size}, min_samples={args.min_samples})")
-        clusterer, is_gpu = _create_hdbscan_clusterer(
-            args.min_cluster_size, 
-            args.min_samples,
-            getattr(args, 'cluster_selection_epsilon', 0.3),
-            use_gpu=getattr(args, 'use_gpu', True)
-        )
-        
-        if is_gpu:
-            logger.info("Using GPU-accelerated HDBSCAN clustering")
-            # Convert to GPU arrays for cuML
-            gpu_data = cp.asarray(norm_data, dtype=cp.float32)
-            cluster_labels = clusterer.fit_predict(gpu_data)
-            # Convert back to CPU numpy array
-            cluster_labels = cp.asnumpy(cluster_labels)
-        else:
-            logger.info("Using CPU HDBSCAN clustering")
-            cluster_labels = clusterer.fit_predict(norm_data)
+    logger.info(f"Running Leiden on {len(working_contig_names)} contigs "
+               f"(resolution={leiden_resolution}, k={leiden_k_neighbors}, "
+               f"similarity_threshold={leiden_similarity_threshold})")
+    
+    cluster_labels = _leiden_clustering(
+        norm_data,
+        k=leiden_k_neighbors,
+        similarity_threshold=leiden_similarity_threshold,
+        resolution=leiden_resolution,
+        random_state=42,
+        n_jobs=getattr(args, 'cores', 1)
+    )
     n_clusters = len(set(cluster_labels)) - (1 if -1 in cluster_labels else 0)
     n_noise = sum(1 for label in cluster_labels if label == -1)
     cluster_sizes = np.bincount(cluster_labels[cluster_labels >= 0]) if n_clusters > 0 else []
@@ -835,46 +769,21 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
 
     # Check if only one bin was detected and perform reclustering
     if n_clusters == 1:
-        if clustering_method == 'leiden':
-            logger.info("Only one bin detected. Attempting reclustering with increased resolution...")
-            
-            # Increase resolution by 0.5
-            new_resolution = leiden_resolution + 0.5
-            logger.info(f"Reclustering with resolution={new_resolution} (original: {leiden_resolution})")
-            
-            # Perform Leiden reclustering
-            recluster_labels = _leiden_clustering(
-                norm_data,
-                k=leiden_k_neighbors,
-                similarity_threshold=leiden_similarity_threshold,
-                resolution=new_resolution,
-                random_state=42,
-                n_jobs=getattr(args, 'cores', 1)
-            )
-        else:
-            logger.info("Only one bin detected. Attempting reclustering with increased min_cluster_size...")
-            
-            # Increase min_cluster_size by 1
-            new_min_cluster_size = args.min_cluster_size + 1
-            logger.info(f"Reclustering with min_cluster_size={new_min_cluster_size} (original: {args.min_cluster_size})")
-            
-            # Create new HDBSCAN clusterer with increased min_cluster_size
-            reclusterer, is_gpu_recluster = _create_hdbscan_clusterer(
-                new_min_cluster_size, 
-                args.min_samples,
-                getattr(args, 'cluster_selection_epsilon', 0.3),
-                use_gpu=getattr(args, 'use_gpu', True)
-            )
-            
-            # Perform reclustering
-            if is_gpu_recluster:
-                logger.info("Using GPU-accelerated HDBSCAN for reclustering")
-                gpu_data = cp.asarray(norm_data, dtype=cp.float32)
-                recluster_labels = reclusterer.fit_predict(gpu_data)
-                recluster_labels = cp.asnumpy(recluster_labels)
-            else:
-                logger.info("Using CPU HDBSCAN for reclustering")
-                recluster_labels = reclusterer.fit_predict(norm_data)
+        logger.info("Only one bin detected. Attempting reclustering with increased resolution...")
+        
+        # Increase resolution by 0.5
+        new_resolution = leiden_resolution + 0.5
+        logger.info(f"Reclustering with resolution={new_resolution} (original: {leiden_resolution})")
+        
+        # Perform Leiden reclustering
+        recluster_labels = _leiden_clustering(
+            norm_data,
+            k=leiden_k_neighbors,
+            similarity_threshold=leiden_similarity_threshold,
+            resolution=new_resolution,
+            random_state=42,
+            n_jobs=getattr(args, 'cores', 1)
+        )
         
         n_recluster_clusters = len(set(recluster_labels)) - (1 if -1 in recluster_labels else 0)
         n_recluster_noise = sum(1 for label in recluster_labels if label == -1)
@@ -887,7 +796,6 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
             
             # Update cluster labels with reclustering results
             cluster_labels = recluster_labels
-            clusterer = reclusterer
             
             
             # Update formatted labels and contig clusters dataframe

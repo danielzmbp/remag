@@ -183,13 +183,6 @@ def validate_coverage_options(ctx, param, value):
     help="Minimum number of contigs required to form a cluster/bin.",
 )
 @click.option(
-    "--min-samples",
-    type=click.IntRange(min=1, max=100),
-    default=None,
-    show_default=True,
-    help="Minimum samples for HDBSCAN core points. If None, uses min-cluster-size.",
-)
-@click.option(
     "--min-contig-length",
     type=click.IntRange(min=500, max=10000),
     default=1000,
@@ -248,20 +241,6 @@ def validate_coverage_options(ctx, param, value):
     is_flag=True,
     default=False,
     help="Enable chimeric contig detection and splitting for large contigs.",
-)
-@click.option(
-    "--cluster-selection-epsilon",
-    type=click.FloatRange(min=0, max=1.0),
-    default=0,
-    show_default=True,
-    help="HDBSCAN cluster selection epsilon for reachability-based clustering (higher = more flexible clustering).",
-)
-@click.option(
-    "--clustering-method",
-    type=click.Choice(["hdbscan", "leiden"]),
-    default="leiden",
-    show_default=True,
-    help="Clustering algorithm to use: 'hdbscan' (density-based) or 'leiden' (graph-based).",
 )
 @click.option(
     "--leiden-resolution",
