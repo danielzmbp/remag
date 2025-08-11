@@ -823,7 +823,8 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
     # Filter out noise contigs for final bins.csv
     final_bins_df = contig_clusters_df[contig_clusters_df["cluster"] != "noise"].copy()
     
-    # Save final bins (excluding noise)
+    # Save final bins (excluding noise) - keep only first two columns
+    final_bins_df = final_bins_df[["contig", "cluster"]]
     final_bins_df.to_csv(bins_path, index=False)
 
     # Count contigs per cluster using utility function
