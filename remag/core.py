@@ -115,19 +115,23 @@ def main(args):
         with open(refinement_summary_path, "w", encoding="utf-8") as f:
             json.dump(refinement_summary, f, indent=2)
 
-    logger.info("Final bins saved to bins.csv (noise contigs excluded)")
+    # Save updated bins.csv with refined cluster assignments (excluding noise)
+    logger.info("Saving final bins.csv with refined cluster assignments...")
+    bins_csv_path = os.path.join(args.output, "bins.csv")
+    final_bins_df = clusters_df[clusters_df["cluster"] != "noise"].copy()
+    final_bins_df.to_csv(bins_csv_path, index=False)
+    logger.info(f"bins.csv saved with {len(final_bins_df)} contigs from refined clusters")
 
     logger.info("Saving bins as FASTA files...")
     valid_bins = save_clusters_as_fasta(clusters_df, fragments_dict, args)
     
-    # Filter bins.csv to only include contigs from valid bins
+    # Filter bins.csv to only include contigs from valid bins (those that meet minimum size)
     logger.info("Filtering bins.csv to match saved bins...")
-    bins_csv_path = os.path.join(args.output, "bins.csv")
     if os.path.exists(bins_csv_path):
         import pandas as pd
         bins_df = pd.read_csv(bins_csv_path)
         filtered_bins_df = bins_df[bins_df["cluster"].isin(valid_bins)]
         filtered_bins_df.to_csv(bins_csv_path, index=False)
-        logger.info(f"bins.csv now contains {len(filtered_bins_df)} contigs from {len(valid_bins)} bins")
+        logger.info(f"bins.csv now contains {len(filtered_bins_df)} contigs from {len(valid_bins)} valid bins")
 
     logger.info("REMAG analysis completed successfully!")
