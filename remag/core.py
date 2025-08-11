@@ -119,6 +119,8 @@ def main(args):
     logger.info("Saving final bins.csv with refined cluster assignments...")
     bins_csv_path = os.path.join(args.output, "bins.csv")
     final_bins_df = clusters_df[clusters_df["cluster"] != "noise"].copy()
+    # Keep only the first two columns: contig and cluster
+    final_bins_df = final_bins_df[["contig", "cluster"]]
     final_bins_df.to_csv(bins_csv_path, index=False)
     logger.info(f"bins.csv saved with {len(final_bins_df)} contigs from refined clusters")
 
@@ -131,6 +133,8 @@ def main(args):
         import pandas as pd
         bins_df = pd.read_csv(bins_csv_path)
         filtered_bins_df = bins_df[bins_df["cluster"].isin(valid_bins)]
+        # Ensure only the first two columns are kept
+        filtered_bins_df = filtered_bins_df[["contig", "cluster"]]
         filtered_bins_df.to_csv(bins_csv_path, index=False)
         logger.info(f"bins.csv now contains {len(filtered_bins_df)} contigs from {len(valid_bins)} valid bins")
 
