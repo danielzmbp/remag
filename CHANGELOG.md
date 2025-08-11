@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2025-08-11
+
+### Fixed
+- Fixed CLI missing parameters error that prevented command execution
+- Removed unused HDBSCAN parameters from CLI function signature
+
 ## [0.2.0] - 2025-08-10
 
 ### Changed
@@ -114,7 +120,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Various bug fixes and improvements
 
-[Unreleased]: https://github.com/danielzmbp/remag/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/danielzmbp/remag/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/danielzmbp/remag/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/danielzmbp/remag/compare/v0.1.5...v0.2.0
 [0.1.5]: https://github.com/danielzmbp/remag/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/danielzmbp/remag/compare/v0.1.3...v0.1.4
