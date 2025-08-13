@@ -123,7 +123,7 @@ def check_core_gene_duplications(clusters_df, fragments_dict, args,
             miniprot_output = os.path.join(temp_dir, f"{cluster_id}.paf")
             miniprot_stderr = os.path.join(temp_dir, f"{cluster_id}.stderr")
             db_to_use = db_path  # Use the compressed file directly
-            cmd = f'miniprot -t {args.cores} "{bin_fasta}" "{db_to_use}" > "{miniprot_output}" 2>"{miniprot_stderr}"'
+            cmd = f'miniprot -t {args.cores} --outs=0.95 "{bin_fasta}" "{db_to_use}" > "{miniprot_output}" 2>"{miniprot_stderr}"'
 
             if args.verbose:
                 logger.debug(f"Running miniprot command: {cmd}")
