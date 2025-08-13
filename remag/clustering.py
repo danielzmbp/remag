@@ -176,7 +176,7 @@ def _iterative_kmeans_filtering(embeddings, contig_names, eukaryotic_scores,
     return current_embeddings, current_contig_names, final_stats
 
 
-def _construct_knn_graph(embeddings, k=15, similarity_threshold=0.1, n_jobs=1):
+def _construct_knn_graph(embeddings, k=15, similarity_threshold=0.1, n_jobs=1, args=None):
     """
     Construct a k-NN graph from multidimensional embeddings using cosine similarity.
     Optimized for memory efficiency and parallelization.
@@ -186,10 +186,57 @@ def _construct_knn_graph(embeddings, k=15, similarity_threshold=0.1, n_jobs=1):
         k: Number of nearest neighbors for each node
         similarity_threshold: Minimum cosine similarity to create an edge (0-1)
         n_jobs: Number of parallel jobs for k-NN search
+        args: Arguments object containing output directory and keep_intermediate flag
         
     Returns:
         igraph.Graph: Weighted graph with cosine similarity weights
     """
+    # Check if graph already exists and can be loaded
+    if args and args.output:
+        edge_list_path = os.path.join(args.output, "knn_graph_edges.csv")
+        graph_stats_path = os.path.join(args.output, "knn_graph_stats.json")
+        
+        if os.path.exists(edge_list_path) and os.path.exists(graph_stats_path):
+            try:
+                # Load graph statistics to verify compatibility
+                with open(graph_stats_path, 'r') as f:
+                    saved_stats = json.load(f)
+                
+                # Check if parameters match
+                if (saved_stats.get('n_vertices') == len(embeddings) and
+                    saved_stats.get('k') == k and
+                    saved_stats.get('similarity_threshold') == similarity_threshold):
+                    
+                    logger.info(f"Loading existing k-NN graph from {edge_list_path}")
+                    
+                    # Load edge list
+                    edges = []
+                    weights = []
+                    with open(edge_list_path, 'r') as f:
+                        for line in f:
+                            if line.startswith('#') or line.startswith('source'):
+                                continue  # Skip comments and header
+                            source, target, weight = line.strip().split(',')
+                            edges.append((int(source), int(target)))
+                            weights.append(float(weight))
+                    
+                    # Reconstruct graph
+                    g = ig.Graph()
+                    g.add_vertices(len(embeddings))
+                    g.add_edges(edges)
+                    g.es['weight'] = weights
+                    
+                    logger.info(f"Successfully loaded k-NN graph: {g.vcount()} nodes, {g.ecount()} edges")
+                    return g
+                else:
+                    logger.info("Existing k-NN graph has different parameters, constructing new graph")
+                    logger.debug(f"Saved: vertices={saved_stats.get('n_vertices')}, k={saved_stats.get('k')}, "
+                               f"threshold={saved_stats.get('similarity_threshold')}")
+                    logger.debug(f"Current: vertices={len(embeddings)}, k={k}, threshold={similarity_threshold}")
+            except Exception as e:
+                logger.warning(f"Could not load existing k-NN graph: {e}")
+                logger.info("Constructing new k-NN graph")
+    
     logger.info(f"Constructing k-NN graph from {len(embeddings)} embeddings (k={k}, n_jobs={n_jobs})")
     
     # Use sklearn's NearestNeighbors for efficient, parallelized k-NN search
@@ -235,10 +282,42 @@ def _construct_knn_graph(embeddings, k=15, similarity_threshold=0.1, n_jobs=1):
     
     logger.info(f"Graph created: {g.vcount()} nodes, {g.ecount()} edges")
     
+    # Save graph if keep_intermediate is enabled
+    if args and getattr(args, "keep_intermediate", False):
+        # Save as edge list with weights
+        edge_list_path = os.path.join(args.output, "knn_graph_edges.csv")
+        with open(edge_list_path, 'w') as f:
+            f.write("# Node IDs correspond to row indices in embeddings.csv\n")
+            f.write("source,target,weight\n")
+            for edge in g.es:
+                source = edge.source
+                target = edge.target
+                weight = edge['weight']
+                f.write(f"{source},{target},{weight:.6f}\n")
+        logger.info(f"Saved k-NN graph edge list to {edge_list_path}")
+        
+        # Also save graph statistics
+        graph_stats = {
+            "n_vertices": g.vcount(),
+            "n_edges": g.ecount(),
+            "k": k,
+            "similarity_threshold": similarity_threshold,
+            "density": g.density(),
+            "n_connected_components": len(g.connected_components()),
+            "average_degree": np.mean(g.degree()),
+            "max_degree": max(g.degree()),
+            "min_degree": min(g.degree())
+        }
+        
+        graph_stats_path = os.path.join(args.output, "knn_graph_stats.json")
+        with open(graph_stats_path, 'w') as f:
+            json.dump(graph_stats, f, indent=2)
+        logger.info(f"Saved k-NN graph statistics to {graph_stats_path}")
+    
     return g
 
 
-def _leiden_clustering(embeddings, k=15, similarity_threshold=0.1, resolution=1.0, random_state=42, n_jobs=1):
+def _leiden_clustering(embeddings, k=15, similarity_threshold=0.1, resolution=1.0, random_state=42, n_jobs=1, args=None):
     """
     Perform Leiden clustering on embeddings by first constructing a k-NN graph.
     
@@ -249,6 +328,7 @@ def _leiden_clustering(embeddings, k=15, similarity_threshold=0.1, resolution=1.
         resolution: Resolution parameter for Leiden algorithm (higher = more clusters)
         random_state: Random seed for reproducibility
         n_jobs: Number of parallel jobs for k-NN graph construction
+        args: Arguments object containing output directory and keep_intermediate flag
         
     Returns:
         numpy.array: Cluster labels (-1 for isolated nodes, 0+ for clusters)
@@ -256,7 +336,7 @@ def _leiden_clustering(embeddings, k=15, similarity_threshold=0.1, resolution=1.
     logger.info(f"Starting Leiden clustering with k={k}, resolution={resolution}, n_jobs={n_jobs}")
     
     # Construct k-NN graph with parallelization
-    graph = _construct_knn_graph(embeddings, k=k, similarity_threshold=similarity_threshold, n_jobs=n_jobs)
+    graph = _construct_knn_graph(embeddings, k=k, similarity_threshold=similarity_threshold, n_jobs=n_jobs, args=args)
     
     # Check if graph has edges
     if graph.ecount() == 0:
@@ -741,7 +821,8 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
         similarity_threshold=leiden_similarity_threshold,
         resolution=leiden_resolution,
         random_state=42,
-        n_jobs=getattr(args, 'cores', 1)
+        n_jobs=getattr(args, 'cores', 1),
+        args=args
     )
     n_clusters = len(set(cluster_labels)) - (1 if -1 in cluster_labels else 0)
     n_noise = sum(1 for label in cluster_labels if label == -1)
@@ -782,7 +863,8 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
             similarity_threshold=leiden_similarity_threshold,
             resolution=new_resolution,
             random_state=42,
-            n_jobs=getattr(args, 'cores', 1)
+            n_jobs=getattr(args, 'cores', 1),
+            args=args
         )
         
         n_recluster_clusters = len(set(recluster_labels)) - (1 if -1 in recluster_labels else 0)
@@ -831,9 +913,6 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
     logger.debug("Counting contigs per cluster...")
     cluster_contig_counts = group_contigs_by_cluster(contig_clusters_df)
 
-    # Count and report noise contigs
-    noise_contigs = cluster_contig_counts.get("noise", set())
-    logger.info(f"Contigs classified as noise: {len(noise_contigs)}")
 
 
     # Note about visualization
