@@ -91,8 +91,8 @@ def main(args):
         clusters_df, 
         fragments_dict, 
         args,
-        target_coverage_threshold=0.60,  # Match compleasm standard (60%)
-        identity_threshold=0.40,  # Match compleasm standard (40%)
+        target_coverage_threshold=0.50,
+        identity_threshold=0.30,
         use_header_cache=False
     )
 

@@ -73,10 +73,9 @@ def refine_bin_with_leiden_clustering(
     )
     
     # Check clustering results
-    n_clusters = len(set(cluster_labels)) - (1 if -1 in cluster_labels else 0)
-    n_noise = sum(1 for label in cluster_labels if label == -1)
+    n_clusters = len(set(cluster_labels))
     
-    logger.info(f"Bin {bin_id} Leiden clustering: {n_clusters} clusters, {n_noise} noise points")
+    logger.info(f"Bin {bin_id} Leiden clustering: {n_clusters} clusters")
     
     if n_clusters < 2:
         logger.warning(f"Bin {bin_id} refinement produced insufficient clusters ({n_clusters})")
@@ -88,8 +87,7 @@ def refine_bin_with_leiden_clustering(
     
     # Format cluster labels with bin prefix
     formatted_labels = [
-        f"{bin_id}_refined_bin_{label}" if label != -1 else "noise"
-        for label in cluster_labels
+        f"{bin_id}_refined_bin_{label}" for label in cluster_labels
     ]
     
     refined_clusters_df = pd.DataFrame({
@@ -97,13 +95,6 @@ def refine_bin_with_leiden_clustering(
         'cluster': formatted_labels,
         'original_bin': bin_id
     })
-    
-    # Remove noise contigs from results
-    refined_clusters_df = refined_clusters_df[refined_clusters_df['cluster'] != 'noise']
-    
-    if refined_clusters_df.empty:
-        logger.warning(f"Bin {bin_id} refinement resulted in all noise contigs")
-        return None
         
     logger.info(f"Bin {bin_id} successfully refined into {n_clusters} sub-bins")
     
@@ -144,7 +135,7 @@ def refine_contaminated_bins_with_embeddings(
         contaminated_clusters = clusters_df[
             clusters_df["has_duplicated_core_genes"] == True
         ]["cluster"].unique()
-        contaminated_bins = [c for c in contaminated_clusters if c != "noise"]
+        contaminated_bins = list(contaminated_clusters)
 
     if not contaminated_bins:
         logger.info("No contaminated bins found, skipping refinement")
@@ -213,13 +204,13 @@ def refine_contaminated_bins_with_embeddings(
                 refined_clusters_df,
                 fragments_dict,
                 args,
-                target_coverage_threshold=0.60,  # Match compleasm standard (60%)
-                identity_threshold=0.40,  # Match compleasm standard (40%)
+                target_coverage_threshold=0.50,
+                identity_threshold=0.30,
                 use_header_cache=True
             )
             
-            # Count successful sub-bins (exclude noise)
-            sub_bins = refined_clusters_df[refined_clusters_df["cluster"] != "noise"]["cluster"].nunique()
+            # Count successful sub-bins
+            sub_bins = refined_clusters_df["cluster"].nunique()
             
             if sub_bins > 1:
                 all_refined_clusters.append(refined_clusters_df)
@@ -277,7 +268,7 @@ def refine_contaminated_bins_with_embeddings(
                     final_clusters_df["has_duplicated_core_genes"] == True
                 ]["cluster"].unique()
                 still_contaminated_bins = [
-                    c for c in still_contaminated_clusters if c != "noise"
+                    c for c in still_contaminated_clusters
                 ]
             
             if still_contaminated_bins:
