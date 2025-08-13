@@ -65,8 +65,6 @@ requirements:
     - wheel
   run:
     - python >=3.8
-    - hdbscan >=0.8.28
-    - matplotlib-base >=3.5.0
     - numpy >=1.21.0
     - pandas >=1.3.0
     - pysam >=0.18.0
@@ -75,13 +73,11 @@ requirements:
     - loguru >=0.6.0
     - scikit-learn >=1.0.0
     - tqdm >=4.62.0
-    - umap-learn >=0.5.0
     - xgboost >=1.6.0
     - joblib >=1.1.0
     - psutil >=5.8.0
     - leidenalg >=0.9.0
     - python-igraph >=0.10.0
-    - biopython
 
 test:
   imports:
