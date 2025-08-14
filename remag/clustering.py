@@ -628,14 +628,14 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
     logger.info("Using Leiden clustering")
     leiden_resolution = getattr(args, 'leiden_resolution', 1.0)
     
-    logger.info(f"Running Leiden on {len(working_contig_names)} contigs "
-               f"(resolution={leiden_resolution}, k={leiden_k_neighbors}, "
-               f"similarity_threshold={leiden_similarity_threshold})")
+    logger.info(f"Running Leiden on {len(contig_names)} contigs "
+               f"(resolution={leiden_resolution}, k={clustering_manager.graph_manager.k}, "
+               f"similarity_threshold={clustering_manager.graph_manager.similarity_threshold})")
     
     cluster_labels = _leiden_clustering(
         norm_data,
-        k=leiden_k_neighbors,
-        similarity_threshold=leiden_similarity_threshold,
+        k=clustering_manager.graph_manager.k,
+        similarity_threshold=clustering_manager.graph_manager.similarity_threshold,
         resolution=leiden_resolution,
         random_state=42,
         n_jobs=getattr(args, 'cores', 1),
