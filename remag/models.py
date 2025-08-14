@@ -9,6 +9,7 @@ import random
 import re
 from typing import List
 
+import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -19,7 +20,6 @@ from .utils import get_torch_device
 
 
 def get_model_path(args):
-    """Get the path for the Siamese model file."""
     return os.path.join(args.output, "siamese_model.pt")
 
 
@@ -63,7 +63,6 @@ class FusionLayer(nn.Module):
         output = self.fusion_mlp(combined)
         
         return output
-
 
 
 class SiameseNetwork(nn.Module):
@@ -216,7 +215,6 @@ class BarlowTwinsLoss(nn.Module):
         # Compute cross-correlation matrix
         cross_corr = torch.matmul(output1_norm.T, output2_norm) / batch_size
         
-        
         # Compute invariance loss (diagonal terms should be close to 1)
         invariance_loss = torch.pow(torch.diagonal(cross_corr) - 1.0, 2).sum()
         
@@ -292,7 +290,6 @@ class SequenceDataset(Dataset):
         return groups
 
     def _generate_all_positive_pairs(self):
-        """Generate pairs of fragment indices from the same base contig."""
         all_pairs = []
         for base_name, fragment_indices in self.contig_to_fragment_indices.items():
             for i, j in itertools.combinations(range(len(fragment_indices)), 2):
@@ -490,7 +487,6 @@ def generate_embeddings(model, features_df, args):
     # Check if embeddings file already exists
     if os.path.exists(embeddings_path):
         logger.info(f"Loading existing embeddings from {embeddings_path}")
-        import pandas as pd
         return pd.read_csv(embeddings_path, index_col=0)
 
     device = get_torch_device()
@@ -519,7 +515,6 @@ def generate_embeddings(model, features_df, args):
                 clean_header = header.replace(".original", "")
                 embeddings[clean_header] = batch_embeddings[j].cpu().numpy()
 
-    import pandas as pd
     embeddings_df = pd.DataFrame.from_dict(embeddings, orient="index")
     
     # Save embeddings only if keeping intermediate files
@@ -549,7 +544,6 @@ def generate_embeddings_for_fragments(model, features_df, fragment_names, args):
 
     if fragment_features_df.empty:
         logger.warning("No matching fragments found for embedding generation")
-        import pandas as pd
         return pd.DataFrame()
 
     with torch.no_grad():
@@ -562,7 +556,6 @@ def generate_embeddings_for_fragments(model, features_df, fragment_names, args):
             for j, header in enumerate(batch_df.index):
                 embeddings[header] = batch_embeddings[j].cpu().numpy()
 
-    import pandas as pd
     embeddings_df = pd.DataFrame.from_dict(embeddings, orient="index")
     logger.info(f"Generated embeddings for {len(embeddings_df)} fragments")
     return embeddings_df

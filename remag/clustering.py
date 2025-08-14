@@ -404,7 +404,6 @@ def _leiden_clustering(embeddings, k=15, similarity_threshold=0.1, resolution=1.
     return cluster_labels
 
 
-
 def _permutation_anova_chimera_test(h1_embeddings, h2_embeddings, n_permutations=1000, alpha=0.05):
     """
     Perform permutation ANOVA to test if inter-group distances are significantly
@@ -705,14 +704,6 @@ def detect_chimeric_contigs(embeddings_df, clusters_df, args):
     logger.info(f"Chimera detection complete. Found {chimeric_count} possible chimeric contigs out of {len(chimera_results)} analyzed")
     
     return chimera_results
-
-
-
-
-
-
-
-
 
 
 def cluster_contigs(embeddings_df, fragments_dict, args):
