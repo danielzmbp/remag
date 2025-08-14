@@ -89,43 +89,45 @@ def count_kmers(args_array):
     while True:
         found = True
         for i, k in enumerate(ks):
-            try:
-                bit_mers[i] = mer2bits(seq[ind : ind + k])
-                kmer_counts[k][kmer_inds[k][bit_mers[i]]] += 1.0
-            except:
-                ind += 1
-                if ind > len(seq):
-                    found = False
+            if ind + k <= len(seq):
+                try:
+                    bit_mers[i] = mer2bits(seq[ind : ind + k])
+                    kmer_counts[k][kmer_inds[k][bit_mers[i]]] += 1.0
+                except (KeyError, IndexError):
+                    ind += 1
+                    if ind > len(seq):
+                        found = False
+                    break
+            else:
+                found = False
                 break
-        if found == True:
+        if found:
             break
 
     # count all other kmers
-    while (
-        ind < len(seq) - ks[-1]
-    ):
-        for i, k in enumerate(ks):
-            try:
+    while ind < len(seq) - ks[-1]:
+        try:
+            for i, k in enumerate(ks):
                 c = nt_bits[seq[ind + k]]
                 bit_mers[i] = ((bit_mers[i] << 2) | c) & k_masks[i]
                 kmer_counts[k][kmer_inds[k][bit_mers[i]]] += 1.0
-            except:  # out of alphabet
-                ind += 2  # pass it and move on to the next
-                # get the next set of legal kmers
-                while ind <= len(seq) - ks[-1]:
-                    found = True
-                    for i2, k2 in enumerate(ks):
-                        try:
-                            bit_mers[i2] = mer2bits(seq[ind : ind + k2])
-                            kmer_counts[k2][kmer_inds[k2][bit_mers[i2]]] += 1.0
-                        except:
-                            ind += 1
-                            found = False
-                            break
-                    if found == True:
-                        ind -= 1  # in next step increment ind
+        except (KeyError, IndexError):
+            # Handle invalid characters by skipping and finding next valid position
+            ind += 2
+            while ind <= len(seq) - ks[-1]:
+                found = True
+                for i2, k2 in enumerate(ks):
+                    try:
+                        bit_mers[i2] = mer2bits(seq[ind : ind + k2])
+                        kmer_counts[k2][kmer_inds[k2][bit_mers[i2]]] += 1.0
+                    except (KeyError, IndexError):
+                        ind += 1
+                        found = False
                         break
-        ind += 1  # move on to next letter in sequence
+                if found:
+                    ind -= 1
+                    break
+        ind += 1
 
     # count the last few kmers
     end = len(ks) - 1
@@ -134,7 +136,7 @@ def count_kmers(args_array):
             kmer = seq[i : i + k]
             try:
                 kmer_counts[k][kmer_inds[k][mer2bits(kmer)]] += 1.0
-            except:
+            except (KeyError, IndexError):
                 pass
         end -= 1
 

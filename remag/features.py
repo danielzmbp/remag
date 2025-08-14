@@ -20,7 +20,6 @@ from .utils import open_file, fasta_iter, FragmentDict, CoverageDict
 
 
 def generate_feature_mapping(kmer_len):
-    """Generate mapping of k-mers to feature indices."""
     BASE_COMPLEMENT = {"A": "T", "T": "A", "G": "C", "C": "G"}
     kmer_hash = {}
     counter = 0
@@ -84,7 +83,6 @@ def _calculate_kmer_composition(
 
 
 def get_classification_results_path(fasta_file, output_dir):
-    """Get the path for the 4CAC classification results file."""
     base_name = os.path.basename(fasta_file)
     name_without_ext = os.path.splitext(base_name)[0]
     if name_without_ext.endswith(".gz"):
@@ -93,7 +91,6 @@ def get_classification_results_path(fasta_file, output_dir):
 
 
 def get_features_csv_path(output_dir):
-    """Get the path for the features CSV file."""
     return os.path.join(output_dir, "features.csv")
 
 
@@ -194,13 +191,17 @@ def filter_bacterial_contigs(fasta_file, output_dir, min_contig_length=1000, cor
             "header\tviral_score\tplas_score\tprokar_score\teukar_score\tpredicted_class\n"
         )
 
-        with open_file(fasta_file, "r") as fp:
+        # Use XGBoost utils readfq if available, otherwise fallback to fasta_iter
+        try:
+            from .xgbclass import xgb_utils as utils
+        except ImportError:
             try:
-                try:
-                    from .xgbclass import xgb_utils as utils
-                except ImportError:
-                    from xgbclass import xgb_utils as utils
+                from xgbclass import xgb_utils as utils
+            except ImportError:
+                utils = None
 
+        with open_file(fasta_file, "r") as fp:
+            if utils:
                 for header, seq, _ in utils.readfq(fp):
                     if len(seq) < min_contig_length:
                         continue
@@ -215,7 +216,7 @@ def filter_bacterial_contigs(fasta_file, output_dir, min_contig_length=1000, cor
 
                 # Process remaining sequences
                 process_batch(seq_names, seqs, results_file)
-            except ImportError:
+            else:
                 for header, seq in fasta_iter(fasta_file):
                     if len(seq) < min_contig_length:
                         continue
@@ -704,7 +705,6 @@ def get_features(
 
 # Coverage calculation helper functions
 def _validate_alignment_file(alignment_file: str) -> bool:
-    """Validate BAM/CRAM file and create index if needed."""
     if not os.path.exists(alignment_file):
         logger.error(f"Alignment file not found at {alignment_file}")
         return False
@@ -753,7 +753,6 @@ def _validate_alignment_file(alignment_file: str) -> bool:
 def _map_fasta_to_bam_refs(
     fragments_dict: FragmentDict, bam_references: Set[str]
 ) -> Tuple[Dict[str, str], List[str]]:
-    """Map FASTA headers to BAM references."""
     bam_ref_map = {}
     unmapped_fasta_headers = []
 
@@ -1152,14 +1151,6 @@ def calculate_coverage_from_tsv(
 
 
 def _get_total_mapped_reads(bam_file: str) -> int:
-    """Calculate total number of mapped reads in an alignment file.
-    
-    Args:
-        bam_file: Path to alignment file (BAM/CRAM)
-        
-    Returns:
-        Total number of mapped reads
-    """
     try:
         with pysam.AlignmentFile(bam_file, "rb") as bamfile:
             total_mapped = bamfile.mapped
