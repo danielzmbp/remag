@@ -739,7 +739,7 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
     # Perform chimera detection for large contigs
     if not getattr(args, 'skip_chimera_detection', False):
         logger.info("Running chimera detection on large contigs...")
-        chimera_results = detect_chimeric_contigs(working_embeddings_df, clusters_df, args)
+        chimera_results = detect_chimeric_contigs(embeddings_df, clusters_df, args)
 
     logger.info(f"Saved contig-level clusters to {bins_path}")
 
