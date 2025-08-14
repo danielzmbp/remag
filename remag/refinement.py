@@ -8,7 +8,7 @@ import pandas as pd
 from tqdm import tqdm
 from loguru import logger
 
-from .miniprot_utils import check_core_gene_duplications, get_core_gene_duplication_results_path
+from .miniprot_utils import check_core_gene_duplications, check_core_gene_duplications_from_cache, get_core_gene_duplication_results_path, get_gene_mappings_cache_path
 from .clustering import _leiden_clustering
 
 
@@ -198,16 +198,40 @@ def refine_contaminated_bins_with_embeddings(
                 }
                 continue
                 
-            # Check for duplicated core genes in refined bins
+            # Check for duplicated core genes in refined bins using cached mappings
             logger.debug(f"Checking core gene duplications in {bin_id} refined sub-bins...")
-            refined_clusters_df = check_core_gene_duplications(
-                refined_clusters_df,
-                fragments_dict,
-                args,
-                target_coverage_threshold=0.50,
-                identity_threshold=0.30,
-                use_header_cache=True
-            )
+            
+            # Try to use cached gene mappings first (much faster)
+            gene_mappings_cache = getattr(args, '_gene_mappings_cache', None)
+            
+            if gene_mappings_cache is None:
+                # Fallback: try to load from file if keeping intermediate files
+                cache_path = get_gene_mappings_cache_path(args)
+                if os.path.exists(cache_path):
+                    try:
+                        with open(cache_path, "r") as f:
+                            gene_mappings_cache = json.load(f)
+                        logger.debug(f"Loaded gene mappings cache from {cache_path}")
+                    except Exception as e:
+                        logger.warning(f"Failed to load gene mappings cache: {e}")
+                        gene_mappings_cache = None
+            
+            if gene_mappings_cache is not None:
+                # Use fast cached approach
+                refined_clusters_df = check_core_gene_duplications_from_cache(
+                    refined_clusters_df, gene_mappings_cache, args
+                )
+            else:
+                # Fallback to miniprot (slower but still works)
+                logger.warning(f"Gene mappings cache not available, falling back to miniprot for {bin_id}")
+                refined_clusters_df = check_core_gene_duplications(
+                    refined_clusters_df,
+                    fragments_dict,
+                    args,
+                    target_coverage_threshold=0.55,
+                    identity_threshold=0.35,
+                    use_header_cache=True
+                )
             
             # Count successful sub-bins
             sub_bins = refined_clusters_df["cluster"].nunique()
