@@ -8,6 +8,76 @@ import sys
 from loguru import logger
 from typing import Dict, List, Union
 import torch
+from functools import wraps
+
+
+class PathManager:
+    """Centralized path management for REMAG output files."""
+    
+    def __init__(self, output_dir):
+        self.output_dir = output_dir
+    
+    def get_params_path(self):
+        return os.path.join(self.output_dir, "params.json")
+    
+    def get_model_path(self):
+        return os.path.join(self.output_dir, "siamese_model.pt")
+    
+    def get_embeddings_path(self):
+        return os.path.join(self.output_dir, "embeddings.csv")
+    
+    def get_features_path(self):
+        return os.path.join(self.output_dir, "features.csv")
+    
+    def get_bins_path(self):
+        return os.path.join(self.output_dir, "bins.csv")
+    
+    def get_bins_dir(self):
+        return os.path.join(self.output_dir, "bins")
+    
+    def get_knn_graph_edges_path(self):
+        return os.path.join(self.output_dir, "knn_graph_edges.csv")
+    
+    def get_knn_graph_stats_path(self):
+        return os.path.join(self.output_dir, "knn_graph_stats.json")
+    
+    def get_chimera_results_path(self):
+        return os.path.join(self.output_dir, "chimera_detection_results.json")
+    
+    def get_refinement_summary_path(self):
+        return os.path.join(self.output_dir, "refinement_summary.json")
+    
+    def get_core_gene_results_path(self):
+        return os.path.join(self.output_dir, "core_gene_duplication_results.json")
+    
+    def get_gene_mapping_path(self):
+        return os.path.join(self.output_dir, "gene_contig_mappings.json")
+    
+    def get_temp_miniprot_dir(self):
+        return os.path.join(self.output_dir, "temp_miniprot")
+    
+    def get_fragments_path(self):
+        return os.path.join(self.output_dir, "fragments.pkl")
+
+
+def handle_errors(operation_name):
+    """Decorator for consistent error handling across modules."""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            try:
+                return func(*args, **kwargs)
+            except FileNotFoundError as e:
+                logger.error(f"{operation_name} failed - File not found: {e}")
+                raise
+            except PermissionError as e:
+                logger.error(f"{operation_name} failed - Permission denied: {e}")
+                raise
+            except Exception as e:
+                logger.error(f"{operation_name} failed with error: {e}")
+                raise
+        return wrapper
+    return decorator
 
 
 def get_torch_device():
@@ -32,6 +102,7 @@ def setup_logging(output_dir=None, verbose=False):
     )
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
+        path_manager = PathManager(output_dir)
         logger.add(
             os.path.join(output_dir, "remag.log"),
             level="DEBUG",
