@@ -19,6 +19,126 @@ from loguru import logger
 from .utils import get_torch_device
 
 
+class EarlyStoppingManager:
+    """Manages early stopping logic during training."""
+    
+    def __init__(self, patience=20):
+        self.patience = patience
+        self.best_loss = float("inf")
+        self.best_model_state = None
+        self.epochs_no_improve = 0
+    
+    def check_improvement(self, current_loss, model_state):
+        """Check if current loss is an improvement and update state."""
+        if current_loss < self.best_loss:
+            self.best_loss = current_loss
+            self.best_model_state = model_state.copy()
+            self.epochs_no_improve = 0
+            return True
+        else:
+            self.epochs_no_improve += 1
+            return False
+    
+    def should_stop(self):
+        """Check if training should stop based on patience."""
+        return self.epochs_no_improve >= self.patience
+    
+    def get_best_state(self):
+        """Get the best model state and loss."""
+        return self.best_model_state, self.best_loss
+
+
+class LearningRateScheduler:
+    """Handles learning rate scheduling setup."""
+    
+    @staticmethod
+    def create_warmup_cosine_scheduler(optimizer, args):
+        """Create a warmup + cosine annealing scheduler."""
+        base_learning_rate = getattr(args, 'base_learning_rate', 1e-3)
+        scaled_lr = (args.batch_size / 256) * base_learning_rate * 0.2
+        warmup_epochs = 10
+        warmup_start_lr = scaled_lr * 0.1
+        
+        # Update optimizer's initial learning rate
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = warmup_start_lr
+        
+        def warmup_lambda(epoch):
+            if epoch < warmup_epochs:
+                target_multiplier = scaled_lr / warmup_start_lr
+                return 1.0 + (target_multiplier - 1.0) * epoch / warmup_epochs
+            else:
+                cosine_epoch = epoch - warmup_epochs
+                cosine_total = args.epochs - warmup_epochs
+                if cosine_total <= 0:
+                    return scaled_lr / warmup_start_lr
+
+                min_lr_factor = 0.01
+                max_multiplier = scaled_lr / warmup_start_lr
+                min_multiplier = (scaled_lr * min_lr_factor) / warmup_start_lr
+                cosine_factor = 0.5 * (1 + np.cos(np.pi * cosine_epoch / cosine_total))
+                return min_multiplier + (max_multiplier - min_multiplier) * cosine_factor
+        
+        return optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=warmup_lambda)
+
+
+class TrainingManager:
+    """Manages the complete training process."""
+    
+    def __init__(self, args):
+        self.args = args
+        self.early_stopping = EarlyStoppingManager(patience=20)
+        self.device = get_torch_device()
+    
+    def setup_training(self, model, features_df):
+        """Set up training components (dataset, dataloader, optimizer, scheduler)."""
+        dataset = SequenceDataset(features_df, max_positive_pairs=self.args.max_positive_pairs)
+        has_enough_data = len(dataset) > self.args.batch_size * 10
+
+        dataloader_kwargs = {
+            "batch_size": self.args.batch_size,
+            "shuffle": True,
+            "drop_last": not has_enough_data,
+        }
+        if self.device.type == "cuda":
+            dataloader_kwargs["num_workers"] = self.args.cores if self.args.cores > 0 else 4
+            dataloader_kwargs["pin_memory"] = True
+
+        dataloader = DataLoader(dataset, **dataloader_kwargs)
+        
+        optimizer = optim.AdamW(
+            model.parameters(), lr=1e-4, weight_decay=0.05, betas=(0.9, 0.95)
+        )
+        
+        scheduler = LearningRateScheduler.create_warmup_cosine_scheduler(optimizer, self.args)
+        criterion = BarlowTwinsLoss(lambda_param=5e-3)
+        
+        return dataloader, optimizer, scheduler, criterion
+    
+    def train_epoch(self, model, dataloader, optimizer, criterion):
+        """Train for one epoch and return average loss."""
+        model.train()
+        running_loss = 0.0
+
+        for features1, features2, base_ids in dataloader:
+            features1, features2, base_ids = (
+                features1.to(self.device),
+                features2.to(self.device),
+                base_ids.to(self.device),
+            )
+
+            optimizer.zero_grad()
+            output1, output2 = model(features1, features2)
+            loss = criterion(output1, output2, base_ids)
+            loss.backward()
+            
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            optimizer.step()
+            running_loss += loss.item()
+
+        return running_loss / len(dataloader)
+
+
 def get_model_path(args):
     return os.path.join(args.output, "siamese_model.pt")
 
@@ -374,93 +494,33 @@ def train_siamese_network(features_df, args):
         n_coverage_features=n_coverage_features,
         embedding_dim=args.embedding_dim
     ).to(device)
-    criterion = BarlowTwinsLoss(lambda_param=5e-3)
-
-    base_learning_rate = getattr(args, 'base_learning_rate', 1e-3)
-    scaled_lr = (args.batch_size / 256) * base_learning_rate * 0.2
-    warmup_epochs = 10
-    warmup_start_lr = scaled_lr * 0.1
-
-    optimizer = optim.AdamW(
-        model.parameters(), lr=warmup_start_lr, weight_decay=0.05, betas=(0.9, 0.95)
-    )
-
-    def warmup_lambda(epoch):
-        if epoch < warmup_epochs:
-            target_multiplier = scaled_lr / warmup_start_lr
-            return 1.0 + (target_multiplier - 1.0) * epoch / warmup_epochs
-        else:
-            cosine_epoch = epoch - warmup_epochs
-            cosine_total = args.epochs - warmup_epochs
-            if cosine_total <= 0:
-                return scaled_lr / warmup_start_lr
-
-            min_lr_factor = 0.01
-            max_multiplier = scaled_lr / warmup_start_lr
-            min_multiplier = (scaled_lr * min_lr_factor) / warmup_start_lr
-            cosine_factor = 0.5 * (1 + np.cos(np.pi * cosine_epoch / cosine_total))
-            return min_multiplier + (max_multiplier - min_multiplier) * cosine_factor
-
-    scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=warmup_lambda)
-
     logger.info(f"Starting training for {args.epochs} epochs...")
 
-    # Early stopping parameters 
-    patience = 20
-    best_loss = float("inf")
-    best_model_state = None
-    epochs_no_improve = 0
+    # Initialize training manager and set up training
+    trainer = TrainingManager(args)
+    dataloader, optimizer, scheduler, criterion = trainer.setup_training(model, features_df)
 
     # Training loop
     epoch_progress = tqdm(range(args.epochs), desc="Training Progress")
     
     for epoch in epoch_progress:
-        model.train()
-        running_loss = 0.0
-
-        for features1, features2, base_ids in dataloader:
-            features1, features2, base_ids = (
-                features1.to(device),
-                features2.to(device),
-                base_ids.to(device),
-            )
-
-            optimizer.zero_grad()
-            output1, output2 = model(features1, features2)
-            loss = criterion(output1, output2, base_ids)
-            loss.backward()
-            
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-            
-            optimizer.step()
-            running_loss += loss.item()
-
+        avg_loss = trainer.train_epoch(model, dataloader, optimizer, criterion)
         scheduler.step()
-
-        avg_loss = running_loss / len(dataloader)
         current_lr = optimizer.param_groups[0]["lr"]
 
-        # Always log to file
-        logger.debug(
-            f"Epoch {epoch+1}/{args.epochs} - Avg Loss: {avg_loss:.4f}, LR: {current_lr:.2e}"
-        )
+        logger.debug(f"Epoch {epoch+1}/{args.epochs} - Avg Loss: {avg_loss:.4f}, LR: {current_lr:.2e}")
         
         # Early stopping check
-        if avg_loss < best_loss:
-            best_loss = avg_loss
-            best_model_state = model.state_dict().copy()
-            epochs_no_improve = 0
-        else:
-            epochs_no_improve += 1
-            if epochs_no_improve >= patience:
-                logger.info(f"Early stopping after {epoch+1} epochs (patience: {patience})")
-                break
+        trainer.early_stopping.check_improvement(avg_loss, model.state_dict())
+        if trainer.early_stopping.should_stop():
+            logger.info(f"Early stopping after {epoch+1} epochs (patience: {trainer.early_stopping.patience})")
+            break
         
-        # Update epoch progress bar
+        # Update progress bar
         epoch_progress.set_postfix({
             "Loss": f"{avg_loss:.4f}",
             "LR": f"{current_lr:.2e}",
-            "Best": f"{best_loss:.4f}"
+            "Best": f"{trainer.early_stopping.best_loss:.4f}"
         })
         
         # Print to screen every 5 epochs or on the last epoch
@@ -468,8 +528,9 @@ def train_siamese_network(features_df, args):
             logger.info(f"Epoch {epoch+1}/{args.epochs} - Avg Loss: {avg_loss:.4f}, LR: {current_lr:.2e}")
 
     # Load best model
-    if best_model_state:
-        model.load_state_dict(best_model_state)
+    best_state, best_loss = trainer.early_stopping.get_best_state()
+    if best_state:
+        model.load_state_dict(best_state)
         logger.info(f"Loaded best model with loss: {best_loss:.4f}")
 
     # Save model only if keeping intermediate files

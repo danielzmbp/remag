@@ -7,10 +7,7 @@ warnings.filterwarnings("ignore", category=FutureWarning, module="sklearn")
 
 import numpy as np
 import pandas as pd
-from sklearn.metrics.pairwise import cosine_similarity
-from sklearn.preprocessing import normalize
-from sklearn.cluster import KMeans
-from sklearn.neighbors import NearestNeighbors
+from sklearn.neighbors import NearestNeighbors  # Only import needed for k-NN graph construction
 from loguru import logger
 import os
 import json
@@ -18,162 +15,56 @@ import igraph as ig
 import leidenalg
 
 from .utils import extract_base_contig_name, get_torch_device, group_contigs_by_cluster
-import torch
+# Removed torch import - device detection handled in utils
 
 
+class GraphManager:
+    """Handles k-NN graph construction and caching."""
+    
+    def __init__(self, k=15, similarity_threshold=0.1, n_jobs=-1):
+        self.k = k
+        self.similarity_threshold = similarity_threshold
+        self.n_jobs = n_jobs
+    
+    def construct_graph(self, embeddings, args=None):
+        """Construct k-NN graph from embeddings."""
+        return _construct_knn_graph(
+            embeddings, self.k, self.similarity_threshold, args, self.n_jobs
+        )
 
-def _iterative_kmeans_filtering(embeddings, contig_names, eukaryotic_scores, 
-                               small_cluster_threshold=0.1, min_eukaryotic_score=0.95, 
-                               max_iterations=10):
-    """
-    Iteratively filter out small clusters with low eukaryotic confidence using k-means.
+
+class ClusteringManager:
+    """Main clustering orchestrator."""
     
-    Args:
-        embeddings: Normalized embedding matrix (n_contigs x embedding_dim)
-        contig_names: List of contig names corresponding to embeddings
-        eukaryotic_scores: Dict mapping contig names to eukaryotic confidence scores
-        small_cluster_threshold: Fraction of total data below which a cluster is considered "small"
-        min_eukaryotic_score: Minimum eukaryotic score to consider a contig high-confidence
-        max_iterations: Maximum number of k-means iterations to perform
-        
-    Returns:
-        tuple: (filtered_embeddings, filtered_contig_names, filter_stats)
-    """
-    logger.info("Starting iterative k-means filtering to remove small, low-confidence clusters...")
+    def __init__(self, args):
+        self.args = args
+        self.graph_manager = GraphManager(
+            k=getattr(args, 'leiden_k_neighbors', 15),
+            similarity_threshold=getattr(args, 'leiden_similarity_threshold', 0.1)
+        )
     
-    current_embeddings = embeddings.copy()
-    current_contig_names = contig_names.copy()
-    iteration = 0
-    total_removed = 0
-    filter_stats = []
-    
-    while iteration < max_iterations:
-        iteration += 1
-        n_contigs = len(current_contig_names)
+    def load_eukaryotic_scores(self):
+        """Load eukaryotic classification scores."""
+        eukaryotic_scores = {}
+        from .features import get_classification_results_path
         
-        if n_contigs < 10:  # Stop if too few contigs remain
-            logger.info(f"Stopping k-means filtering: only {n_contigs} contigs remain")
-            break
-            
-        # Perform k-means with k=2
-        kmeans = KMeans(n_clusters=2, random_state=42, n_init=10)
-        cluster_labels = kmeans.fit_predict(current_embeddings)
+        classification_results_path = get_classification_results_path(self.args.fasta, self.args.output)
         
-        # Analyze cluster sizes
-        unique_labels, counts = np.unique(cluster_labels, return_counts=True)
-        cluster_sizes = dict(zip(unique_labels, counts))
-        
-        # Identify small cluster
-        cluster_0_size = cluster_sizes.get(0, 0)
-        cluster_1_size = cluster_sizes.get(1, 0)
-        
-        small_cluster_label = None
-        small_cluster_size = 0
-        large_cluster_size = 0
-        
-        if cluster_0_size < cluster_1_size:
-            small_cluster_label = 0
-            small_cluster_size = cluster_0_size
-            large_cluster_size = cluster_1_size
+        if os.path.exists(classification_results_path):
+            try:
+                classification_df = pd.read_csv(classification_results_path, sep='\t')
+                eukaryotic_scores = dict(zip(classification_df['header'], classification_df['eukar_score']))
+                logger.info(f"Loaded eukaryotic scores for {len(eukaryotic_scores)} contigs")
+            except Exception as e:
+                logger.warning(f"Could not load classification results: {e}")
         else:
-            small_cluster_label = 1
-            small_cluster_size = cluster_1_size
-            large_cluster_size = cluster_0_size
+            logger.warning(f"Eukaryotic classification file not found: {classification_results_path}")
         
-        small_cluster_fraction = small_cluster_size / n_contigs
-        
-        logger.debug(f"Small cluster: label={small_cluster_label}, size={small_cluster_size} "
-                    f"({small_cluster_fraction:.3f} of total)")
-        
-        # Check if small cluster meets removal criteria
-        if small_cluster_fraction > small_cluster_threshold:
-            logger.info(f"Small cluster is {small_cluster_fraction:.3f} of data "
-                       f"(threshold: {small_cluster_threshold}). Stopping k-means filtering.")
-            break
-        
-        # Get contigs in small cluster
-        small_cluster_mask = cluster_labels == small_cluster_label
-        small_cluster_contigs = [current_contig_names[i] for i in range(n_contigs) if small_cluster_mask[i]]
-        
-        # Check eukaryotic confidence in small cluster
-        high_conf_eukaryotes = 0
-        total_scored = 0
-        
-        for contig in small_cluster_contigs:
-            if contig in eukaryotic_scores:
-                total_scored += 1
-                if eukaryotic_scores[contig] >= min_eukaryotic_score:
-                    high_conf_eukaryotes += 1
-        
-        eukaryotic_fraction = high_conf_eukaryotes / total_scored if total_scored > 0 else 0
-        
-        logger.info(f"Small cluster analysis: {small_cluster_size} contigs, "
-                   f"{high_conf_eukaryotes}/{total_scored} high-confidence eukaryotes "
-                   f"(fraction: {eukaryotic_fraction:.3f})")
-        
-        # Decide whether to remove small cluster
-        should_remove = high_conf_eukaryotes == 0 and total_scored > 0
-        
-        if should_remove:
-            logger.info(f"Removing small cluster with {small_cluster_size} contigs "
-                       f"(no high-confidence eukaryotes)")
-            
-            # Keep only large cluster
-            large_cluster_mask = cluster_labels != small_cluster_label
-            current_embeddings = current_embeddings[large_cluster_mask]
-            current_contig_names = [current_contig_names[i] for i in range(n_contigs) if large_cluster_mask[i]]
-            
-            total_removed += small_cluster_size
-            
-            # Record filtering stats
-            filter_stats.append({
-                'iteration': iteration,
-                'contigs_before': n_contigs,
-                'small_cluster_size': small_cluster_size,
-                'small_cluster_fraction': small_cluster_fraction,
-                'high_conf_eukaryotes': high_conf_eukaryotes,
-                'total_scored': total_scored,
-                'eukaryotic_fraction': eukaryotic_fraction,
-                'removed': True,
-                'contigs_after': len(current_contig_names)
-            })
-        else:
-            if high_conf_eukaryotes > 0:
-                reason = f"contains {high_conf_eukaryotes} high-confidence eukaryotes"
-            elif total_scored == 0:
-                reason = "no eukaryotic scores available"
-            else:
-                reason = "unknown"
-                
-            logger.info(f"Keeping small cluster ({reason}). Stopping k-means filtering.")
-            
-            filter_stats.append({
-                'iteration': iteration,
-                'contigs_before': n_contigs,
-                'small_cluster_size': small_cluster_size,
-                'small_cluster_fraction': small_cluster_fraction,
-                'high_conf_eukaryotes': high_conf_eukaryotes,
-                'total_scored': total_scored,
-                'eukaryotic_fraction': eukaryotic_fraction,
-                'removed': False,
-                'reason': reason,
-                'contigs_after': len(current_contig_names)
-            })
-            break
-    
-    final_stats = {
-        'iterations': iteration,
-        'original_contigs': len(contig_names),
-        'filtered_contigs': len(current_contig_names),
-        'total_removed': total_removed,
-        'removal_fraction': total_removed / len(contig_names) if len(contig_names) > 0 else 0,
-        'iteration_details': filter_stats
-    }
-    
-    logger.info(f"K-means filtering complete: {len(current_contig_names)}/{len(contig_names)} contigs remaining "
-               f"({total_removed} removed in {iteration} iterations)")
-    
-    return current_embeddings, current_contig_names, final_stats
+        return eukaryotic_scores
+
+
+
+# Removed k-means pre-filtering - simplified clustering approach
 
 
 def _construct_knn_graph(embeddings, k=15, similarity_threshold=0.1, n_jobs=1, args=None):
@@ -715,22 +606,11 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
         logger.info(f"Loading existing bins from {bins_path}")
         return pd.read_csv(bins_path)
 
-    # Load eukaryotic classification scores if available
-    eukaryotic_scores = {}
-    from .features import get_classification_results_path
+    # Initialize clustering manager
+    clustering_manager = ClusteringManager(args)
     
-    classification_results_path = get_classification_results_path(args.fasta, args.output)
-    
-    if os.path.exists(classification_results_path):
-        try:
-            classification_df = pd.read_csv(classification_results_path, sep='\t')
-            eukaryotic_scores = dict(zip(classification_df['header'], classification_df['eukar_score']))
-            logger.info(f"Loaded eukaryotic scores for {len(eukaryotic_scores)} contigs")
-        except Exception as e:
-            logger.warning(f"Could not load classification results: {e}")
-            eukaryotic_scores = {}
-    else:
-        logger.warning(f"Eukaryotic classification file not found: {classification_results_path}")
+    # Load eukaryotic classification scores for logging purposes
+    eukaryotic_scores = clustering_manager.load_eukaryotic_scores()
 
     # Embeddings are already L2 normalized when saved to CSV
     logger.debug("Using pre-normalized embeddings for clustering...")
@@ -743,64 +623,10 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
         scores_array = np.array(list(eukaryotic_scores.values()))
         high_conf_count = sum(1 for s in scores_array if s > 0.95)
         logger.info(f"Eukaryotic classification: {len(eukaryotic_scores)} scored, {high_conf_count} high-confidence (>0.95)")
-
-    # Apply k-means pre-filtering if enabled and eukaryotic scores are available
-    working_contig_names = contig_names
-    working_embeddings_df = embeddings_df
-    kmeans_filter_stats = None
     
-    if not getattr(args, 'skip_kmeans_filtering', False) and eukaryotic_scores:
-        logger.info("Applying k-means pre-filtering to remove small, low-confidence clusters...")
-        
-        # Hard-coded filtering parameters (smaller threshold as requested)
-        small_cluster_threshold = 0.05  # 5% instead of 10%
-        min_eukaryotic_score = 0.95
-        max_iterations = 10
-        
-        # Extract contig names without fragment suffixes for eukaryotic score lookup
-        original_contig_names = [extract_base_contig_name(name) for name in embeddings_df.index]
-        
-        # Apply k-means filtering
-        filtered_embeddings, filtered_contig_names, kmeans_filter_stats = _iterative_kmeans_filtering(
-            norm_data, 
-            original_contig_names,
-            eukaryotic_scores,
-            small_cluster_threshold=small_cluster_threshold,
-            min_eukaryotic_score=min_eukaryotic_score,
-            max_iterations=max_iterations
-        )
-        
-        # Update working data if filtering removed contigs
-        if len(filtered_contig_names) < len(original_contig_names):
-            # Create mapping from original names back to fragment names with .original suffix
-            filtered_fragment_names = [f"{name}.original" for name in filtered_contig_names]
-            
-            # Filter embeddings dataframe to keep only remaining contigs
-            working_embeddings_df = embeddings_df.loc[filtered_fragment_names]
-            working_contig_names = list(working_embeddings_df.index)
-            norm_data = working_embeddings_df.values
-            
-            logger.info(f"K-means filtering: {len(working_contig_names)}/{len(contig_names)} contigs selected for clustering")
-        else:
-            logger.info("K-means filtering: no contigs removed, proceeding with all data")
-        
-        # Save filtering statistics if keeping intermediate files
-        if getattr(args, "keep_intermediate", False) and kmeans_filter_stats:
-            kmeans_stats_path = os.path.join(args.output, "kmeans_filtering_stats.json")
-            with open(kmeans_stats_path, 'w') as f:
-                json.dump(kmeans_filter_stats, f, indent=2)
-            logger.debug(f"Saved k-means filtering statistics to {kmeans_stats_path}")
-    else:
-        if not eukaryotic_scores:
-            logger.info("Skipping k-means pre-filtering: no eukaryotic classification scores available")
-        else:
-            logger.info("K-means pre-filtering disabled by --skip-kmeans-filtering flag")
-    
-    # Use Leiden clustering (the only clustering method)
+    # Use Leiden clustering directly
     logger.info("Using Leiden clustering")
     leiden_resolution = getattr(args, 'leiden_resolution', 1.0)
-    leiden_k_neighbors = getattr(args, 'leiden_k_neighbors', 15)
-    leiden_similarity_threshold = getattr(args, 'leiden_similarity_threshold', 0.1)
     
     logger.info(f"Running Leiden on {len(working_contig_names)} contigs "
                f"(resolution={leiden_resolution}, k={leiden_k_neighbors}, "
@@ -824,7 +650,7 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
 
     # Create clusters dataframe with original contig names (without .original suffix)
     final_original_contig_names = [
-        extract_base_contig_name(name) for name in working_embeddings_df.index
+        extract_base_contig_name(name) for name in embeddings_df.index
     ]
     contig_clusters_df = pd.DataFrame(
         {"contig": final_original_contig_names, "cluster": formatted_labels}
