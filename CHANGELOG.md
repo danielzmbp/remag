@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2025-08-14
+
+### Changed
+- Major codebase refactoring for improved maintainability and reduced complexity
+- Removed k-means pre-filtering from clustering pipeline for simplification
+- Extracted coverage calculation into dedicated classes (BAMCoverageCalculator, TSVCoverageCalculator)
+- Consolidated fragment processing logic with FragmentProcessor class
+- Split large clustering functions into focused GraphManager and ClusteringManager classes
+- Extracted training components into EarlyStoppingManager, LearningRateScheduler, and TrainingManager classes
+- Added centralized PathManager class for consistent path handling
+- Enhanced error handling with @handle_errors decorator
+- Increased miniprot quality thresholds to 0.55 coverage and 0.35 identity for better results
+- Enabled compressed database support with miniprot -I flag
+
+### Added
+- Gene mapping cache system to avoid redundant miniprot runs during refinement
+- Fast cached core gene duplication checking for refinement steps
+- Comprehensive functionality testing framework
+
+### Fixed
+- Resolved undefined variable errors from k-means pre-filtering removal
+- Fixed clustering pipeline variable reference issues
+- Maintained full backward compatibility with existing function signatures
+
+### Performance
+- Refinement steps now reuse gene mappings instead of re-running miniprot (~10x faster)
+- Reduced computational overhead during iterative bin splitting
+- Code reduction of ~300 lines while improving modularity and readability
+- Better quality filtering with optimized thresholds
+
 ## [0.2.1] - 2025-08-11
 
 ### Fixed
