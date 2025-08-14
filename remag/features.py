@@ -242,6 +242,25 @@ def filter_bacterial_contigs(fasta_file, output_dir, min_contig_length=1000, cor
     return filtered_fasta
 
 
+class FragmentProcessor:
+    """Handles fragment generation and processing logic."""
+    
+    def __init__(self, min_contig_length: int, num_augmentations: int = 8, max_overlap: float = 0.25):
+        self.min_contig_length = min_contig_length
+        self.num_augmentations = num_augmentations
+        self.max_overlap = max_overlap
+    
+    def generate_fragments(self, sequence: str, header: str) -> list[tuple[str, str, int, int]]:
+        """Generate fragments for a sequence."""
+        return generate_augmented_fragments(
+            sequence, header, self.min_contig_length, self.num_augmentations, self.max_overlap
+        )
+    
+    def validate_sequence(self, sequence: str) -> bool:
+        """Check if sequence meets minimum length requirements."""
+        return len(sequence) >= self.min_contig_length
+
+
 def generate_augmented_fragments(
     sequence: str,
     header: str,
@@ -517,36 +536,25 @@ def get_features(
             fragments_dict = pd.read_pickle(fragments_path)
 
             # Verify and update coverage if needed
+            needs_recalc = False
             if bam_files and not any("_coverage" in col for col in df.columns):
-                logger.info("Recalculating BAM coverage...")
-                coverage_df = calculate_coverage_from_multiple_bams(
-                    bam_files, fragments_dict, cores
-                )
-                # Remove any existing coverage columns and add new ones
-                df = df.drop(
-                    columns=[c for c in df.columns if "coverage" in c.lower()],
-                    errors="ignore",
-                )
+                needs_recalc = True
+                coverage_calculator = BAMCoverageCalculator(bam_files, cores)
+            elif tsv_files:
+                expected_cols = [os.path.splitext(os.path.basename(f))[0] for f in tsv_files]
+                missing_cols = [col for col in expected_cols if col not in df.columns]
+                if missing_cols:
+                    needs_recalc = True
+                    coverage_calculator = TSVCoverageCalculator(tsv_files, cores)
+            
+            if needs_recalc:
+                logger.info("Recalculating coverage...")
+                coverage_df = coverage_calculator.calculate_coverage(fragments_dict)
+                # Remove existing coverage columns and add new ones
+                df = df.drop(columns=[c for c in df.columns if "coverage" in c.lower()], errors="ignore")
                 df = pd.concat([df, coverage_df], axis=1)
                 if getattr(args, "keep_intermediate", False):
                     df.to_csv(features_csv_path)
-
-            elif tsv_files:
-                expected_cols = [
-                    os.path.splitext(os.path.basename(f))[0] for f in tsv_files
-                ]
-                missing_cols = [col for col in expected_cols if col not in df.columns]
-
-                if missing_cols:
-                    logger.info("Recalculating TSV coverage...")
-                    coverage_df = calculate_coverage_from_tsv(tsv_files, fragments_dict)
-                    df = df.drop(
-                        columns=[c for c in df.columns if c in coverage_df.columns],
-                        errors="ignore",
-                    )
-                    df = pd.concat([df, coverage_df], axis=1)
-                    if getattr(args, "keep_intermediate", False):
-                        df.to_csv(features_csv_path)
 
             return df, fragments_dict
 
@@ -562,22 +570,19 @@ def get_features(
     _, _ = generate_feature_mapping(kmer_len)
     fragments_dict = OrderedDict()
 
+    # Initialize fragment processor
+    fragment_processor = FragmentProcessor(length_threshold, num_augmentations)
+    
     # Process sequences and generate fragments
-    sequence_count = 0
-    fragment_count = 0
-    filtered_count = 0
-    short_fragment_count = 0
-
-    logger.info(
-        f"Using original contig + {num_augmentations} random fragments per contig"
-    )
+    sequence_count = fragment_count = filtered_count = short_fragment_count = 0
+    logger.info(f"Using original contig + {num_augmentations} random fragments per contig")
 
     # Collect all fragment sequences for batch processing
     all_fragments = []
     fragment_to_contig = {}
 
     for header, seq in tqdm(fasta_iter(fasta_file), desc="Processing sequences"):
-        if len(seq) < length_threshold:
+        if not fragment_processor.validate_sequence(seq):
             filtered_count += 1
             continue
 
@@ -589,28 +594,20 @@ def get_features(
             "fragment_info": {},
         }
 
-        # Generate random augmented fragments
-        augmented_fragments = generate_augmented_fragments(
-            seq,
-            clean_header,
-            length_threshold,
-            num_augmentations,
-        )
+        # Generate fragments using processor
+        augmented_fragments = fragment_processor.generate_fragments(seq, clean_header)
 
         for fragment_header, fragment_seq, start_pos, frag_len in augmented_fragments:
             fragments_dict[clean_header]["fragments"].append(fragment_header)
-            # Store fragment position and length information for coverage calculation
             fragments_dict[clean_header]["fragment_info"][fragment_header] = {
                 "start_pos": start_pos,
                 "length": frag_len,
             }
 
-            fragment_length = len(fragment_seq)
-            if fragment_length < length_threshold:
+            if len(fragment_seq) < length_threshold:
                 short_fragment_count += 1
                 continue
 
-            # Collect fragment for batch processing
             all_fragments.append((fragment_header, fragment_seq))
             fragment_to_contig[fragment_header] = clean_header
             fragment_count += 1
@@ -627,24 +624,17 @@ def get_features(
     logger.info("Calculating k-mer composition for all fragments...")
     df = _calculate_kmer_composition(all_fragments, kmer_len=kmer_len)
 
-    # Calculate coverage
+    # Calculate coverage using appropriate calculator
+    coverage_calculator = None
     if bam_files:
         logger.debug("Calculating coverage from alignment files...")
-        coverage_df = calculate_coverage_from_multiple_bams(
-            bam_files, fragments_dict, cores
-        )
-        df = pd.concat([df, coverage_df.reindex(df.index).fillna(0.0)], axis=1)
-        
-        # Filter out fragments with zero coverage across all samples
-        coverage_columns = [col for col in coverage_df.columns if "coverage" in col.lower()]
-        if coverage_columns:
-            zero_coverage_mask = (df[coverage_columns] == 0).all(axis=1)
-            df = df[~zero_coverage_mask]
-            if zero_coverage_mask.sum() > 0:
-                logger.info(f"Filtered out {zero_coverage_mask.sum()} fragments with zero coverage across all samples")
+        coverage_calculator = BAMCoverageCalculator(bam_files, cores)
     elif tsv_files:
         logger.debug("Calculating coverage from TSV files...")
-        coverage_df = calculate_coverage_from_tsv(tsv_files, fragments_dict)
+        coverage_calculator = TSVCoverageCalculator(tsv_files, cores)
+    
+    if coverage_calculator:
+        coverage_df = coverage_calculator.calculate_coverage(fragments_dict)
         df = pd.concat([df, coverage_df.reindex(df.index).fillna(0.0)], axis=1)
         
         # Filter out fragments with zero coverage across all samples
@@ -703,7 +693,44 @@ def get_features(
     return df, fragments_dict
 
 
-# Coverage calculation helper functions
+# Coverage calculation classes and helper functions
+class CoverageCalculator:
+    """Base class for coverage calculation."""
+    
+    def __init__(self, cores: int = 16):
+        self.cores = cores
+    
+    def calculate_coverage(self, fragments_dict: FragmentDict) -> pd.DataFrame:
+        """Calculate coverage for fragments. Must be implemented by subclasses."""
+        raise NotImplementedError
+
+
+class BAMCoverageCalculator(CoverageCalculator):
+    """Calculate coverage from BAM/CRAM files."""
+    
+    def __init__(self, bam_files: List[str], cores: int = 16):
+        super().__init__(cores)
+        self.bam_files = bam_files
+    
+    def calculate_coverage(self, fragments_dict: FragmentDict) -> pd.DataFrame:
+        """Calculate coverage from multiple BAM/CRAM files."""
+        return calculate_coverage_from_multiple_bams(
+            self.bam_files, fragments_dict, self.cores
+        )
+
+
+class TSVCoverageCalculator(CoverageCalculator):
+    """Calculate coverage from TSV files."""
+    
+    def __init__(self, tsv_files: List[str], cores: int = 16):
+        super().__init__(cores)
+        self.tsv_files = tsv_files
+    
+    def calculate_coverage(self, fragments_dict: FragmentDict) -> pd.DataFrame:
+        """Calculate coverage from TSV files."""
+        return calculate_coverage_from_tsv(self.tsv_files, fragments_dict)
+
+
 def _validate_alignment_file(alignment_file: str) -> bool:
     if not os.path.exists(alignment_file):
         logger.error(f"Alignment file not found at {alignment_file}")
