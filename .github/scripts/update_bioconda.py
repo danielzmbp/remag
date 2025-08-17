@@ -78,6 +78,7 @@ requirements:
     - psutil >=5.8.0
     - leidenalg >=0.9.0
     - python-igraph >=0.10.0
+    - miniprot
 
 test:
   imports:
