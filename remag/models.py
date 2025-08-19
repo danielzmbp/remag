@@ -7,7 +7,6 @@ import numpy as np
 import os
 import random
 import re
-from typing import List
 
 import pandas as pd
 import torch

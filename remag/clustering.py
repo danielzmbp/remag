@@ -2,20 +2,18 @@
 Clustering module for REMAG
 """
 
-import warnings
-warnings.filterwarnings("ignore", category=FutureWarning, module="sklearn")
-
 import numpy as np
 import pandas as pd
-from sklearn.neighbors import NearestNeighbors  # Only import needed for k-NN graph construction
+from sklearn.neighbors import NearestNeighbors
+from sklearn.metrics.pairwise import cosine_similarity
 from loguru import logger
 import os
 import json
 import igraph as ig
 import leidenalg
+import torch
 
 from .utils import extract_base_contig_name, get_torch_device, group_contigs_by_cluster
-# Removed torch import - device detection handled in utils
 
 
 class GraphManager:
@@ -61,10 +59,6 @@ class ClusteringManager:
             logger.warning(f"Eukaryotic classification file not found: {classification_results_path}")
         
         return eukaryotic_scores
-
-
-
-# Removed k-means pre-filtering - simplified clustering approach
 
 
 def _construct_knn_graph(embeddings, k=15, similarity_threshold=0.1, n_jobs=1, args=None):
@@ -676,8 +670,8 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
         # Perform Leiden reclustering
         recluster_labels = _leiden_clustering(
             norm_data,
-            k=leiden_k_neighbors,
-            similarity_threshold=leiden_similarity_threshold,
+            k=clustering_manager.graph_manager.k,
+            similarity_threshold=clustering_manager.graph_manager.similarity_threshold,
             resolution=new_resolution,
             random_state=42,
             n_jobs=getattr(args, 'cores', 1),
