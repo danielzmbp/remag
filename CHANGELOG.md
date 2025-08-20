@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.3] - 2025-08-20
+
+### Fixed
+- Fixed undefined variable errors in Leiden reclustering by using correct GraphManager attributes
+- Fixed missing sklearn imports (cosine_similarity) in clustering module
+- Fixed missing miniprot dependency in Bioconda recipe
+
+### Changed
+- Updated README examples to use v0.2.2 in Docker/Singularity commands
+- Cleaned up unused imports in clustering and models modules
+
+### Removed
+- Removed unused warnings filter and List import
+
 ## [0.2.2] - 2025-08-14
 
 ### Changed
@@ -150,7 +164,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Various bug fixes and improvements
 
-[Unreleased]: https://github.com/danielzmbp/remag/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/danielzmbp/remag/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/danielzmbp/remag/compare/v0.2.2...v0.2.3
+[0.2.2]: https://github.com/danielzmbp/remag/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/danielzmbp/remag/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/danielzmbp/remag/compare/v0.1.5...v0.2.0
 [0.1.5]: https://github.com/danielzmbp/remag/compare/v0.1.4...v0.1.5
