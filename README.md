@@ -9,7 +9,7 @@
 ### Option 1: Using Conda (Recommended - handles all dependencies)
 ```bash
 # Create environment and install everything
-conda create -n remag -c bioconda -c conda-forge remag miniprot
+conda create -n remag -c bioconda -c conda-forge remag
 conda activate remag
 
 # Run REMAG
@@ -44,12 +44,14 @@ This is the easiest method as conda handles all dependencies automatically:
 
 ```bash
 # Create a new environment with all dependencies
-conda create -n remag -c bioconda -c conda-forge remag miniprot
+conda create -n remag -c bioconda -c conda-forge remag
 conda activate remag
 
 # Verify installation
 remag --help
 ```
+
+Note: `miniprot` is pulled in automatically as a dependency of the conda package; no separate installation is required when installing `remag` via conda.
 
 ### Alternative: PyPI Installation
 
@@ -73,7 +75,7 @@ For additional features:
 
 ```bash
 # Basic installation
-conda create -n remag -c bioconda remag miniprot
+conda create -n remag -c bioconda -c conda-forge remag
 conda activate remag
 
 # Add optional plotting capabilities
