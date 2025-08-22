@@ -82,8 +82,6 @@ conda activate remag
 conda install -c conda-forge matplotlib umap-learn
 ```
 
-**Note**: Bioconda installs only the core dependencies. Optional features (plotting, GPU acceleration) must be installed separately using conda or pip extras.
-
 ### Using Docker
 
 ```bash
