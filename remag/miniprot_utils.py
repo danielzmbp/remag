@@ -8,6 +8,7 @@ that was previously duplicated between quality.py and refinement.py.
 import json
 import os
 import shutil
+import subprocess
 from tqdm import tqdm
 from loguru import logger
 
@@ -304,13 +305,33 @@ def check_core_gene_duplications(clusters_df, fragments_dict, args,
             miniprot_output = os.path.join(temp_dir, f"{cluster_id}.paf")
             miniprot_stderr = os.path.join(temp_dir, f"{cluster_id}.stderr")
             db_to_use = db_path  # Use the compressed file directly
-            cmd = f'miniprot -I -t {args.cores} --outs=0.95 "{bin_fasta}" "{db_to_use}" > "{miniprot_output}" 2>"{miniprot_stderr}"'
+            
+            # Build secure command list (no shell injection possible)
+            cmd_list = [
+                "miniprot",
+                "-I",
+                "-t", str(args.cores),
+                "--outs=0.95",
+                bin_fasta,
+                db_to_use
+            ]
 
             if args.verbose:
-                logger.debug(f"Running miniprot command: {cmd}")
+                logger.debug(f"Running miniprot command: {' '.join(cmd_list)}")
 
             try:
-                result = os.system(cmd)
+                # Use secure subprocess with proper I/O redirection
+                with open(miniprot_output, 'w') as stdout_file, \
+                     open(miniprot_stderr, 'w') as stderr_file:
+                    
+                    process = subprocess.run(
+                        cmd_list,
+                        stdout=stdout_file,
+                        stderr=stderr_file,
+                        timeout=14400,  # 4 hour timeout for large datasets
+                        check=False    # Don't raise exception on non-zero exit
+                    )
+                    result = process.returncode
                 if result == 0:
                     # Parse miniprot output
                     best_alignments = (
