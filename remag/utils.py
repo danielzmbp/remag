@@ -311,3 +311,22 @@ def filter_clusters_by_size(cluster_contig_dict, fragments_dict, min_size, exclu
             filtered_clusters[cluster_id] = contig_headers
             
     return filtered_clusters
+
+
+def initialize_duplication_columns(clusters_df):
+    """Initialize core gene duplication columns in clusters DataFrame.
+    
+    Common pattern used throughout miniprot_utils to set default values
+    for duplication analysis columns.
+    
+    Args:
+        clusters_df: DataFrame with cluster assignments
+        
+    Returns:
+        DataFrame: Copy with initialized duplication columns
+    """
+    clusters_df = clusters_df.copy()
+    clusters_df["has_duplicated_core_genes"] = False
+    clusters_df["duplicated_core_genes_count"] = 0
+    clusters_df["total_core_genes_found"] = 0
+    return clusters_df

@@ -12,7 +12,7 @@ import subprocess
 from tqdm import tqdm
 from loguru import logger
 
-from .utils import extract_base_contig_name, ContigHeaderMapper
+from .utils import extract_base_contig_name, ContigHeaderMapper, initialize_duplication_columns
 
 
 def check_miniprot_available():
@@ -183,10 +183,7 @@ def check_core_gene_duplications_from_cache(clusters_df, gene_mappings_cache, ar
         }
     
     # Add duplication information to clusters_df
-    clusters_df = clusters_df.copy()
-    clusters_df["has_duplicated_core_genes"] = False
-    clusters_df["duplicated_core_genes_count"] = 0
-    clusters_df["total_core_genes_found"] = 0
+    clusters_df = initialize_duplication_columns(clusters_df)
 
     for cluster_id, result in duplication_results.items():
         mask = clusters_df["cluster"] == cluster_id
@@ -232,10 +229,7 @@ def check_core_gene_duplications(clusters_df, fragments_dict, args,
         logger.error("miniprot not found in PATH")
         logger.error("Install miniprot with: conda install -c bioconda miniprot")
         logger.warning("Skipping core gene duplication analysis")
-        clusters_df["has_duplicated_core_genes"] = False
-        clusters_df["duplicated_core_genes_count"] = 0
-        clusters_df["total_core_genes_found"] = 0
-        return clusters_df
+        return initialize_duplication_columns(clusters_df)
 
     db_path = os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "db", "refseq_db.faa.gz"
@@ -244,10 +238,7 @@ def check_core_gene_duplications(clusters_df, fragments_dict, args,
         logger.warning(
             "Eukaryotic database not found, skipping core gene duplication check"
         )
-        clusters_df["has_duplicated_core_genes"] = False
-        clusters_df["duplicated_core_genes_count"] = 0
-        clusters_df["total_core_genes_found"] = 0
-        return clusters_df
+        return initialize_duplication_columns(clusters_df)
 
     logger.info("Checking for duplicated core genes using miniprot...")
 
@@ -477,10 +468,7 @@ def check_core_gene_duplications(clusters_df, fragments_dict, args,
             logger.info(f"Miniprot files preserved at: {temp_dir}")
 
     # Add duplication information to clusters_df
-    clusters_df = clusters_df.copy()
-    clusters_df["has_duplicated_core_genes"] = False
-    clusters_df["duplicated_core_genes_count"] = 0
-    clusters_df["total_core_genes_found"] = 0
+    clusters_df = initialize_duplication_columns(clusters_df)
 
     for cluster_id, result in duplication_results.items():
         mask = clusters_df["cluster"] == cluster_id
