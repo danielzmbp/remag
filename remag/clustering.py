@@ -2,16 +2,17 @@
 Clustering module for REMAG
 """
 
-import numpy as np
-import pandas as pd
-from sklearn.neighbors import NearestNeighbors
-from sklearn.metrics.pairwise import cosine_similarity
-from loguru import logger
-import os
 import json
+import os
+
 import igraph as ig
 import leidenalg
+import numpy as np
+import pandas as pd
 import torch
+from loguru import logger
+from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.neighbors import NearestNeighbors
 
 from .utils import extract_base_contig_name, get_torch_device, group_contigs_by_cluster
 
@@ -27,7 +28,8 @@ class GraphManager:
     def construct_graph(self, embeddings, args=None):
         """Construct k-NN graph from embeddings."""
         return _construct_knn_graph(
-            embeddings, self.k, self.similarity_threshold, args, self.n_jobs
+            embeddings, k=self.k, similarity_threshold=self.similarity_threshold, 
+            n_jobs=self.n_jobs, args=args
         )
 
 
@@ -76,6 +78,22 @@ def _construct_knn_graph(embeddings, k=15, similarity_threshold=0.1, n_jobs=1, a
     Returns:
         igraph.Graph: Weighted graph with cosine similarity weights
     """
+    # Handle edge cases
+    n_samples = len(embeddings)
+    if n_samples == 0:
+        # Empty embeddings - return empty graph
+        return ig.Graph()
+    
+    if n_samples == 1:
+        # Single node - return graph with one node and no edges
+        graph = ig.Graph(n=1)
+        return graph
+    
+    # Adjust k if we have fewer samples than k+1
+    if n_samples <= k:
+        k = n_samples - 1
+        logger.warning(f"Adjusted k from {k+1} to {k} due to limited samples ({n_samples})")
+    
     # Check if graph already exists and can be loaded
     if args and args.output:
         edge_list_path = os.path.join(args.output, "knn_graph_edges.csv")
@@ -289,6 +307,39 @@ def _leiden_clustering(embeddings, k=15, similarity_threshold=0.1, resolution=1.
     return cluster_labels
 
 
+def _vectorized_pairwise_distances(embeddings1, embeddings2=None):
+    """
+    Calculate pairwise cosine distances using vectorized operations.
+    
+    Args:
+        embeddings1: First set of embeddings (n1 x dim)
+        embeddings2: Second set of embeddings (n2 x dim). If None, calculate 
+                    intra-group distances within embeddings1.
+    
+    Returns:
+        Array of cosine distances (1 - cosine_similarity)
+    """
+    # Handle empty inputs
+    if len(embeddings1) == 0 or (embeddings2 is not None and len(embeddings2) == 0):
+        return np.array([])
+    
+    if embeddings2 is None:
+        # Intra-group distances: upper triangle of similarity matrix
+        if len(embeddings1) <= 1:
+            return np.array([])
+        
+        similarity_matrix = cosine_similarity(embeddings1)
+        # Extract upper triangle (excluding diagonal)
+        mask = np.triu(np.ones(similarity_matrix.shape), k=1).astype(bool)
+        distances = 1 - similarity_matrix[mask]
+    else:
+        # Inter-group distances: all pairwise distances between groups
+        similarity_matrix = cosine_similarity(embeddings1, embeddings2)
+        distances = 1 - similarity_matrix.flatten()
+    
+    return distances
+
+
 def _permutation_anova_chimera_test(h1_embeddings, h2_embeddings, n_permutations=1000, alpha=0.05):
     """
     Perform permutation ANOVA to test if inter-group distances are significantly
@@ -303,38 +354,23 @@ def _permutation_anova_chimera_test(h1_embeddings, h2_embeddings, n_permutations
     Returns:
         tuple: (is_chimeric, results_dict)
     """
-    # Calculate pairwise cosine distances within and between groups
+    # Calculate pairwise cosine distances within and between groups using vectorized operations
     
-    # Intra-group distances (within h1)
-    h1_intra_distances = []
-    if len(h1_embeddings) > 1:
-        for i in range(len(h1_embeddings)):
-            for j in range(i+1, len(h1_embeddings)):
-                # Cosine distance = 1 - cosine_similarity
-                cos_sim = cosine_similarity([h1_embeddings[i]], [h1_embeddings[j]])[0][0]
-                h1_intra_distances.append(1 - cos_sim)
+    # Intra-group distances (within h1) - vectorized
+    h1_intra_distances = _vectorized_pairwise_distances(h1_embeddings)
     
-    # Intra-group distances (within h2)
-    h2_intra_distances = []
-    if len(h2_embeddings) > 1:
-        for i in range(len(h2_embeddings)):
-            for j in range(i+1, len(h2_embeddings)):
-                cos_sim = cosine_similarity([h2_embeddings[i]], [h2_embeddings[j]])[0][0]
-                h2_intra_distances.append(1 - cos_sim)
+    # Intra-group distances (within h2) - vectorized
+    h2_intra_distances = _vectorized_pairwise_distances(h2_embeddings)
     
-    # Inter-group distances (between h1 and h2)
-    inter_distances = []
-    for i in range(len(h1_embeddings)):
-        for j in range(len(h2_embeddings)):
-            cos_sim = cosine_similarity([h1_embeddings[i]], [h2_embeddings[j]])[0][0]
-            inter_distances.append(1 - cos_sim)
+    # Inter-group distances (between h1 and h2) - vectorized
+    inter_distances = _vectorized_pairwise_distances(h1_embeddings, h2_embeddings)
     
     # Combine all distances with group labels
-    all_distances = h1_intra_distances + h2_intra_distances + inter_distances
+    all_distances = np.concatenate([h1_intra_distances, h2_intra_distances, inter_distances])
     group_labels = (['intra'] * (len(h1_intra_distances) + len(h2_intra_distances)) + 
                    ['inter'] * len(inter_distances))
     
-    if not all_distances or len(set(group_labels)) < 2:
+    if len(all_distances) == 0 or len(set(group_labels)) < 2:
         # Not enough data for test
         return False, {
             'f_statistic': 0.0,
