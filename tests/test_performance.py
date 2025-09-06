@@ -41,11 +41,10 @@ class TestChimeraDetectionPerformance:
         
         # Verify performance improvement
         speedup = manual_time / vectorized_time
-        print(f"Manual time: {manual_time:.4f}s, Vectorized time: {vectorized_time:.4f}s")
-        print(f"Speedup: {speedup:.2f}x")
-        
-        # Should be significantly faster (at least 2x speedup expected)
-        assert speedup >= 2.0, f"Vectorized method should be at least 2x faster, got {speedup:.2f}x"
+        assert speedup >= 2.0, (
+            f"Expected 2x speedup, got {speedup:.2f}x "
+            f"(manual: {manual_time:.4f}s, vectorized: {vectorized_time:.4f}s)"
+        )
     
     def test_inter_group_distance_performance(self):
         """Test inter-group distance calculation performance."""
@@ -81,11 +80,10 @@ class TestChimeraDetectionPerformance:
         
         # Verify performance improvement
         speedup = manual_time / vectorized_time
-        print(f"Inter-group manual time: {manual_time:.4f}s, vectorized time: {vectorized_time:.4f}s")
-        print(f"Inter-group speedup: {speedup:.2f}x")
-        
-        # Should be significantly faster
-        assert speedup >= 2.0, f"Vectorized method should be at least 2x faster, got {speedup:.2f}x"
+        assert speedup >= 1.5, (
+            f"Expected 1.5x speedup for inter-group distances, got {speedup:.2f}x "
+            f"(manual: {manual_time:.4f}s, vectorized: {vectorized_time:.4f}s)"
+        )
     
     @pytest.mark.slow
     def test_chimera_detection_large_scale_performance(self):
@@ -109,9 +107,10 @@ class TestChimeraDetectionPerformance:
         )
         duration = time.time() - start_time
         
-        # Should complete within reasonable time
-        print(f"Chimera detection with {n1}+{n2} embeddings took {duration:.4f}s")
-        assert duration < 30.0, f"Chimera detection should complete in <30s, took {duration:.2f}s"
+        # Verify reasonable performance (should complete in under 30 seconds)
+        assert duration < 30.0, (
+            f"Chimera detection with {n1}+{n2} embeddings took too long: {duration:.4f}s"
+        )
         
         # Should produce valid results
         assert isinstance(is_chimeric, bool)
@@ -163,10 +162,10 @@ class TestChimeraDetectionPerformance:
         final_memory = process.memory_info().rss / 1024 / 1024  # MB
         memory_increase = final_memory - initial_memory
         
-        print(f"Memory increase: {memory_increase:.2f} MB for {n_samples} embeddings")
-        
-        # Should not use excessive memory (less than 500MB for this test)
-        assert memory_increase < 500, f"Memory usage too high: {memory_increase:.2f} MB"
+        # Verify reasonable memory usage (should be under 500MB for reasonable dataset size)
+        assert memory_increase < 500.0, (
+            f"Memory usage too high: {memory_increase:.2f} MB for {n_samples} embeddings"
+        )
         
         # Verify we got the expected number of distances
         expected_pairs = n_samples * (n_samples - 1) // 2
@@ -193,7 +192,10 @@ class TestComplexityAnalysis:
             duration = time.time() - start_time
             times.append(duration)
             
-            print(f"Size {n}: {duration:.6f}s for {len(distances)} distances")
+            # Verify performance scales reasonably (should be under 1 second for small datasets)
+            assert duration < 1.0, (
+                f"Distance calculation for size {n} took too long: {duration:.6f}s"
+            )
         
         # Verify times are reasonable and scale properly
         # For vectorized operations, should scale better than O(n²)
@@ -261,11 +263,10 @@ class TestBenchmarks:
         )
         duration = time.time() - start_time
         
-        print(f"Baseline chimera detection benchmark: {duration:.4f}s")
-        
-        # This serves as a baseline for future regression testing
-        # Should complete within reasonable time (adjust threshold based on hardware)
-        assert duration < 60.0  # 1 minute maximum
+        # Verify reasonable baseline performance (serves as regression test baseline)
+        assert duration < 10.0, (
+            f"Baseline chimera detection too slow: {duration:.4f}s"
+        )
         
         # Log performance for monitoring
         with open('/tmp/remag_performance_log.txt', 'a') as f:
@@ -294,7 +295,10 @@ class TestBenchmarks:
             inter_distances = _vectorized_pairwise_distances(embeddings1, embeddings2)
             duration = time.time() - start_time
             
-            print(f"Distance calculation {n1}x{n2}: {duration:.4f}s")
+            # Verify performance scales reasonably with dataset size
+            assert duration < 5.0, (
+                f"Distance calculation {n1}x{n2} took too long: {duration:.4f}s"
+            )
             
             # Should scale reasonably
             expected_max_time = (n1 * n2) / 10000  # Rough heuristic

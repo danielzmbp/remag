@@ -37,8 +37,11 @@ class TestMiniprot_SecurityFix:
                 from remag.miniprot_utils import check_core_gene_duplications
                 
                 # Create mock data
-                clusters_df = Mock()
-                clusters_df.groupby.return_value = [('cluster_1', Mock())]
+                import pandas as pd
+                clusters_df = pd.DataFrame({
+                    'contig': ['contig_1'],
+                    'cluster': ['cluster_1']
+                })
                 
                 fragments_dict = {
                     'contig_1.original': {'sequence': 'ATCGATCG', 'length': 8}
@@ -119,7 +122,11 @@ class TestMiniprot_SecurityFix:
                 from remag.miniprot_utils import check_core_gene_duplications
                 
                 # This should handle timeout gracefully
-                clusters_df = Mock()
+                import pandas as pd
+                clusters_df = pd.DataFrame({
+                    'contig': ['test_contig'],
+                    'cluster': ['bin_0']
+                })
                 fragments_dict = {'test.original': {'sequence': 'ATCG', 'length': 4}}
                 mock_args = Mock()
                 mock_args.cores = 4
