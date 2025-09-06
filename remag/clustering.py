@@ -629,6 +629,9 @@ def detect_chimeric_contigs(embeddings_df, clusters_df, args):
 
 def cluster_contigs(embeddings_df, fragments_dict, args):
     """Main clustering function that orchestrates the clustering process."""
+    # Ensure output directory exists for all code paths
+    os.makedirs(args.output, exist_ok=True)
+    
     bins_path = os.path.join(args.output, "bins.csv")
 
     # Check if bins file already exists
