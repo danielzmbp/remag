@@ -17,12 +17,12 @@ def temp_dir():
 
 
 @pytest.fixture
-def mock_args():
+def mock_args(temp_dir):
     """Create mock arguments object for testing."""
     args = Mock()
     args.cores = 4
     args.verbose = True
-    args.output = "/tmp/test_output"
+    args.output = temp_dir  # Use actual temp directory
     args.min_bin_size = 100000
     args.batch_size = 32
     args.embedding_dim = 64
