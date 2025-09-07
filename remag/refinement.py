@@ -5,6 +5,7 @@ Refinement module for REMAG
 import json
 import os
 import pandas as pd
+import numpy as np
 from tqdm import tqdm
 from loguru import logger
 
@@ -45,8 +46,21 @@ def refine_bin_with_leiden_clustering(
     bin_embeddings = embeddings_df.loc[available_embeddings]
     logger.info(f"Using embeddings for {len(bin_embeddings)} contigs in bin {bin_id}")
     
-    # Use standard Leiden parameters (no adaptive resolution tuning for now)
-    leiden_resolution = getattr(args, 'leiden_resolution', 1.0)
+    # Use conservative Leiden parameters for refinement only (initial clustering unaffected)
+    def get_conservative_leiden_params(args):
+        """Get conservative Leiden parameters for refinement based on original clustering settings."""
+        base_resolution = getattr(args, 'leiden_resolution', 1.0)
+        base_k_neighbors = getattr(args, 'leiden_k_neighbors', 15)
+        base_threshold = getattr(args, 'leiden_similarity_threshold', 0.1)
+        
+        # Conservative adjustments for refinement
+        conservative_resolution = base_resolution * 0.5  # Lower resolution = fewer clusters
+        conservative_k_neighbors = min(50, base_k_neighbors + 10)  # More neighbors = more connectivity
+        conservative_threshold = max(0.2, base_threshold * 2)  # Higher threshold = stronger connections
+        
+        return conservative_resolution, conservative_k_neighbors, conservative_threshold
+    
+    leiden_resolution, leiden_k_neighbors, leiden_similarity_threshold = get_conservative_leiden_params(args)
     
     # Log duplication info for reference
     if bin_id in duplication_results:
@@ -56,9 +70,7 @@ def refine_bin_with_leiden_clustering(
             f"Bin {bin_id} has {duplicated_genes_count} duplicated core genes out of {total_genes_found} total genes"
         )
     
-    # Use standard k-NN parameters
-    leiden_k_neighbors = getattr(args, 'leiden_k_neighbors', 15)
-    leiden_similarity_threshold = getattr(args, 'leiden_similarity_threshold', 0.1)
+    # leiden_k_neighbors and leiden_similarity_threshold already set above with conservative values
     
     logger.info(f"Leiden parameters for bin {bin_id}: resolution={leiden_resolution:.2f}, k={leiden_k_neighbors}")
     
@@ -76,6 +88,22 @@ def refine_bin_with_leiden_clustering(
     n_clusters = len(set(cluster_labels))
     
     logger.info(f"Bin {bin_id} Leiden clustering: {n_clusters} clusters")
+    
+    # Merge clusters that are too small to avoid over-fragmentation
+    min_cluster_size = 5  # Hardcoded for refinement
+    cluster_sizes = pd.Series(cluster_labels).value_counts()
+    small_clusters = cluster_sizes[cluster_sizes < min_cluster_size].index
+    
+    if len(small_clusters) > 0:
+        largest_cluster = cluster_sizes.idxmax()
+        # Merge small clusters into the largest one
+        cluster_labels = np.array([
+            largest_cluster if c in small_clusters else c 
+            for c in cluster_labels
+        ])
+        # Recalculate number of clusters after merging
+        n_clusters = len(set(cluster_labels))
+        logger.info(f"Merged {len(small_clusters)} small clusters into largest cluster, now {n_clusters} clusters")
     
     if n_clusters < 2:
         logger.warning(f"Bin {bin_id} refinement produced insufficient clusters ({n_clusters})")
@@ -95,8 +123,39 @@ def refine_bin_with_leiden_clustering(
         'cluster': formatted_labels,
         'original_bin': bin_id
     })
+    
+    # Validate refinement produces meaningful splits without over-fragmentation
+    def validate_refinement_quality(original_contigs, refined_clusters_df, bin_id):
+        """Validate that refinement produces meaningful splits without over-fragmentation."""
+        cluster_sizes = refined_clusters_df.groupby('cluster').size()
+        largest_cluster_size = cluster_sizes.max()
+        original_size = len(original_contigs)
         
-    logger.info(f"Bin {bin_id} successfully refined into {n_clusters} sub-bins")
+        # Check 1: Avoid extreme fragmentation
+        if largest_cluster_size < original_size * 0.3:
+            logger.warning(f"Bin {bin_id}: extreme fragmentation detected (largest={largest_cluster_size}/{original_size})")
+            return False
+        
+        # Check 2: Ensure meaningful split (not just removing a few contigs)
+        second_largest = cluster_sizes.nlargest(2).iloc[-1] if len(cluster_sizes) > 1 else 0
+        if second_largest < max(5, original_size * 0.1):
+            logger.info(f"Bin {bin_id}: refinement produced trivial split, likely over-sensitive")
+            return False
+            
+        # Check 3: Don't create too many small fragments
+        small_clusters = (cluster_sizes < 5).sum()
+        if small_clusters > 1:
+            logger.warning(f"Bin {bin_id}: refinement created {small_clusters} small clusters")
+            return False
+        
+        return True
+    
+    if not validate_refinement_quality(contig_names, refined_clusters_df, bin_id):
+        return None
+        
+    largest_subbin_size = refined_clusters_df.groupby('cluster').size().max()
+    retention_ratio = largest_subbin_size / len(contig_names)
+    logger.info(f"Bin {bin_id} successfully refined into {n_clusters} sub-bins (largest retains {retention_ratio:.1%})")
     
     return refined_clusters_df
 
@@ -129,13 +188,42 @@ def refine_contaminated_bins_with_embeddings(
     Returns:
         tuple: (refined_clusters_df, refined_fragments_dict, refinement_summary)
     """
-    # Identify contaminated bins
+    # Identify contaminated bins - only refine if multiple genes are duplicated (reduce false positives)
+    min_duplications = getattr(args, 'min_duplications_for_refinement', 2)
+    
+    # Load duplication results to check counts
+    duplication_results = {}
+    results_path = get_core_gene_duplication_results_path(args)
+    if os.path.exists(results_path):
+        try:
+            with open(results_path, "r") as f:
+                duplication_results = json.load(f)
+            logger.info(f"Loaded duplication results for {len(duplication_results)} bins")
+        except Exception as e:
+            logger.warning(f"Failed to load duplication results: {e}")
+    else:
+        logger.warning("No duplication results file found, will use default logic")
+    
+    # Filter for bins with multiple duplications
     contaminated_bins = []
     if "has_duplicated_core_genes" in clusters_df.columns:
         contaminated_clusters = clusters_df[
             clusters_df["has_duplicated_core_genes"] == True
         ]["cluster"].unique()
-        contaminated_bins = list(contaminated_clusters)
+        
+        # Additional filter for multiple duplications
+        for bin_id in contaminated_clusters:
+            if bin_id in duplication_results:
+                duplicated_count = len(duplication_results[bin_id].get("duplicated_genes", {}))
+                if duplicated_count >= min_duplications:
+                    contaminated_bins.append(bin_id)
+                    logger.info(f"REFINEMENT: {bin_id} selected - {duplicated_count} duplicated genes (>= {min_duplications})")
+                else:
+                    logger.debug(f"REFINEMENT: {bin_id} skipped - only {duplicated_count} duplicated genes (< {min_duplications})")
+            else:
+                # If no data, use original logic (be conservative)
+                contaminated_bins.append(bin_id)
+                logger.warning(f"REFINEMENT: {bin_id} selected - no duplication data available (conservative approach)")
 
     if not contaminated_bins:
         logger.info("No contaminated bins found, skipping refinement")
@@ -148,22 +236,11 @@ def refine_contaminated_bins_with_embeddings(
         return clusters_df, fragments_dict, {}
 
     logger.info(
-        f"Starting embedding-based refinement round {refinement_round} of {len(contaminated_bins)} contaminated bins..."
+        f"REFINEMENT: Starting round {refinement_round} - evaluating {len(contaminated_bins)} contaminated bins (min {min_duplications} duplicated genes)"
     )
     logger.info("Using existing embeddings with k-NN graph construction and Leiden clustering")
     
-    # Load duplication results for parameter tuning
-    duplication_results = {}
-    results_path = get_core_gene_duplication_results_path(args)
-    if os.path.exists(results_path):
-        try:
-            with open(results_path, "r") as f:
-                duplication_results = json.load(f)
-            logger.info(f"Loaded duplication results for {len(duplication_results)} bins")
-        except Exception as e:
-            logger.warning(f"Failed to load duplication results: {e}")
-    else:
-        logger.warning("No duplication results file found, will use default clustering parameters")
+    # duplication_results already loaded above for filtering
     
     all_refined_clusters = []
     refinement_summary = {}
@@ -216,22 +293,38 @@ def refine_contaminated_bins_with_embeddings(
                         logger.warning(f"Failed to load gene mappings cache: {e}")
                         gene_mappings_cache = None
             
+            # Try cached approach first, with comprehensive error recovery
+            duplication_check_failed = False
             if gene_mappings_cache is not None:
-                # Use fast cached approach
-                refined_clusters_df = check_core_gene_duplications_from_cache(
-                    refined_clusters_df, gene_mappings_cache, args
-                )
-            else:
-                # Fallback to miniprot (slower but still works)
-                logger.warning(f"Gene mappings cache not available, falling back to miniprot for {bin_id}")
-                refined_clusters_df = check_core_gene_duplications(
-                    refined_clusters_df,
-                    fragments_dict,
-                    args,
-                    target_coverage_threshold=0.55,
-                    identity_threshold=0.35,
-                    use_header_cache=True
-                )
+                try:
+                    # Use fast cached approach
+                    refined_clusters_df = check_core_gene_duplications_from_cache(
+                        refined_clusters_df, gene_mappings_cache, args
+                    )
+                    logger.debug(f"Successfully used cached duplication check for {bin_id}")
+                except Exception as e:
+                    logger.warning(f"Cache-based duplication check failed for {bin_id}: {e}")
+                    gene_mappings_cache = None  # Force fallback to miniprot
+            
+            if gene_mappings_cache is None:
+                try:
+                    # Fallback to miniprot (slower but still works)
+                    logger.warning(f"Gene mappings cache not available, falling back to miniprot for {bin_id}")
+                    refined_clusters_df = check_core_gene_duplications(
+                        refined_clusters_df,
+                        fragments_dict,
+                        args,
+                        target_coverage_threshold=0.55,
+                        identity_threshold=0.35,
+                        use_header_cache=True
+                    )
+                    logger.debug(f"Successfully used miniprot duplication check for {bin_id}")
+                except Exception as e:
+                    logger.error(f"Both cache and miniprot duplication checks failed for {bin_id}: {e}")
+                    logger.warning(f"Proceeding with {bin_id} refinement without duplication validation")
+                    # Mark all refined bins as potentially having duplications for safety
+                    refined_clusters_df['has_duplicated_core_genes'] = True
+                    duplication_check_failed = True
             
             # Count successful sub-bins
             sub_bins = refined_clusters_df["cluster"].nunique()
