@@ -79,7 +79,7 @@ click.rich_click.OPTION_GROUPS = {
         },
         {
             "name": "Filtering & Processing",
-            "options": ["--min-contig-length", "--min-bin-size", "--skip-bacterial-filter", "--skip-refinement", "--max-refinement-rounds", "--skip-chimera-detection", "--keep-intermediate"],
+            "options": ["--min-contig-length", "--min-bin-size", "--skip-bacterial-filter", "--skip-refinement", "--max-refinement-rounds", "--min-duplications-for-refinement", "--skip-chimera-detection", "--keep-intermediate"],
         },
         {
             "name": "General",
@@ -230,6 +230,13 @@ def validate_coverage_options(ctx, param, value):
     help="Maximum number of iterative bin refinement rounds.",
 )
 @click.option(
+    "--min-duplications-for-refinement",
+    type=click.IntRange(min=1, max=10),
+    default=2,
+    show_default=True,
+    help="Minimum number of duplicated core genes required to trigger refinement.",
+)
+@click.option(
     "--num-augmentations",
     type=click.IntRange(min=1, max=32),
     default=8,
@@ -292,6 +299,7 @@ def main_cli(
     skip_bacterial_filter,
     skip_refinement,
     max_refinement_rounds,
+    min_duplications_for_refinement,
     num_augmentations,
     enable_chimera_detection,
     leiden_resolution,
@@ -347,6 +355,7 @@ def main_cli(
         skip_bacterial_filter=skip_bacterial_filter,
         skip_refinement=skip_refinement,
         max_refinement_rounds=max_refinement_rounds,
+        min_duplications_for_refinement=min_duplications_for_refinement,
         num_augmentations=num_augmentations,
         skip_chimera_detection=not enable_chimera_detection,
         leiden_resolution=leiden_resolution,
