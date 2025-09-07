@@ -202,7 +202,7 @@ def refine_contaminated_bins_with_embeddings(
         except Exception as e:
             logger.warning(f"Failed to load duplication results: {e}")
     else:
-        logger.warning("No duplication results file found, will use default logic")
+        logger.warning("No duplication results file found; refinement will only run for bins with verified duplication counts")
     
     # Filter for bins with multiple duplications
     contaminated_bins = []
@@ -221,9 +221,8 @@ def refine_contaminated_bins_with_embeddings(
                 else:
                     logger.debug(f"REFINEMENT: {bin_id} skipped - only {duplicated_count} duplicated genes (< {min_duplications})")
             else:
-                # If no data, use original logic (be conservative)
-                contaminated_bins.append(bin_id)
-                logger.warning(f"REFINEMENT: {bin_id} selected - no duplication data available (conservative approach)")
+                # If no duplication data for this bin, skip refinement
+                logger.warning(f"REFINEMENT: {bin_id} skipped - no duplication data available")
 
     if not contaminated_bins:
         logger.info("No contaminated bins found, skipping refinement")
