@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.4] - 2025-09-14
+
+### Fixed
+- Fixed critical edge cases in refinement module that were causing failures
+- Fixed security vulnerability and optimized performance
+- Skip bins without duplication data during refinement to avoid unnecessary processing
+
+### Changed
+- Implemented conservative refinement strategy to preserve completeness and avoid over-fragmentation
+- Eliminated code duplication in DataFrame column initialization
+
+### Added
+- Enhanced test infrastructure for better reliability
+
 ## [0.2.3] - 2025-08-20
 
 ### Fixed
@@ -164,7 +178,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Various bug fixes and improvements
 
-[Unreleased]: https://github.com/danielzmbp/remag/compare/v0.2.3...HEAD
+[Unreleased]: https://github.com/danielzmbp/remag/compare/v0.2.4...HEAD
+[0.2.4]: https://github.com/danielzmbp/remag/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/danielzmbp/remag/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/danielzmbp/remag/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/danielzmbp/remag/compare/v0.2.0...v0.2.1
