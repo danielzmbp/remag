@@ -142,45 +142,228 @@ def get_model_path(args):
     return os.path.join(args.output, "siamese_model.pt")
 
 
-class FusionLayer(nn.Module):
-    def __init__(self, kmer_dim, coverage_dim, embedding_dim, hidden_dim=None):
-        super(FusionLayer, self).__init__()
-        
-        # Use embedding_dim as the common dimension for simplicity
+class AdaptiveDropout(nn.Module):
+    """Adaptive dropout that adjusts dropout rate based on input statistics."""
+
+    def __init__(self, base_rate=0.1, max_rate=0.3, adaptation_factor=0.1):
+        super(AdaptiveDropout, self).__init__()
+        self.base_rate = base_rate
+        self.max_rate = max_rate
+        self.adaptation_factor = adaptation_factor
+
+    def forward(self, x):
+        if not self.training:
+            return x
+
+        # Compute input variance as a proxy for feature reliability
+        input_var = torch.var(x, dim=-1, keepdim=True)
+        normalized_var = torch.sigmoid(input_var * self.adaptation_factor)
+
+        # Higher variance = higher dropout (less reliable features)
+        adaptive_rate = self.base_rate + (self.max_rate - self.base_rate) * normalized_var
+
+        # Apply dropout with adaptive rates
+        dropout_mask = torch.bernoulli(1 - adaptive_rate)
+        return x * dropout_mask / (1 - adaptive_rate + 1e-8)
+
+
+class EnhancedFusionLayer(nn.Module):
+    """Enhanced fusion layer with bidirectional attention and gated fusion.
+
+    Uses ReLU activation in fusion/projection layers for stronger non-linearity
+    and better gradient flow in complex fusion operations.
+    """
+
+    # Class constants for better maintainability
+    DEFAULT_NUM_HEADS = 4
+    DEFAULT_DROPOUT = 0.1
+    GATE_INPUT_MULTIPLIER = 2  # For concatenated features in gates
+    MULTI_SCALE_CONCAT_MULTIPLIER = 6  # 3 scales * 2 (kmer+coverage) features each
+    COMPRESSOR_HIDDEN_MULTIPLIER = 4
+    COMPRESSOR_OUTPUT_MULTIPLIER = 2
+    INTERACTION_HIDDEN_MULTIPLIER = 3
+    INTERACTION_INTERMEDIATE_MULTIPLIER = 2
+    FINAL_FUSION_INPUT_MULTIPLIER = 4  # gated_kmer + gated_coverage + interaction + alignment
+    FINAL_FUSION_HIDDEN_MULTIPLIER = 2
+    RESIDUAL_WEIGHT_INIT = 0.5
+    ADAPTIVE_DROPOUT_MAX_MULTIPLIER = 2.0
+
+    def __init__(self, kmer_dim, coverage_dim, embedding_dim,
+                 num_heads=DEFAULT_NUM_HEADS, dropout=DEFAULT_DROPOUT):
+        super(EnhancedFusionLayer, self).__init__()
+
+        self.embedding_dim = embedding_dim
+
+        # Project to common dimension
         self.kmer_proj = nn.Linear(kmer_dim, embedding_dim)
         self.coverage_proj = nn.Linear(coverage_dim, embedding_dim)
-        
-        self.cross_attention = nn.MultiheadAttention(
-            embed_dim=embedding_dim, num_heads=4, dropout=0.1, batch_first=True
+
+        # Bidirectional cross-attention
+        self.kmer_to_coverage_attn = nn.MultiheadAttention(
+            embed_dim=embedding_dim, num_heads=num_heads, dropout=dropout, batch_first=True
         )
-        
+        self.coverage_to_kmer_attn = nn.MultiheadAttention(
+            embed_dim=embedding_dim, num_heads=num_heads, dropout=dropout, batch_first=True
+        )
+
+
+        # Gated fusion mechanism
+        self.kmer_gate = nn.Sequential(
+            nn.Linear(embedding_dim * self.GATE_INPUT_MULTIPLIER, embedding_dim),
+            nn.Sigmoid()
+        )
+        self.coverage_gate = nn.Sequential(
+            nn.Linear(embedding_dim * self.GATE_INPUT_MULTIPLIER, embedding_dim),
+            nn.Sigmoid()
+        )
+
+        # Multi-scale feature fusion (all project back to embedding_dim for consistent concatenation)
+        self.multi_scale_fusion = nn.ModuleList([
+            nn.Sequential(
+                nn.Linear(embedding_dim, embedding_dim // 2),
+                nn.ReLU(),
+                nn.Linear(embedding_dim // 2, embedding_dim)  # Project back to common dim
+            ),
+            nn.Linear(embedding_dim, embedding_dim),  # Identity scale
+            nn.Sequential(
+                nn.Linear(embedding_dim, embedding_dim * 2),
+                nn.ReLU(),
+                nn.Linear(embedding_dim * 2, embedding_dim)  # Project back to common dim
+            )
+        ])
+
+        # Batch normalization and residual connections
+        self.batch_norm1 = nn.BatchNorm1d(embedding_dim)
+        self.batch_norm2 = nn.BatchNorm1d(embedding_dim)
+        self.residual_weight = nn.Parameter(torch.tensor(self.RESIDUAL_WEIGHT_INIT))
+
+        # Multi-scale compressor to reduce dimensions for interaction module
+        self.multi_scale_compressor = nn.Sequential(
+            nn.Linear(embedding_dim * self.MULTI_SCALE_CONCAT_MULTIPLIER, embedding_dim * self.COMPRESSOR_HIDDEN_MULTIPLIER),
+            nn.BatchNorm1d(embedding_dim * self.COMPRESSOR_HIDDEN_MULTIPLIER),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(embedding_dim * self.COMPRESSOR_HIDDEN_MULTIPLIER, embedding_dim * self.COMPRESSOR_OUTPUT_MULTIPLIER)
+        )
+
+        # Feature interaction module
+        self.interaction_module = nn.Sequential(
+            nn.Linear(embedding_dim * self.COMPRESSOR_OUTPUT_MULTIPLIER, embedding_dim * self.INTERACTION_HIDDEN_MULTIPLIER),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(embedding_dim * self.INTERACTION_HIDDEN_MULTIPLIER, embedding_dim * self.INTERACTION_INTERMEDIATE_MULTIPLIER),
+            nn.ReLU(),
+            nn.Linear(embedding_dim * self.INTERACTION_INTERMEDIATE_MULTIPLIER, embedding_dim)
+        )
+
+        # Adaptive dropout
+        self.adaptive_dropout = AdaptiveDropout(
+            base_rate=dropout,
+            max_rate=dropout * self.ADAPTIVE_DROPOUT_MAX_MULTIPLIER
+        )
+
+        # Final fusion MLP with improved architecture
         self.fusion_mlp = nn.Sequential(
-            nn.Linear(embedding_dim * 2, embedding_dim),
+            nn.Linear(embedding_dim * self.FINAL_FUSION_INPUT_MULTIPLIER, embedding_dim * self.FINAL_FUSION_HIDDEN_MULTIPLIER),
+            nn.BatchNorm1d(embedding_dim * self.FINAL_FUSION_HIDDEN_MULTIPLIER),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(embedding_dim * self.FINAL_FUSION_HIDDEN_MULTIPLIER, embedding_dim),
             nn.BatchNorm1d(embedding_dim),
             nn.ReLU(),
-            nn.Dropout(0.1),
         )
-        
+
     def forward(self, kmer_features, coverage_features):
+        # Input validation
+        if kmer_features.dim() != 2 or coverage_features.dim() != 2:
+            raise ValueError(f"Expected 2D tensors, got kmer: {kmer_features.dim()}D, "
+                           f"coverage: {coverage_features.dim()}D")
+
+        if kmer_features.size(0) != coverage_features.size(0):
+            raise ValueError(f"Batch size mismatch: kmer {kmer_features.size(0)} "
+                           f"vs coverage {coverage_features.size(0)}")
+
+        if kmer_features.size(1) != self.kmer_proj.in_features:
+            raise ValueError(f"K-mer feature dimension mismatch: expected "
+                           f"{self.kmer_proj.in_features}, got {kmer_features.size(1)}")
+
+        if coverage_features.size(1) != self.coverage_proj.in_features:
+            raise ValueError(f"Coverage feature dimension mismatch: expected "
+                           f"{self.coverage_proj.in_features}, got {coverage_features.size(1)}")
+
+        batch_size = kmer_features.size(0)
+
         # Project to common dimension
-        kmer_proj = self.kmer_proj(kmer_features)
-        coverage_proj = self.coverage_proj(coverage_features)
-        
-        kmer_seq = kmer_proj.unsqueeze(1)
-        coverage_seq = coverage_proj.unsqueeze(1)
-        
-        # Cross-attention: let k-mer features attend to coverage
-        attended_features, _ = self.cross_attention(
+        kmer_proj = self.kmer_proj(kmer_features)  # [B, embed_dim]
+        coverage_proj = self.coverage_proj(coverage_features)  # [B, embed_dim]
+
+        # Add sequence dimension for attention
+        kmer_seq = kmer_proj.unsqueeze(1)  # [B, 1, embed_dim]
+        coverage_seq = coverage_proj.unsqueeze(1)  # [B, 1, embed_dim]
+
+        # Bidirectional cross-attention
+        # K-mer attending to coverage
+        kmer_attended, kmer_attn_weights = self.kmer_to_coverage_attn(
             kmer_seq, coverage_seq, coverage_seq
         )
-        attended_features = attended_features.squeeze(1)
-        
-        # Concatenate original k-mer projection with attended features
-        combined = torch.cat([kmer_proj, attended_features], dim=1)
-        
-        # Apply fusion MLP
-        output = self.fusion_mlp(combined)
-        
+        kmer_attended = kmer_attended.squeeze(1)  # [B, embed_dim]
+
+        # Coverage attending to k-mer
+        coverage_attended, coverage_attn_weights = self.coverage_to_kmer_attn(
+            coverage_seq, kmer_seq, kmer_seq
+        )
+        coverage_attended = coverage_attended.squeeze(1)  # [B, embed_dim]
+
+        # Gated fusion mechanism
+        combined_for_gate = torch.cat([kmer_proj, coverage_proj], dim=1)
+        kmer_gate_weight = self.kmer_gate(combined_for_gate)
+        coverage_gate_weight = self.coverage_gate(combined_for_gate)
+
+        # Apply gates
+        gated_kmer = kmer_gate_weight * kmer_proj + (1 - kmer_gate_weight) * kmer_attended
+        gated_coverage = coverage_gate_weight * coverage_proj + (1 - coverage_gate_weight) * coverage_attended
+
+        # Apply batch normalization with improved residual connections
+        # Use learnable weighting with better gradient flow
+        residual_weight_clamped = torch.clamp(self.residual_weight, min=0.1, max=0.9)
+
+        gated_kmer = self.batch_norm1(
+            (1 - residual_weight_clamped) * gated_kmer + residual_weight_clamped * kmer_proj
+        )
+        gated_coverage = self.batch_norm2(
+            (1 - residual_weight_clamped) * gated_coverage + residual_weight_clamped * coverage_proj
+        )
+
+        # Multi-scale feature processing
+        scale_features = []
+        for scale_layer in self.multi_scale_fusion:
+            scale_kmer = scale_layer(gated_kmer)
+            scale_coverage = scale_layer(gated_coverage)
+            scale_features.append(torch.cat([scale_kmer, scale_coverage], dim=1))
+
+        # Concatenate multi-scale features (now all have consistent dimensions)
+        # Each scale produces embedding_dim features for both kmer and coverage -> embedding_dim * 2 per scale
+        # 3 scales * embedding_dim * 2 = embedding_dim * 6 total
+        multi_scale_concat = torch.cat(scale_features, dim=1)  # [B, embedding_dim * 6]
+
+        # Feature interaction module expects embedding_dim * 2, so we need to compress first
+        multi_scale_compressed = self.multi_scale_compressor(multi_scale_concat)
+        interaction_features = self.interaction_module(multi_scale_compressed)
+
+        # Apply adaptive dropout
+        interaction_features = self.adaptive_dropout(interaction_features)
+
+        # Final fusion with all components
+        final_features = torch.cat([
+            gated_kmer,
+            gated_coverage,
+            interaction_features,
+            kmer_attended + coverage_attended  # Cross-modal alignment signal
+        ], dim=1)
+
+        # Final MLP
+        output = self.fusion_mlp(final_features)
+
         return output
 
 
@@ -193,6 +376,7 @@ class SiameseNetwork(nn.Module):
         self.has_coverage = n_coverage_features > 0
         
         # Separate encoders for k-mer and coverage features
+        # Using LeakyReLU in encoders to prevent dead neurons during feature extraction
         self.kmer_encoder = nn.Sequential(
             nn.Linear(n_kmer_features, 256),
             nn.BatchNorm1d(256),
@@ -239,25 +423,27 @@ class SiameseNetwork(nn.Module):
             # Store final coverage dimension for fusion layer
             self.coverage_final_dim = coverage_hidden2
             
-            # Advanced fusion layer with cross-attention and MLP
-            self.fusion_layer = FusionLayer(
-                kmer_dim=128, 
-                coverage_dim=self.coverage_final_dim, 
-                embedding_dim=embedding_dim
+            # Enhanced fusion layer with bidirectional attention and gated fusion
+            self.fusion_layer = EnhancedFusionLayer(
+                kmer_dim=128,
+                coverage_dim=self.coverage_final_dim,
+                embedding_dim=embedding_dim,
+                num_heads=4,
+                dropout=0.1
             )
         else:
             # No coverage features - use a simple projection
             self.kmer_projection = nn.Sequential(
                 nn.Linear(128, embedding_dim),
                 nn.BatchNorm1d(embedding_dim),
-                nn.ReLU(),
+                nn.LeakyReLU(),
                 nn.Dropout(0.1),
             )
         
         self.projection_head = nn.Sequential(
             nn.Linear(embedding_dim, 512),
             nn.BatchNorm1d(512),
-            nn.ReLU(inplace=True),
+            nn.ReLU(),
             nn.Linear(512, 512),
         )
 
