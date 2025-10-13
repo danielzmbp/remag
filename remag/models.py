@@ -762,12 +762,11 @@ def generate_embeddings(model, features_df, args):
                 embeddings[clean_header] = batch_embeddings[j].cpu().numpy()
 
     embeddings_df = pd.DataFrame.from_dict(embeddings, orient="index")
-    
-    # Save embeddings only if keeping intermediate files
-    if getattr(args, "keep_intermediate", False):
-        embeddings_df.to_csv(embeddings_path)
-        logger.info(f"Embeddings saved to {embeddings_path}")
-    
+
+    # Always save embeddings for downstream analysis and visualization
+    embeddings_df.to_csv(embeddings_path)
+    logger.info(f"Embeddings saved to {embeddings_path}")
+
     return embeddings_df
 
 

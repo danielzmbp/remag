@@ -763,11 +763,8 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
     logger.debug("Counting contigs per cluster...")
     cluster_contig_counts = group_contigs_by_cluster(contig_clusters_df)
 
-
-
-    # Note about visualization
-    if getattr(args, "keep_intermediate", False):
-        logger.info("Embeddings saved to embeddings.csv. Use scripts/plot_features.py for UMAP visualization with plotting dependencies.")
+    # Note about visualization (embeddings.csv is always saved)
+    logger.info("Embeddings saved to embeddings.csv. Use scripts/plot_features.py for UMAP visualization with plotting dependencies.")
 
     # Perform chimera detection for large contigs
     if not getattr(args, 'skip_chimera_detection', False):

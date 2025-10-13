@@ -233,11 +233,11 @@ REMAG produces several output files:
 ### Core output files (always created):
 - `bins/`: Directory containing FASTA files for each bin
 - `bins.csv`: Final contig-to-bin assignments
+- `embeddings.csv`: Contig embeddings from the neural network
 - `remag.log`: Detailed log file
 - `*_non_bacterial_filtered.fasta`: Filtered FASTA file with bacterial contigs removed (when bacterial filtering is enabled)
 
 ### Additional files (with `--keep-intermediate` option):
-- `embeddings.csv`: Contig embeddings from the neural network
 - `siamese_model.pt`: Trained Siamese neural network model
 - `params.json`: Complete run parameters for reproducibility
 - `features.csv`: Extracted k-mer and coverage features
