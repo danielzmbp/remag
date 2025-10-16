@@ -267,7 +267,7 @@ This creates:
 ## Requirements
 
 ### Core dependencies (always installed):
-- Python 3.8+
+- Python 3.9+
 - PyTorch (≥1.11.0)
 - scikit-learn (≥1.0.0)
 - XGBoost (≥1.6.0) - for 4CAC classifier

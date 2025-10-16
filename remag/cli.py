@@ -9,11 +9,7 @@ import rich_click as click
 from .core import main as run_remag
 from .utils import setup_logging
 
-try:
-    from importlib.metadata import version
-except ImportError:
-    # Python < 3.8
-    from importlib_metadata import version
+from importlib.metadata import version
 
 __version__ = version("remag")
 
@@ -251,7 +247,7 @@ def validate_coverage_options(ctx, param, value):
 )
 @click.option(
     "--leiden-resolution",
-    type=click.FloatRange(min=0.1, max=5.0),
+    type=click.FloatRange(min=0.01, max=5.0),
     default=1.0,
     show_default=True,
     help="Resolution parameter for Leiden clustering (higher = more clusters). Only used with --clustering-method leiden.",
