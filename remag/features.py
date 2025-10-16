@@ -175,7 +175,7 @@ def filter_bacterial_contigs(fasta_file, output_dir, min_contig_length=1000, cor
                     f"{seq_names[j]}\t{viral_score}\t{plas_score}\t{prokar_score}\t{eukar_score}\t{predicted_class}\n"
                 )
 
-                if prokar_score > 0.5 or plas_score > 0.5:
+                if prokar_score > 0.9 or plas_score > 0.9:
                     n_filtered += 1
                 else:
                     non_bacterial_sequences.append((seq_names[j], seqs[j]))
@@ -1231,13 +1231,31 @@ def calculate_coverage_from_multiple_bams(
             coverage, coverage_std = calculate_fragment_coverage(
                 bam_file, fragments_dict, cores
             )
-            
-            # Normalize by total mapped reads (convert to reads per million, RPM)
-            normalization_factor = total_mapped_reads / 1_000_000
-            normalized_coverage = {k: v / normalization_factor for k, v in coverage.items()}
-            normalized_coverage_std = {k: v / normalization_factor for k, v in coverage_std.items()}
-            
-            logger.info(f"Normalized coverage by {total_mapped_reads:,} mapped reads (factor: {normalization_factor:.2f})")
+            if total_mapped_reads <= 0:
+                logger.warning(
+                    f"Alignment file {os.path.basename(bam_file)} has no mapped reads; assigning zero coverage."
+                )
+                normalized_coverage = {fh: 0.0 for fh in all_fragment_headers}
+                normalized_coverage_std = {fh: 0.0 for fh in all_fragment_headers}
+            else:
+                # Normalize by total mapped reads (convert to reads per million, RPM)
+                normalization_factor = total_mapped_reads / 1_000_000
+                if normalization_factor <= 0:
+                    logger.warning(
+                        f"Normalization factor for {os.path.basename(bam_file)} is non-positive ({normalization_factor:.2f}); assigning zero coverage."
+                    )
+                    normalized_coverage = {fh: 0.0 for fh in all_fragment_headers}
+                    normalized_coverage_std = {fh: 0.0 for fh in all_fragment_headers}
+                else:
+                    normalized_coverage = {
+                        k: v / normalization_factor for k, v in coverage.items()
+                    }
+                    normalized_coverage_std = {
+                        k: v / normalization_factor for k, v in coverage_std.items()
+                    }
+                    logger.info(
+                        f"Normalized coverage by {total_mapped_reads:,} mapped reads (factor: {normalization_factor:.2f})"
+                    )
 
             sample_name = os.path.splitext(os.path.basename(bam_file))[0]
             mean_col_name = f"{sample_name}_coverage"
