@@ -7,7 +7,6 @@ import glob
 import os
 import rich_click as click
 from .core import main as run_remag
-from .utils import setup_logging
 
 from importlib.metadata import version
 
