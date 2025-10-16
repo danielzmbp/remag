@@ -30,8 +30,10 @@ class EarlyStoppingManager:
     def check_improvement(self, current_loss, model_state):
         """Check if current loss is an improvement and update state."""
         if current_loss < self.best_loss:
+            import copy
+
             self.best_loss = current_loss
-            self.best_model_state = model_state.copy()
+            self.best_model_state = copy.deepcopy(model_state)
             self.epochs_no_improve = 0
             return True
         else:
