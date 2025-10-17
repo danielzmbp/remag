@@ -50,23 +50,11 @@ def save_clusters_as_fasta(clusters_df, fragments_dict, args):
 
         total_length = sum(len(fragments_dict[h]["sequence"]) for h in contig_headers)
 
-        # Check for duplicated core genes
-        has_duplications = False
-        if "has_duplicated_core_genes" in clusters_df.columns:
-            bin_fragments = clusters_df[clusters_df["cluster"] == cluster_id]
-            if not bin_fragments.empty:
-                has_duplications = bin_fragments["has_duplicated_core_genes"].iloc[0]
-
-        # Create filename with duplication tag
-        if has_duplications:
-            bin_file = os.path.join(bins_dir, f"{cluster_id}_duplicated_core_genes.fa")
-            duplication_tag = " [DUPLICATED CORE GENES]"
-        else:
-            bin_file = os.path.join(bins_dir, f"{cluster_id}.fa")
-            duplication_tag = ""
+        # Create simple filename
+        bin_file = os.path.join(bins_dir, f"{cluster_id}.fa")
 
         logger.info(
-            f"  {cluster_id}: {len(contig_headers)} contigs, {total_length:,} bp{duplication_tag}"
+            f"  {cluster_id}: {len(contig_headers)} contigs, {total_length:,} bp"
         )
 
         with open(bin_file, "w") as f:
