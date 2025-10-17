@@ -53,7 +53,7 @@ class ClusteringManager:
         if os.path.exists(classification_results_path):
             try:
                 classification_df = pd.read_csv(classification_results_path, sep='\t')
-                eukaryotic_scores = dict(zip(classification_df['header'], classification_df['eukar_score']))
+                eukaryotic_scores = dict(zip(classification_df['contig_id'], classification_df['eukaryote_prob']))
                 logger.info(f"Loaded eukaryotic scores for {len(eukaryotic_scores)} contigs")
             except Exception as e:
                 logger.warning(f"Could not load classification results: {e}")
