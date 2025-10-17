@@ -90,7 +90,7 @@ docker run --rm -v $(pwd):/data danielzmbp/remag:latest \
   -f /data/contigs.fasta -c /data/alignments.bam -o /data/output
 
 # Or use a specific version
-docker run --rm -v $(pwd):/data danielzmbp/remag:0.2.2 \
+docker run --rm -v $(pwd):/data danielzmbp/remag:0.2.5 \
   -f /data/contigs.fasta -c /data/alignments.bam -o /data/output
 
 # For interactive use
@@ -105,21 +105,21 @@ singularity run docker://danielzmbp/remag:latest \
   -f contigs.fasta -c alignments.bam -o output_directory
 
 # Build Singularity image from Docker Hub
-singularity build remag_v0.2.2.sif docker://danielzmbp/remag:v0.2.2
+singularity build remag_v0.2.5.sif docker://danielzmbp/remag:v0.2.5
 
 # Or build latest version
 singularity build remag_latest.sif docker://danielzmbp/remag:latest
 
 # Run with Singularity
-singularity run --bind $(pwd):/data remag_v0.2.2.sif \
+singularity run --bind $(pwd):/data remag_v0.2.5.sif \
   -f /data/contigs.fasta -c /data/alignments.bam -o /data/output
 
 # Or use exec for direct command execution
-singularity exec --bind $(pwd):/data remag_v0.2.2.sif \
+singularity exec --bind $(pwd):/data remag_v0.2.5.sif \
   remag -f /data/contigs.fasta -c /data/alignments.bam -o /data/output
 
 # For interactive shell
-singularity shell --bind $(pwd):/data remag_v0.2.2.sif
+singularity shell --bind $(pwd):/data remag_v0.2.5.sif
 
 # Build a local Singularity image file (optional)
 singularity build remag.sif docker://danielzmbp/remag:latest
