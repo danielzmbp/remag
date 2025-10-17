@@ -87,7 +87,7 @@ def get_classification_results_path(fasta_file, output_dir):
     name_without_ext = os.path.splitext(base_name)[0]
     if name_without_ext.endswith(".gz"):
         name_without_ext = os.path.splitext(name_without_ext)[0]
-    return os.path.join(output_dir, f"{name_without_ext}_4cac_classification.tsv")
+    return os.path.join(output_dir, f"{name_without_ext}_hyenadna_classification.tsv")
 
 
 def get_features_csv_path(output_dir):
@@ -96,15 +96,15 @@ def get_features_csv_path(output_dir):
 
 def filter_bacterial_contigs(fasta_file, output_dir, min_contig_length=1000, cores=8):
     """
-    Filter bacterial contigs using the 4CAC XGBoost classifier.
-    Keeps contigs with prokaryotic & plasmid scores ≤ 0.5.
-    
+    Filter non-eukaryotic contigs using the HyenaDNA classifier.
+    Keeps contigs predicted as eukaryotic with sufficient confidence.
+
     Args:
         fasta_file: Path to input FASTA file
         output_dir: Output directory for filtered results
         min_contig_length: Minimum contig length threshold
-        cores: Number of CPU cores to use
-        
+        cores: Number of CPU cores to use (note: HyenaDNA uses GPU when available)
+
     Returns:
         str: Path to filtered FASTA file
     """
@@ -114,7 +114,7 @@ def filter_bacterial_contigs(fasta_file, output_dir, min_contig_length=1000, cor
         name_without_ext = os.path.splitext(name_without_ext)[0]
 
     filtered_fasta = os.path.join(
-        output_dir, f"{name_without_ext}_non_bacterial_filtered.fasta"
+        output_dir, f"{name_without_ext}_eukaryotic_filtered.fasta"
     )
     classification_results = get_classification_results_path(fasta_file, output_dir)
 
@@ -122,118 +122,103 @@ def filter_bacterial_contigs(fasta_file, output_dir, min_contig_length=1000, cor
         logger.info(f"Using existing filtered FASTA: {filtered_fasta}")
         return filtered_fasta
 
-    logger.info("Filtering bacterial contigs using 4CAC classifier...")
+    logger.info("Filtering non-eukaryotic contigs using HyenaDNA classifier...")
 
     try:
-        import warnings
+        try:
+            from .hyenadna_classifier import HyenaDNAClassifier
+        except ImportError:
+            # Fallback to global import if relative import fails
+            from hyenadna_classifier import HyenaDNAClassifier
 
-        with warnings.catch_warnings():
-            warnings.filterwarnings(
-                "ignore", message=".*Found JSON model saved before XGBoost 1.6.*"
-            )
-            try:
-                from .xgbclass import xgb_class as classifier
-                from .xgbclass import xgb_utils as utils
-            except ImportError:
-                # Fallback to global import if relative import fails
-                from xgbclass import xgb_class as classifier
-                from xgbclass import xgb_utils as utils
-
-            c = classifier.xgbClass(n_procs=cores)
-    except ImportError:
+        classifier = HyenaDNAClassifier(
+            device='auto',
+            min_contig_length=min_contig_length,
+            batch_size=64
+        )
+    except ImportError as e:
         logger.error(
-            "4CAC classifier not found. Using original FASTA without filtering"
+            f"HyenaDNA classifier not found: {e}. Using original FASTA without filtering"
         )
         return fasta_file
     except Exception as e:
-        logger.error(f"Failed to initialize 4CAC classifier: {e}")
+        logger.error(f"Failed to initialize HyenaDNA classifier: {e}")
         return fasta_file
 
     seq_names, seqs = [], []
-    non_bacterial_sequences = []
-    n_total = n_non_bacterial = n_filtered = 0
+    eukaryotic_sequences = []
+    n_total = n_eukaryotic = n_filtered = 0
+    confidence_threshold = 0.5  # Threshold for eukaryotic confidence
 
     def process_batch(seq_names, seqs, results_file):
         """Process a batch of sequences through classification."""
-        nonlocal n_non_bacterial, n_filtered
+        nonlocal n_eukaryotic, n_filtered
 
         if not seqs:
             return
 
         try:
-            probs = c.classify(seqs)
-            for j, p in enumerate(probs):
-                viral_score, plas_score, prokar_score, eukar_score = p
-                predicted_class = [
-                    "viral",
-                    "plasmid",
-                    "prokaryotic",
-                    "eukaryotic",
-                ][np.argmax(p)]
+            # Get detailed predictions with confidence and window info for each sequence
+            for j, seq in enumerate(seqs):
+                # Get detailed prediction results using predict_contig
+                result = classifier.predict_contig(seq)
+
+                prediction = result['prediction']
+                euk_prob = result['eukaryote_prob']
+                confidence = result['confidence']
+                num_windows = result['num_windows']
 
                 results_file.write(
-                    f"{seq_names[j]}\t{viral_score}\t{plas_score}\t{prokar_score}\t{eukar_score}\t{predicted_class}\n"
+                    f"{seq_names[j]}\t{len(seq)}\t{prediction}\t{euk_prob:.4f}\t{confidence:.4f}\t{num_windows}\n"
                 )
 
-                if prokar_score > 0.9 or plas_score > 0.9:
-                    n_filtered += 1
+                # Keep sequences predicted as eukaryotic with confidence >= threshold
+                if prediction == "eukaryote" and euk_prob >= confidence_threshold:
+                    eukaryotic_sequences.append((seq_names[j], seq))
+                    n_eukaryotic += 1
                 else:
-                    non_bacterial_sequences.append((seq_names[j], seqs[j]))
-                    n_non_bacterial += 1
+                    n_filtered += 1
+
         except Exception as e:
             logger.error(f"Classification error: {e}")
+            # On error, keep all sequences to be safe
             for j in range(len(seqs)):
-                non_bacterial_sequences.append((seq_names[j], seqs[j]))
-                n_non_bacterial += 1
+                eukaryotic_sequences.append((seq_names[j], seqs[j]))
+                n_eukaryotic += 1
 
     with open(classification_results, "w", encoding="utf-8") as results_file:
         results_file.write(
-            "header\tviral_score\tplas_score\tprokar_score\teukar_score\tpredicted_class\n"
+            "contig_id\tlength\tprediction\teukaryote_prob\tconfidence\tnum_windows\n"
         )
 
-        # Use XGBoost utils readfq if available, otherwise fallback to fasta_iter
-        try:
-            from .xgbclass import xgb_utils as utils
-        except ImportError:
-            try:
-                from xgbclass import xgb_utils as utils
-            except ImportError:
-                utils = None
+        # Process sequences in batches
+        logger.info("Classifying sequences...")
+        for header, seq in tqdm(fasta_iter(fasta_file), desc="Processing sequences"):
+            if len(seq) < min_contig_length:
+                continue
 
-        with open_file(fasta_file, "r") as fp:
-            if utils:
-                for header, seq, _ in utils.readfq(fp):
-                    if len(seq) < min_contig_length:
-                        continue
+            seq_names.append(header)
+            seqs.append(seq.upper())
+            n_total += 1
 
-                    seq_names.append(header)
-                    seqs.append(seq.upper())
-                    n_total += 1
-
-                    if len(seqs) >= 50000:
-                        process_batch(seq_names, seqs, results_file)
-                        seq_names, seqs = [], []
-
-                # Process remaining sequences
+            # Process in batches of 10,000 to manage memory
+            if len(seqs) >= 10000:
                 process_batch(seq_names, seqs, results_file)
-            else:
-                for header, seq in fasta_iter(fasta_file):
-                    if len(seq) < min_contig_length:
-                        continue
-                    non_bacterial_sequences.append((header, seq))
-                    n_total += 1
-                    n_non_bacterial += 1
+                seq_names, seqs = [], []
+
+        # Process remaining sequences
+        process_batch(seq_names, seqs, results_file)
 
     logger.info(
-        f"Processed {n_total} sequences: kept {n_non_bacterial}, filtered {n_filtered}"
+        f"Processed {n_total} sequences: kept {n_eukaryotic} eukaryotic, filtered {n_filtered} non-eukaryotic"
     )
 
-    if n_non_bacterial == 0:
-        logger.warning("No non-bacterial sequences found, keeping all sequences")
+    if n_eukaryotic == 0:
+        logger.warning("No eukaryotic sequences found, keeping all sequences")
         return fasta_file
 
     with open(filtered_fasta, "w", encoding="utf-8") as f:
-        for header, sequence in non_bacterial_sequences:
+        for header, sequence in eukaryotic_sequences:
             f.write(f">{header}\n")
             for i in range(0, len(sequence), 60):
                 f.write(f"{sequence[i: i+60]}\n")

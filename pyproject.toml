@@ -43,11 +43,12 @@ dependencies = [
     "loguru>=0.6.0",
     "scikit-learn>=1.0.0",
     "tqdm>=4.62.0",
-    "xgboost>=1.6.0",
-    "joblib>=1.1.0",
     "psutil>=5.8.0",
     "leidenalg>=0.9.0",
     "igraph>=0.10.0",
+    "biopython>=1.80",
+    "einops>=0.6.0",
+    "transformers>=4.30.0",
 ]
 
 [project.optional-dependencies]
@@ -83,7 +84,7 @@ include = ["remag*"]
 exclude = ["tests*"]
 
 [tool.setuptools.package-data]
-"remag.xgbclass" = ["models/*"]
+"remag.hyenadna_classifier" = ["models/*"]
 "remag.db" = ["*.faa.gz"]
 
 [tool.black]
