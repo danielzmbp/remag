@@ -14,8 +14,7 @@ __email__ = "daniel.gomez-perez@earlham.ac.uk"
 try:
     from .core import main
     from .cli import main_cli
-    from .xgbclass import xgbClass
 
-    __all__ = ["main", "main_cli", "xgbClass"]
+    __all__ = ["main", "main_cli"]
 except ImportError:
     __all__ = []
