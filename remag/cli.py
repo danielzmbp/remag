@@ -210,7 +210,7 @@ def validate_coverage_options(ctx, param, value):
 @click.option(
     "--skip-bacterial-filter",
     is_flag=True,
-    help="Skip bacterial contig filtering using 4CAC classifier and contrastive learning.",
+    help="Skip eukaryotic contig filtering using HyenaDNA classifier (keeps all contigs).",
 )
 @click.option(
     "--skip-refinement",
@@ -249,21 +249,21 @@ def validate_coverage_options(ctx, param, value):
     type=click.FloatRange(min=0.01, max=5.0),
     default=1.0,
     show_default=True,
-    help="Resolution parameter for Leiden clustering (higher = more clusters). Only used with --clustering-method leiden.",
+    help="Resolution parameter for Leiden clustering (higher = more clusters).",
 )
 @click.option(
     "--leiden-k-neighbors",
     type=click.IntRange(min=5, max=100),
     default=15,
     show_default=True,
-    help="Number of nearest neighbors for k-NN graph construction in Leiden clustering. Only used with --clustering-method leiden.",
+    help="Number of nearest neighbors for k-NN graph construction in Leiden clustering.",
 )
 @click.option(
     "--leiden-similarity-threshold",
     type=click.FloatRange(min=0.0, max=1.0),
     default=0.1,
     show_default=True,
-    help="Minimum cosine similarity threshold for k-NN graph edges in Leiden clustering. Only used with --clustering-method leiden.",
+    help="Minimum cosine similarity threshold for k-NN graph edges in Leiden clustering.",
 )
 @click.option(
     "--keep-intermediate",

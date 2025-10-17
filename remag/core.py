@@ -30,11 +30,11 @@ def main(args):
             json.dump(vars(args), f, indent=4)
         logger.debug(f"Run parameters saved to {params_path}")
 
-    # Apply bacterial filtering if not skipped
+    # Apply eukaryotic filtering if not skipped
     input_fasta = args.fasta
     skip_bacterial_filter = getattr(args, "skip_bacterial_filter", False)
     if not skip_bacterial_filter:
-        logger.info("Applying bacterial contig filtering using 4CAC classifier...")
+        logger.info("Filtering non-eukaryotic contigs using HyenaDNA classifier...")
         input_fasta = filter_bacterial_contigs(
             args.fasta,
             args.output,
@@ -43,7 +43,7 @@ def main(args):
         )
         logger.info(f"Using filtered FASTA file: {input_fasta}")
     else:
-        logger.info("Skipping bacterial filtering as requested")
+        logger.info("Skipping eukaryotic filtering as requested")
 
     # Generate all features with full augmentations upfront
     logger.info(
