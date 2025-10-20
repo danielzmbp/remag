@@ -93,7 +93,7 @@ def get_features_csv_path(output_dir):
     return os.path.join(output_dir, "features.csv")
 
 
-def filter_bacterial_contigs(fasta_file, output_dir, min_contig_length=1000, cores=8, hyenadna_batch_size=1024):
+def filter_bacterial_contigs(fasta_file, output_dir, min_contig_length=1000, cores=8, hyenadna_batch_size=1024, use_adaptive_strategy=True):
     """
     Filter non-eukaryotic contigs using the HyenaDNA classifier.
     Keeps contigs predicted as eukaryotic with sufficient confidence.
@@ -104,6 +104,7 @@ def filter_bacterial_contigs(fasta_file, output_dir, min_contig_length=1000, cor
         min_contig_length: Minimum contig length threshold
         cores: Number of CPU cores to use (note: HyenaDNA uses GPU when available)
         hyenadna_batch_size: Batch size for HyenaDNA model inference (default: 1024)
+        use_adaptive_strategy: Use confidence-adaptive hybrid prediction strategy (default: True)
 
     Returns:
         str: Path to filtered FASTA file
@@ -122,8 +123,6 @@ def filter_bacterial_contigs(fasta_file, output_dir, min_contig_length=1000, cor
         logger.info(f"Using existing filtered FASTA: {filtered_fasta}")
         return filtered_fasta
 
-    logger.info("Filtering non-eukaryotic contigs using HyenaDNA classifier...")
-
     try:
         try:
             from .hyenadna_classifier import HyenaDNAClassifier
@@ -134,7 +133,8 @@ def filter_bacterial_contigs(fasta_file, output_dir, min_contig_length=1000, cor
         classifier = HyenaDNAClassifier(
             device='auto',
             min_contig_length=min_contig_length,
-            batch_size=hyenadna_batch_size
+            batch_size=hyenadna_batch_size,
+            use_adaptive_strategy=use_adaptive_strategy
         )
     except ImportError as e:
         logger.error(
