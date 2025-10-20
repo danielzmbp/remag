@@ -237,7 +237,7 @@ def refine_bin_with_leiden_clustering(
 
     # Log the base resolution being used for refinement
     base_resolution_value = getattr(args, 'leiden_resolution', 1.0)
-    logger.info(f"Bin {bin_id} refinement using base resolution: {base_resolution_value:.4f} (from auto-resolution or manual setting)")
+    logger.info(f"Bin {bin_id} refinement using base resolution: {base_resolution_value:.2f} (from auto-resolution or manual setting)")
 
     # Log duplication info for reference
     if bin_id in duplication_results:
