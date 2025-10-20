@@ -36,12 +36,14 @@ def main(args):
     if not skip_bacterial_filter:
         logger.info("Filtering non-eukaryotic contigs using HyenaDNA classifier...")
         hyenadna_batch_size = getattr(args, "hyenadna_batch_size", 1024)
+        use_adaptive_strategy = getattr(args, "hyenadna_adaptive_strategy", True)
         input_fasta = filter_bacterial_contigs(
             args.fasta,
             args.output,
             min_contig_length=args.min_contig_length,
             cores=args.cores,
             hyenadna_batch_size=hyenadna_batch_size,
+            use_adaptive_strategy=use_adaptive_strategy,
         )
         logger.info(f"Using filtered FASTA file: {input_fasta}")
     else:
@@ -87,7 +89,7 @@ def main(args):
             optimal_resolution = determine_optimal_resolution(embeddings_df, fragments_dict, args)
             # Update args with optimal resolution
             args.leiden_resolution = optimal_resolution
-            logger.info(f"Using automatically determined resolution: {optimal_resolution:.4f}")
+            logger.info(f"Using automatically determined resolution: {optimal_resolution:.2f}")
             auto_resolution_enabled = True
         except Exception as e:
             logger.warning(f"Adaptive resolution determination failed: {e}")

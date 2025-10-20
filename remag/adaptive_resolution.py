@@ -40,7 +40,7 @@ def estimate_resolution_from_organisms(estimated_organisms, base_resolution=0.1,
     # Clamp to reasonable bounds (minimum 0.05 ensures proper separation even for low-diversity samples)
     resolution = np.clip(resolution, 0.05, 5.0)
 
-    logger.info(f"Estimated {estimated_organisms:.1f} organisms → resolution={resolution:.4f}")
+    logger.info(f"Estimated {estimated_organisms:.1f} organisms → resolution={resolution:.2f}")
 
     return resolution
 
@@ -58,12 +58,12 @@ def test_multiple_resolutions(embeddings_df, gene_mappings_cache, args, test_res
     Returns:
         tuple: (best_resolution, results_dict)
     """
-    logger.info(f"Testing {len(test_resolutions)} resolution values: {[f'{r:.4f}' for r in test_resolutions]}")
+    logger.info(f"Testing {len(test_resolutions)} resolution values: {[f'{r:.2f}' for r in test_resolutions]}")
 
     results = {}
 
     for resolution in test_resolutions:
-        logger.info(f"Testing resolution={resolution:.4f}...")
+        logger.info(f"Testing resolution={resolution:.2f}...")
 
         # Perform clustering with this resolution
         cluster_labels = _leiden_clustering(
@@ -100,7 +100,7 @@ def test_multiple_resolutions(embeddings_df, gene_mappings_cache, args, test_res
             total_duplications = int(test_clusters_df.groupby('cluster')['duplicated_core_genes_count'].first().sum())
             bins_with_duplications = int(test_clusters_df.groupby('cluster')['has_duplicated_core_genes'].first().sum())
 
-            logger.info(f"Resolution {resolution:.4f}: {n_clusters} clusters, "
+            logger.info(f"Resolution {resolution:.2f}: {n_clusters} clusters, "
                        f"{bins_with_duplications} bins with duplications, "
                        f"{total_duplications} total duplicated genes")
 
@@ -112,7 +112,7 @@ def test_multiple_resolutions(embeddings_df, gene_mappings_cache, args, test_res
             }
 
         except Exception as e:
-            logger.warning(f"Failed to check duplications for resolution {resolution:.4f}: {e}")
+            logger.warning(f"Failed to check duplications for resolution {resolution:.2f}: {e}")
             results[resolution] = {
                 'n_clusters': n_clusters,
                 'bins_with_duplications': float('inf'),
@@ -124,7 +124,7 @@ def test_multiple_resolutions(embeddings_df, gene_mappings_cache, args, test_res
     best_resolution = min(results.keys(), key=lambda r: results[r]['total_duplications'])
     best_result = results[best_resolution]
 
-    logger.info(f"Best resolution: {best_resolution:.4f} with {best_result['n_clusters']} clusters, "
+    logger.info(f"Best resolution: {best_resolution:.2f} with {best_result['n_clusters']} clusters, "
                f"{best_result['total_duplications']} total duplications")
 
     return best_resolution, results
@@ -222,7 +222,7 @@ def determine_optimal_resolution(embeddings_df, fragments_dict, args):
 
     if gene_mappings_cache is None:
         logger.warning("No gene mappings cache available - cannot test multiple resolutions")
-        logger.info(f"Using base resolution estimate: {base_resolution:.4f}")
+        logger.info(f"Using base resolution estimate: {base_resolution:.2f}")
         return base_resolution
 
     # Step 5: Test resolutions and pick the best
@@ -254,6 +254,6 @@ def determine_optimal_resolution(embeddings_df, fragments_dict, args):
         except Exception as e:
             logger.warning(f"Failed to save resolution testing results: {e}")
 
-    logger.info(f"=== ADAPTIVE RESOLUTION COMPLETE: {best_resolution:.4f} ===")
+    logger.info(f"=== ADAPTIVE RESOLUTION COMPLETE: {best_resolution:.2f} ===")
 
     return best_resolution

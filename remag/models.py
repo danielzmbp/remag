@@ -745,8 +745,8 @@ def train_siamese_network(features_df, args):
             "Best": f"{trainer.early_stopping.best_loss:.4f}"
         })
 
-        # Print to screen every 5 epochs or on the last epoch
-        if (epoch + 1) % 5 == 0 or epoch == args.epochs - 1:
+        # Print to screen every 20 epochs or on the last epoch
+        if (epoch + 1) % 20 == 0 or epoch == args.epochs - 1:
             logger.info(f"Epoch {epoch+1}/{args.epochs} - Avg Loss: {avg_loss:.4f}, LR: {current_lr:.2e}")
 
     # Load best model
