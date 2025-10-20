@@ -188,7 +188,15 @@ def refine_bin_with_leiden_clustering(
     
     # Adaptive parameter selection with retry logic
     def get_adaptive_leiden_params(args, attempt, failure_reason=None):
-        """Get adaptive Leiden parameters based on attempt and previous failure."""
+        """Get adaptive Leiden parameters based on attempt and previous failure.
+
+        Note: base_resolution comes from args.leiden_resolution, which contains:
+        - The auto-calculated optimal resolution (when auto-resolution is enabled, the default)
+        - The user-specified resolution (when --leiden-resolution is provided)
+        - Fallback of 1.0 (only if auto-resolution fails and no manual value provided)
+
+        This ensures refinement adjustments are proportional to the sample's diversity level.
+        """
         base_resolution = getattr(args, 'leiden_resolution', 1.0)
         base_k_neighbors = getattr(args, 'leiden_k_neighbors', 15)
         base_threshold = getattr(args, 'leiden_similarity_threshold', 0.1)
@@ -226,7 +234,11 @@ def refine_bin_with_leiden_clustering(
     failure_reason = None
     refined_clusters_df = None
     n_clusters = 0
-    
+
+    # Log the base resolution being used for refinement
+    base_resolution_value = getattr(args, 'leiden_resolution', 1.0)
+    logger.info(f"Bin {bin_id} refinement using base resolution: {base_resolution_value:.4f} (from auto-resolution or manual setting)")
+
     # Log duplication info for reference
     if bin_id in duplication_results:
         duplicated_genes_count = len(duplication_results[bin_id]["duplicated_genes"])
@@ -234,7 +246,7 @@ def refine_bin_with_leiden_clustering(
         logger.info(
             f"Bin {bin_id} has {duplicated_genes_count} duplicated core genes out of {total_genes_found} total genes"
         )
-    
+
     for attempt in range(max_attempts):
         leiden_resolution, leiden_k_neighbors, leiden_similarity_threshold = get_adaptive_leiden_params(args, attempt, failure_reason)
         

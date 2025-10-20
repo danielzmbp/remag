@@ -20,6 +20,190 @@ def check_miniprot_available():
     return shutil.which("miniprot") is not None
 
 
+def estimate_organisms_from_all_contigs(fragments_dict, args, target_coverage_threshold=0.55, identity_threshold=0.35):
+    """
+    Run miniprot on all contigs to estimate the number of organisms based on core gene duplications.
+
+    This function treats all contigs as a single group and counts how many times each
+    single-copy core gene appears. The duplication counts provide an estimate of organism diversity.
+
+    Args:
+        fragments_dict: Dictionary mapping headers to sequences
+        args: Arguments object containing output directory, cores, etc.
+        target_coverage_threshold: Minimum target coverage for alignments
+        identity_threshold: Minimum identity for alignments
+
+    Returns:
+        dict: {gene_family: occurrence_count} for all core genes found
+    """
+    logger.info("Estimating organism count by running miniprot on all contigs...")
+
+    # Check if miniprot is available
+    if not check_miniprot_available():
+        logger.error("miniprot not found in PATH - cannot estimate organisms")
+        logger.error("Install miniprot with: conda install -c bioconda miniprot")
+        return {}
+
+    db_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "db", "refseq_db.faa.gz"
+    )
+    if not os.path.exists(db_path):
+        logger.warning("Eukaryotic database not found - cannot estimate organisms")
+        return {}
+
+    # Create temporary directory
+    temp_dir = os.path.join(args.output, "temp_organism_estimation")
+    os.makedirs(temp_dir, exist_ok=True)
+
+    try:
+        # Create a single FASTA file with all contigs
+        all_contigs_fasta = os.path.join(temp_dir, "all_contigs.fa")
+        with open(all_contigs_fasta, "w") as f:
+            for header, data in fragments_dict.items():
+                seq = data["sequence"]
+                f.write(f">{header}\n")
+                for i in range(0, len(seq), 60):
+                    f.write(f"{seq[i: i+60]}\n")
+
+        logger.info(f"Running miniprot on {len(fragments_dict)} contigs for organism estimation...")
+
+        # Run miniprot
+        miniprot_output = os.path.join(temp_dir, "all_contigs.paf")
+        miniprot_stderr = os.path.join(temp_dir, "all_contigs.stderr")
+
+        cmd_list = [
+            "miniprot",
+            "-I",
+            "-t", str(args.cores),
+            "--outs=0.95",
+            all_contigs_fasta,
+            db_path
+        ]
+
+        if args.verbose:
+            logger.debug(f"Running miniprot command: {' '.join(cmd_list)}")
+
+        with open(miniprot_output, 'w') as stdout_file, \
+             open(miniprot_stderr, 'w') as stderr_file:
+
+            process = subprocess.run(
+                cmd_list,
+                stdout=stdout_file,
+                stderr=stderr_file,
+                timeout=14400,  # 4 hour timeout
+                check=False
+            )
+            result = process.returncode
+
+        if result != 0:
+            logger.error(f"miniprot failed with exit code {result}")
+            if os.path.exists(miniprot_stderr) and os.path.getsize(miniprot_stderr) > 0:
+                with open(miniprot_stderr, "r") as f:
+                    logger.error(f"miniprot error: {f.read().strip()}")
+            return {}
+
+        # Parse miniprot output to count gene occurrences and build cache in single pass
+        gene_counts = {}  # {gene_family: count}
+        gene_mappings = {}  # {contig_name: {gene_family: {score, coverage, identity}}}
+
+        if os.path.exists(miniprot_output) and os.path.getsize(miniprot_output) > 0:
+            with open(miniprot_output, "r") as paf_file:
+                for line in paf_file:
+                    if line.startswith("#") or not line.strip():
+                        continue
+
+                    parts = line.strip().split("\t")
+                    if len(parts) >= 11:
+                        try:
+                            query_name = parts[0]  # Protein name
+                            target_name = parts[5]  # Contig name
+                            target_length = int(parts[6])
+                            target_start = int(parts[7])
+                            target_end = int(parts[8])
+                            matching_bases = int(parts[9])
+                            alignment_length = int(parts[10])
+
+                            # Extract gene family code
+                            full_gene_id = query_name.split()[0]
+                            if ":" in full_gene_id:
+                                gene_family_code = full_gene_id.split(":")[-1]
+                            else:
+                                gene_family_code = full_gene_id
+
+                            # Calculate quality metrics
+                            target_coverage = (
+                                (target_end - target_start) / target_length
+                                if target_length > 0 else 0
+                            )
+                            identity = (
+                                matching_bases / alignment_length
+                                if alignment_length > 0 else 0
+                            )
+
+                            # Only consider high-quality alignments
+                            if target_coverage >= target_coverage_threshold and identity >= identity_threshold:
+                                score = target_coverage * identity
+
+                                # Initialize contig entry in gene_mappings if needed
+                                if target_name not in gene_mappings:
+                                    gene_mappings[target_name] = {}
+
+                                # Keep best alignment per contig-gene pair
+                                if (gene_family_code not in gene_mappings[target_name] or
+                                    score > gene_mappings[target_name][gene_family_code]["score"]):
+                                    gene_mappings[target_name][gene_family_code] = {
+                                        "score": score,
+                                        "coverage": target_coverage,
+                                        "identity": identity
+                                    }
+
+                        except (ValueError, IndexError):
+                            continue
+
+        # Count occurrences of each gene family from gene_mappings
+        for contig_name, genes in gene_mappings.items():
+            for gene_family in genes.keys():
+                gene_counts[gene_family] = gene_counts.get(gene_family, 0) + 1
+
+        logger.info(f"Found {len(gene_counts)} core genes across all contigs")
+
+        # Log statistics
+        if gene_counts:
+            counts_list = list(gene_counts.values())
+            max_count = max(counts_list)
+            median_count = sorted(counts_list)[len(counts_list) // 2]
+            logger.info(f"Core gene occurrence statistics: max={max_count}, median={median_count}")
+
+        # Save cache if we have data
+        if gene_mappings:
+            cache_path = get_gene_mappings_cache_path(args)
+            try:
+                import json
+                with open(cache_path, "w") as f:
+                    json.dump(gene_mappings, f, indent=2)
+                logger.info(f"Saved gene mappings cache for {len(gene_mappings)} contigs to {cache_path}")
+            except Exception as e:
+                logger.warning(f"Failed to save gene mappings cache: {e}")
+
+        return gene_counts
+
+    except Exception as e:
+        logger.error(f"Error during organism estimation: {e}")
+        return {}
+
+    finally:
+        # Clean up temp files unless keeping intermediate
+        if not getattr(args, "keep_intermediate", False):
+            if os.path.exists(temp_dir):
+                try:
+                    shutil.rmtree(temp_dir)
+                    logger.debug(f"Cleaned up temporary organism estimation files at: {temp_dir}")
+                except Exception as e:
+                    logger.warning(f"Failed to clean up temporary files: {e}")
+        else:
+            logger.info(f"Organism estimation files preserved at: {temp_dir}")
+
+
 def get_core_gene_duplication_results_path(args):
     """Get the path for the core gene duplication results file."""
     return os.path.join(args.output, "core_gene_duplication_results.json")
@@ -196,10 +380,20 @@ def check_core_gene_duplications_from_cache(clusters_df, gene_mappings_cache, ar
         1 for r in duplication_results.values() if r["has_duplications"]
     )
     total_bins_checked = len(duplication_results)
-    logger.debug(
+    logger.info(
         f"Checked {total_bins_checked} bins using cache: {bins_with_duplications} have duplicated core genes"
     )
-    
+
+    # Save results only if keeping intermediate files (consistent with check_core_gene_duplications)
+    if getattr(args, "keep_intermediate", False):
+        results_path = get_core_gene_duplication_results_path(args)
+        try:
+            with open(results_path, "w") as f:
+                json.dump(duplication_results, f, indent=2)
+            logger.debug(f"Saved duplication results to {results_path}")
+        except Exception as e:
+            logger.warning(f"Failed to save duplication results: {e}")
+
     return clusters_df
 
 

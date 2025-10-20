@@ -66,15 +66,15 @@ click.rich_click.OPTION_GROUPS = {
         },
         {
             "name": "Contrastive Learning",
-            "options": ["--epochs", "--batch-size", "--embedding-dim", "--nce-temperature", "--base-learning-rate", "--max-positive-pairs", "--num-augmentations"],
+            "options": ["--epochs", "--batch-size", "--embedding-dim", "--base-learning-rate", "--max-positive-pairs", "--num-augmentations"],
         },
         {
             "name": "Clustering",
-            "options": ["--min-cluster-size", "--leiden-resolution", "--leiden-k-neighbors", "--leiden-similarity-threshold"],
+            "options": ["--min-cluster-size", "--leiden-resolution", "--auto-resolution", "--leiden-k-neighbors", "--leiden-similarity-threshold"],
         },
         {
             "name": "Filtering & Processing",
-            "options": ["--min-contig-length", "--min-bin-size", "--skip-bacterial-filter", "--skip-refinement", "--max-refinement-rounds", "--min-duplications-for-refinement", "--skip-chimera-detection", "--keep-intermediate"],
+            "options": ["--min-contig-length", "--min-bin-size", "--coverage-batch-size", "--hyenadna-batch-size", "--skip-bacterial-filter", "--skip-refinement", "--max-refinement-rounds", "--min-duplications-for-refinement", "--skip-chimera-detection", "--keep-intermediate"],
         },
         {
             "name": "General",
@@ -144,7 +144,7 @@ def validate_coverage_options(ctx, param, value):
 )
 @click.option(
     "--epochs",
-    type=click.IntRange(min=20, max=2000),
+    type=click.IntRange(min=10, max=2000),
     default=400,
     show_default=True,
     help="Number of training epochs for contrastive learning model.",
@@ -239,17 +239,24 @@ def validate_coverage_options(ctx, param, value):
     help="Number of random fragments per contig for data augmentation.",
 )
 @click.option(
-    "--enable-chimera-detection",
+    "--skip-chimera-detection",
     is_flag=True,
-    default=False,
-    help="Enable chimeric contig detection and splitting for large contigs.",
+    default=True,
+    help="Skip chimeric contig detection and splitting for large contigs (default: skip).",
 )
 @click.option(
     "--leiden-resolution",
-    type=click.FloatRange(min=0.01, max=5.0),
-    default=1.0,
+    type=click.FloatRange(min=0.05, max=5.0),
+    default=None,
+    show_default=False,
+    help="Resolution parameter for Leiden clustering (higher = more clusters). If not specified, auto-resolution is used to determine optimal value based on core gene duplications.",
+)
+@click.option(
+    "--auto-resolution",
+    is_flag=True,
+    default=True,
     show_default=True,
-    help="Resolution parameter for Leiden clustering (higher = more clusters).",
+    help="Automatically determine optimal Leiden resolution based on core gene duplications (enabled by default). Disabled if --leiden-resolution is specified.",
 )
 @click.option(
     "--leiden-k-neighbors",
@@ -272,10 +279,18 @@ def validate_coverage_options(ctx, param, value):
     help="Keep intermediate files (embeddings, features, model, etc.). By default, only bins.csv and bins/ folder are kept.",
 )
 @click.option(
-    "--skip-kmeans-filtering",
-    is_flag=True,
-    default=False,
-    help="Skip k-means pre-filtering to remove small, low-confidence clusters.",
+    "--coverage-batch-size",
+    type=click.IntRange(min=1000, max=500000),
+    default=100000,
+    show_default=True,
+    help="Number of contigs to process per batch when calculating coverage from alignment files. Reduce this value if running out of memory with very large datasets.",
+)
+@click.option(
+    "--hyenadna-batch-size",
+    type=click.IntRange(min=16, max=4096),
+    default=1024,
+    show_default=True,
+    help="Batch size for HyenaDNA model inference. Higher values speed up GPU inference but use more VRAM. Use 2048-4096 for high-end GPUs.",
 )
 def main_cli(
     fasta,
@@ -296,12 +311,14 @@ def main_cli(
     max_refinement_rounds,
     min_duplications_for_refinement,
     num_augmentations,
-    enable_chimera_detection,
+    skip_chimera_detection,
+    auto_resolution,
     leiden_resolution,
     leiden_k_neighbors,
     leiden_similarity_threshold,
     keep_intermediate,
-    skip_kmeans_filtering,
+    coverage_batch_size,
+    hyenadna_batch_size,
 ):
     """REMAG: Recovery of eukaryotic genomes using contrastive learning."""
     # Validate resource parameters
@@ -320,6 +337,18 @@ def main_cli(
         recommended_batch_size = int((available_memory_gb * 0.8) / 0.001)
         click.echo(f"Warning: Batch size {batch_size} may exceed available memory ({available_memory_gb:.1f}GB). "
                    f"Consider reducing to {recommended_batch_size}.", err=True)
+
+    # Handle auto-resolution vs manual resolution logic
+    if leiden_resolution is not None:
+        # User explicitly specified resolution, disable auto-resolution
+        auto_resolution = False
+        click.echo(f"Using manual Leiden resolution: {leiden_resolution}", err=True)
+    else:
+        # No manual resolution specified, use auto-resolution (default)
+        leiden_resolution = 1.0  # Fallback if auto-resolution fails
+        if auto_resolution:
+            click.echo("Auto-resolution enabled (default). Use --leiden-resolution to specify manually.", err=True)
+
     # Separate coverage files by type
     bam_cram_files = []
     tsv_files = []
@@ -352,12 +381,14 @@ def main_cli(
         max_refinement_rounds=max_refinement_rounds,
         min_duplications_for_refinement=min_duplications_for_refinement,
         num_augmentations=num_augmentations,
-        skip_chimera_detection=not enable_chimera_detection,
+        skip_chimera_detection=skip_chimera_detection,
+        auto_resolution=auto_resolution,
         leiden_resolution=leiden_resolution,
         leiden_k_neighbors=leiden_k_neighbors,
         leiden_similarity_threshold=leiden_similarity_threshold,
         keep_intermediate=keep_intermediate,
-        skip_kmeans_filtering=skip_kmeans_filtering,
+        coverage_batch_size=coverage_batch_size,
+        hyenadna_batch_size=hyenadna_batch_size,
     )
     run_remag(args)
 

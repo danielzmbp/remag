@@ -7,6 +7,7 @@ sequence detection.
 """
 
 import os
+import random
 from pathlib import Path
 from typing import List, Dict, Tuple
 from itertools import islice
@@ -62,6 +63,32 @@ def estimate_window_count(seq_len: int, window_size: int = 1024, stride: int = 5
     has_partial = next_start < seq_len and (seq_len - next_start) >= window_size // 2
 
     return full_windows + (1 if has_partial else 0)
+
+
+def generate_random_windows(sequence: str, window_size: int, num_windows: int) -> List[str]:
+    """Generate random windows from a sequence for additional sampling.
+
+    Args:
+        sequence: DNA sequence to sample from
+        window_size: Size of each window
+        num_windows: Number of random windows to generate
+
+    Returns:
+        List of random window sequences
+    """
+    seq_len = len(sequence)
+    if seq_len <= window_size:
+        return [sequence]
+
+    windows = []
+    max_start = seq_len - window_size
+
+    for _ in range(num_windows):
+        start = random.randint(0, max_start)
+        window = sequence[start:start + window_size]
+        windows.append(window)
+
+    return windows
 
 
 def _build_window_encoder(tokenizer):
@@ -266,14 +293,21 @@ class HyenaDNAClassifier:
         sequence: str,
         adaptive_stride: bool = True,
         early_stopping: bool = True,
+        low_confidence_threshold: float = 0.75,
+        additional_random_windows: int = 8,
     ) -> Dict:
         """
         Predict whether a contig is eukaryotic using sliding window + average probability.
+
+        Uses adaptive sampling: starts with sliding windows, then if uncertainty is detected
+        early, switches to random sampling to get better coverage efficiently.
 
         Args:
             sequence: DNA sequence to classify
             adaptive_stride: Use adaptive stride based on sequence length
             early_stopping: Stop early when confidence is high
+            low_confidence_threshold: Confidence threshold below which to add random windows (default: 0.75)
+            additional_random_windows: Number of random windows to add when confidence is low (default: 8)
 
         Returns:
             Dictionary with prediction results including:
@@ -282,6 +316,7 @@ class HyenaDNAClassifier:
                 - confidence: Fraction of windows agreeing with final prediction
                 - num_windows: Number of windows analyzed
                 - length: Sequence length
+                - resampled: Boolean indicating if random sampling was triggered
         """
         seq_len = len(sequence)
 
@@ -301,6 +336,8 @@ class HyenaDNAClassifier:
         num_windows = 0
         num_eukaryote = 0
         prob_sum = 0.0
+        resampled = False
+        uncertainty_detected = False
 
         while True:
             batch = list(islice(window_iter, self.batch_size))
@@ -316,24 +353,53 @@ class HyenaDNAClassifier:
             num_eukaryote += euk_count
             prob_sum += prob_total
 
-            if early_stopping:
-                # Early stopping based on impossible outcomes
+            if early_stopping and num_windows >= 3:
+                # Calculate current confidence
+                avg_prob = prob_sum / num_windows
+                is_eukaryote = avg_prob >= 0.5
+
+                if is_eukaryote:
+                    confidence = num_eukaryote / num_windows
+                else:
+                    confidence = (num_windows - num_eukaryote) / num_windows
+
+                # High confidence - stop early
+                if confidence >= 0.90:
+                    break
+
+                # Low confidence detected - switch to random sampling immediately
+                if confidence < low_confidence_threshold and not uncertainty_detected and seq_len > self.window_size:
+                    uncertainty_detected = True
+                    resampled = True
+
+                    # Generate random windows and add them to current batch processing
+                    random_windows = generate_random_windows(sequence, self.window_size, additional_random_windows)
+                    euk_count_extra, prob_total_extra, batch_windows_extra = self._predict_window_stats(random_windows)
+
+                    if batch_windows_extra > 0:
+                        num_windows += batch_windows_extra
+                        num_eukaryote += euk_count_extra
+                        prob_sum += prob_total_extra
+
+                        # Recalculate confidence with random windows added
+                        avg_prob = prob_sum / num_windows
+                        is_eukaryote = avg_prob >= 0.5
+
+                        if is_eukaryote:
+                            confidence = num_eukaryote / num_windows
+                        else:
+                            confidence = (num_windows - num_eukaryote) / num_windows
+
+                        # Check if random sampling resolved uncertainty
+                        if confidence >= 0.85:
+                            break
+
+                # Check impossible outcomes for early stopping
                 if total_windows is not None and (
                     2 * num_eukaryote > total_windows
                     or 2 * (num_windows - num_eukaryote) > total_windows
                 ):
                     break
-
-                # Early stopping based on confidence
-                if num_windows >= 3:
-                    majority_pred = 1 if num_eukaryote * 2 > num_windows else 0
-                    if majority_pred == 1:
-                        confidence = num_eukaryote / num_windows
-                    else:
-                        confidence = (num_windows - num_eukaryote) / num_windows
-
-                    if confidence >= 0.90:
-                        break
 
         if num_windows == 0:
             return {
@@ -341,16 +407,14 @@ class HyenaDNAClassifier:
                 'eukaryote_prob': 0.0,
                 'confidence': 0.0,
                 'num_windows': 0,
-                'length': seq_len
+                'length': seq_len,
+                'resampled': False
             }
 
-        # Calculate average probability across all windows
+        # Calculate final results
         avg_prob = prob_sum / num_windows if num_windows else 0.0
-
-        # Use average probability (not majority vote) for classification
         is_eukaryote = avg_prob >= 0.5
 
-        # Confidence = fraction of windows agreeing with the final prediction
         if is_eukaryote:
             confidence = num_eukaryote / num_windows
         else:
@@ -361,7 +425,8 @@ class HyenaDNAClassifier:
             'eukaryote_prob': float(avg_prob),
             'confidence': float(confidence),
             'num_windows': num_windows,
-            'length': seq_len
+            'length': seq_len,
+            'resampled': resampled
         }
 
     def classify(self, sequences):
