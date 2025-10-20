@@ -113,15 +113,16 @@ class TrainingManager:
         
         scheduler = LearningRateScheduler.create_warmup_cosine_scheduler(optimizer, self.args)
         criterion = BarlowTwinsLoss(lambda_param=5e-3)
-        
+
         return dataloader, optimizer, scheduler, criterion
     
     def train_epoch(self, model, dataloader, optimizer, criterion):
         """Train for one epoch and return average loss."""
         model.train()
         running_loss = 0.0
+        matrix_stats = None
 
-        for features1, features2, base_ids in dataloader:
+        for batch_idx, (features1, features2, base_ids) in enumerate(dataloader):
             features1, features2, base_ids = (
                 features1.to(self.device),
                 features2.to(self.device),
@@ -130,14 +131,21 @@ class TrainingManager:
 
             optimizer.zero_grad()
             output1, output2 = model(features1, features2)
-            loss = criterion(output1, output2, base_ids)
+
+            # Get matrix statistics from last batch for debug logging
+            is_last_batch = (batch_idx == len(dataloader) - 1)
+            if is_last_batch:
+                loss, matrix_stats = criterion(output1, output2, base_ids, return_stats=True)
+            else:
+                loss = criterion(output1, output2, base_ids)
+
             loss.backward()
-            
+
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
             running_loss += loss.item()
 
-        return running_loss / len(dataloader)
+        return running_loss / len(dataloader), matrix_stats
 
 
 def get_model_path(args):
@@ -506,32 +514,49 @@ class BarlowTwinsLoss(nn.Module):
         self.lambda_param = lambda_param
         self.eps = eps
     
-    def forward(self, output1, output2, base_ids=None):
+    def forward(self, output1, output2, base_ids=None, return_stats=False):
         """
         Args:
             output1: a tensor of shape (batch_size, projection_dim)
-            output2: a tensor of shape (batch_size, projection_dim)  
+            output2: a tensor of shape (batch_size, projection_dim)
             base_ids: unused in Barlow Twins but kept for compatibility
+            return_stats: if True, return (loss, stats_dict) instead of just loss
         """
         batch_size, projection_dim = output1.shape
-        
+
         # Normalize embeddings along the batch dimension (zero mean, unit std)
         output1_norm = (output1 - output1.mean(dim=0)) / (output1.std(dim=0) + self.eps)
         output2_norm = (output2 - output2.mean(dim=0)) / (output2.std(dim=0) + self.eps)
-        
+
         # Compute cross-correlation matrix
         cross_corr = torch.matmul(output1_norm.T, output2_norm) / batch_size
-        
+
         # Compute invariance loss (diagonal terms should be close to 1)
         invariance_loss = torch.pow(torch.diagonal(cross_corr) - 1.0, 2).sum()
-        
+
         # Compute redundancy reduction loss (off-diagonal terms should be close to 0)
         off_diagonal_mask = ~torch.eye(projection_dim, dtype=torch.bool, device=output1.device)
         redundancy_loss = torch.pow(cross_corr[off_diagonal_mask], 2).sum()
-        
+
         # Total loss
         loss = invariance_loss + self.lambda_param * redundancy_loss
-        
+
+        # Optionally compute statistics for debugging
+        if return_stats:
+            with torch.no_grad():
+                diagonal = torch.diagonal(cross_corr)
+                off_diagonal = cross_corr[off_diagonal_mask]
+
+                stats = {
+                    'mean_diagonal': diagonal.mean().item(),
+                    'std_diagonal': diagonal.std().item(),
+                    'mean_abs_off_diagonal': off_diagonal.abs().mean().item(),
+                    'max_abs_off_diagonal': off_diagonal.abs().max().item(),
+                    'invariance_loss': invariance_loss.item(),
+                    'redundancy_loss': redundancy_loss.item(),
+                }
+                return loss, stats
+
         return loss
 
 
@@ -691,25 +716,35 @@ def train_siamese_network(features_df, args):
     epoch_progress = tqdm(range(args.epochs), desc="Training Progress")
     
     for epoch in epoch_progress:
-        avg_loss = trainer.train_epoch(model, dataloader, optimizer, criterion)
+        avg_loss, matrix_stats = trainer.train_epoch(model, dataloader, optimizer, criterion)
         scheduler.step()
         current_lr = optimizer.param_groups[0]["lr"]
 
         logger.debug(f"Epoch {epoch+1}/{args.epochs} - Avg Loss: {avg_loss:.4f}, LR: {current_lr:.2e}")
-        
+
+        # Log cross-correlation matrix statistics for debugging
+        if matrix_stats is not None:
+            logger.debug(
+                f"Cross-correlation matrix stats - "
+                f"Diagonal: {matrix_stats['mean_diagonal']:.4f} ± {matrix_stats['std_diagonal']:.4f}, "
+                f"Off-diagonal: {matrix_stats['mean_abs_off_diagonal']:.4f} (max: {matrix_stats['max_abs_off_diagonal']:.4f}), "
+                f"Invariance loss: {matrix_stats['invariance_loss']:.2f}, "
+                f"Redundancy loss: {matrix_stats['redundancy_loss']:.2f}"
+            )
+
         # Early stopping check
         trainer.early_stopping.check_improvement(avg_loss, model.state_dict())
         if trainer.early_stopping.should_stop():
             logger.info(f"Early stopping after {epoch+1} epochs (patience: {trainer.early_stopping.patience})")
             break
-        
+
         # Update progress bar
         epoch_progress.set_postfix({
             "Loss": f"{avg_loss:.4f}",
             "LR": f"{current_lr:.2e}",
             "Best": f"{trainer.early_stopping.best_loss:.4f}"
         })
-        
+
         # Print to screen every 5 epochs or on the last epoch
         if (epoch + 1) % 5 == 0 or epoch == args.epochs - 1:
             logger.info(f"Epoch {epoch+1}/{args.epochs} - Avg Loss: {avg_loss:.4f}, LR: {current_lr:.2e}")
