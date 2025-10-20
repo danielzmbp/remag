@@ -8,7 +8,6 @@ import pandas as pd
 import pysam
 import os
 import random
-import re
 from collections import OrderedDict
 from multiprocessing import Pool
 from typing import Dict, List, Tuple, Optional, Set
@@ -16,7 +15,7 @@ from tqdm import tqdm
 from loguru import logger
 from sklearn.preprocessing import MinMaxScaler
 
-from .utils import open_file, fasta_iter, FragmentDict, CoverageDict
+from .utils import fasta_iter, FragmentDict, CoverageDict
 
 
 def generate_feature_mapping(kmer_len):
@@ -94,7 +93,7 @@ def get_features_csv_path(output_dir):
     return os.path.join(output_dir, "features.csv")
 
 
-def filter_bacterial_contigs(fasta_file, output_dir, min_contig_length=1000, cores=8):
+def filter_bacterial_contigs(fasta_file, output_dir, min_contig_length=1000, cores=8, hyenadna_batch_size=1024):
     """
     Filter non-eukaryotic contigs using the HyenaDNA classifier.
     Keeps contigs predicted as eukaryotic with sufficient confidence.
@@ -104,6 +103,7 @@ def filter_bacterial_contigs(fasta_file, output_dir, min_contig_length=1000, cor
         output_dir: Output directory for filtered results
         min_contig_length: Minimum contig length threshold
         cores: Number of CPU cores to use (note: HyenaDNA uses GPU when available)
+        hyenadna_batch_size: Batch size for HyenaDNA model inference (default: 1024)
 
     Returns:
         str: Path to filtered FASTA file
@@ -134,7 +134,7 @@ def filter_bacterial_contigs(fasta_file, output_dir, min_contig_length=1000, cor
         classifier = HyenaDNAClassifier(
             device='auto',
             min_contig_length=min_contig_length,
-            batch_size=64
+            batch_size=hyenadna_batch_size
         )
     except ImportError as e:
         logger.error(
@@ -145,84 +145,71 @@ def filter_bacterial_contigs(fasta_file, output_dir, min_contig_length=1000, cor
         logger.error(f"Failed to initialize HyenaDNA classifier: {e}")
         return fasta_file
 
-    seq_names, seqs = [], []
-    eukaryotic_sequences = []
     n_total = n_eukaryotic = n_filtered = 0
     confidence_threshold = 0.5  # Threshold for eukaryotic confidence
 
-    def process_batch(seq_names, seqs, results_file):
-        """Process a batch of sequences through classification."""
-        nonlocal n_eukaryotic, n_filtered
+    # Use temporary file for writing sequences immediately
+    temp_fasta = filtered_fasta + ".tmp"
 
-        if not seqs:
-            return
+    with open(classification_results, "w", encoding="utf-8") as results_file, \
+         open(temp_fasta, "w", encoding="utf-8") as fasta_out:
 
-        try:
-            # Get detailed predictions with confidence and window info for each sequence
-            for j, seq in enumerate(seqs):
+        results_file.write(
+            "contig_id\tlength\tprediction\teukaryote_prob\tconfidence\tnum_windows\tresampled\n"
+        )
+
+        # Process sequences one at a time
+        logger.info("Classifying sequences...")
+        for header, seq in tqdm(fasta_iter(fasta_file), desc="Classifying sequences"):
+            if len(seq) < min_contig_length:
+                continue
+
+            n_total += 1
+            seq_upper = seq.upper()
+
+            try:
                 # Get detailed prediction results using predict_contig
-                result = classifier.predict_contig(seq)
+                result = classifier.predict_contig(seq_upper)
 
                 prediction = result['prediction']
                 euk_prob = result['eukaryote_prob']
                 confidence = result['confidence']
                 num_windows = result['num_windows']
+                resampled = result.get('resampled', False)
 
                 results_file.write(
-                    f"{seq_names[j]}\t{len(seq)}\t{prediction}\t{euk_prob:.4f}\t{confidence:.4f}\t{num_windows}\n"
+                    f"{header}\t{len(seq)}\t{prediction}\t{euk_prob:.4f}\t{confidence:.4f}\t{num_windows}\t{resampled}\n"
                 )
 
-                # Keep sequences predicted as eukaryotic with confidence >= threshold
+                # Write eukaryotic sequences immediately to temp file
                 if prediction == "eukaryote" and euk_prob >= confidence_threshold:
-                    eukaryotic_sequences.append((seq_names[j], seq))
+                    fasta_out.write(f">{header}\n")
+                    for i in range(0, len(seq_upper), 60):
+                        fasta_out.write(f"{seq_upper[i:i+60]}\n")
                     n_eukaryotic += 1
                 else:
                     n_filtered += 1
 
-        except Exception as e:
-            logger.error(f"Classification error: {e}")
-            # On error, keep all sequences to be safe
-            for j in range(len(seqs)):
-                eukaryotic_sequences.append((seq_names[j], seqs[j]))
+            except Exception as e:
+                logger.error(f"Classification error for {header}: {e}")
+                # On error, keep sequence to be safe
+                fasta_out.write(f">{header}\n")
+                for i in range(0, len(seq_upper), 60):
+                    fasta_out.write(f"{seq_upper[i:i+60]}\n")
                 n_eukaryotic += 1
-
-    with open(classification_results, "w", encoding="utf-8") as results_file:
-        results_file.write(
-            "contig_id\tlength\tprediction\teukaryote_prob\tconfidence\tnum_windows\n"
-        )
-
-        # Process sequences in batches
-        logger.info("Classifying sequences...")
-        for header, seq in tqdm(fasta_iter(fasta_file), desc="Processing sequences"):
-            if len(seq) < min_contig_length:
-                continue
-
-            seq_names.append(header)
-            seqs.append(seq.upper())
-            n_total += 1
-
-            # Process in batches of 10,000 to manage memory
-            if len(seqs) >= 10000:
-                process_batch(seq_names, seqs, results_file)
-                seq_names, seqs = [], []
-
-        # Process remaining sequences
-        process_batch(seq_names, seqs, results_file)
 
     logger.info(
         f"Processed {n_total} sequences: kept {n_eukaryotic} eukaryotic, filtered {n_filtered} non-eukaryotic"
     )
 
+    # Handle the case where no eukaryotic sequences were found
     if n_eukaryotic == 0:
+        os.remove(temp_fasta)
         logger.warning("No eukaryotic sequences found, keeping all sequences")
         return fasta_file
 
-    with open(filtered_fasta, "w", encoding="utf-8") as f:
-        for header, sequence in eukaryotic_sequences:
-            f.write(f">{header}\n")
-            for i in range(0, len(sequence), 60):
-                f.write(f"{sequence[i: i+60]}\n")
-
+    # Rename temp file to final filtered fasta
+    os.rename(temp_fasta, filtered_fasta)
     logger.info(f"Filtered FASTA saved to: {filtered_fasta}")
     return filtered_fasta
 
@@ -522,9 +509,10 @@ def get_features(
 
             # Verify and update coverage if needed
             needs_recalc = False
+            coverage_batch_size = getattr(args, "coverage_batch_size", 100000)
             if bam_files and not any("_coverage" in col for col in df.columns):
                 needs_recalc = True
-                coverage_calculator = BAMCoverageCalculator(bam_files, cores)
+                coverage_calculator = BAMCoverageCalculator(bam_files, cores, coverage_batch_size)
             elif tsv_files:
                 expected_cols = [os.path.splitext(os.path.basename(f))[0] for f in tsv_files]
                 missing_cols = [col for col in expected_cols if col not in df.columns]
@@ -611,9 +599,10 @@ def get_features(
 
     # Calculate coverage using appropriate calculator
     coverage_calculator = None
+    coverage_batch_size = getattr(args, "coverage_batch_size", 100000)
     if bam_files:
         logger.debug("Calculating coverage from alignment files...")
-        coverage_calculator = BAMCoverageCalculator(bam_files, cores)
+        coverage_calculator = BAMCoverageCalculator(bam_files, cores, coverage_batch_size)
     elif tsv_files:
         logger.debug("Calculating coverage from TSV files...")
         coverage_calculator = TSVCoverageCalculator(tsv_files, cores)
@@ -692,15 +681,16 @@ class CoverageCalculator:
 
 class BAMCoverageCalculator(CoverageCalculator):
     """Calculate coverage from BAM/CRAM files."""
-    
-    def __init__(self, bam_files: List[str], cores: int = 16):
+
+    def __init__(self, bam_files: List[str], cores: int = 16, coverage_batch_size: int = 100000):
         super().__init__(cores)
         self.bam_files = bam_files
-    
+        self.coverage_batch_size = coverage_batch_size
+
     def calculate_coverage(self, fragments_dict: FragmentDict) -> pd.DataFrame:
         """Calculate coverage from multiple BAM/CRAM files."""
         return calculate_coverage_from_multiple_bams(
-            self.bam_files, fragments_dict, self.cores
+            self.bam_files, fragments_dict, self.cores, self.coverage_batch_size
         )
 
 
@@ -979,7 +969,7 @@ def _calculate_fragment_stats_vectorized(coverage_array, fragment_coords):
 
 
 def calculate_fragment_coverage(
-    bam_file: str, fragments_dict: FragmentDict, cores: int = 16
+    bam_file: str, fragments_dict: FragmentDict, cores: int = 16, coverage_batch_size: int = 100000
 ) -> Tuple[CoverageDict, CoverageDict]:
     """Calculate average coverage and standard deviation for each fragment."""
     fragment_coverage: CoverageDict = {}
@@ -1016,49 +1006,82 @@ def calculate_fragment_coverage(
                         contig_fragments[bam_contig_name] = []
                     contig_fragments[bam_contig_name].append((original_header, data))
 
-            # Pre-load coverage data for all contigs to avoid BAM I/O in workers
-            logger.info(f"Pre-loading coverage data for {len(contig_fragments)} contigs...")
-            coverage_data = {}
-            
-            for bam_contig_name in tqdm(contig_fragments.keys(), desc="Loading coverage"):
-                bam_contig_length = bam_lengths.get(bam_contig_name)
-                if bam_contig_length is None:
-                    coverage_data[bam_contig_name] = (None, None)
-                    continue
-                    
-                try:
-                    coverage_arrays = bamfile.count_coverage(
-                        contig=bam_contig_name,
-                        start=0,
-                        stop=bam_contig_length,
-                        quality_threshold=0,
-                    )
-                    total_coverage_per_base = np.sum(coverage_arrays, axis=0)
-                    coverage_data[bam_contig_name] = (total_coverage_per_base, bam_contig_length)
-                except Exception as e:
-                    logger.warning(f"Error loading coverage for contig {bam_contig_name}: {e}")
-                    coverage_data[bam_contig_name] = (None, None)
+            # Process coverage data in batches to reduce memory usage
+            # Calculate total bases to estimate memory requirements
+            total_bases = sum(bam_lengths.get(contig, 0) for contig in contig_fragments.keys())
 
-            # Process contigs in parallel with pre-loaded coverage data
-            logger.info(f"Processing {len(contig_fragments)} contigs using {cores} cores...")
-            worker_args = [
-                (
-                    bam_contig_name,
-                    contig_data_list,
-                    coverage_data[bam_contig_name][0],  # total_coverage_per_base
-                    coverage_data[bam_contig_name][1],  # bam_contig_length
-                )
-                for bam_contig_name, contig_data_list in contig_fragments.items()
-            ]
+            # Use batching if total data size is large (>1GB of coverage data estimated)
+            # Each base takes ~4 bytes for coverage array, so 250M bases ≈ 1GB
+            use_batching = total_bases > 250_000_000
 
-            with Pool(processes=cores) as pool:
-                results = list(
-                    tqdm(
-                        pool.imap(_process_contig_coverage_worker, worker_args),
-                        total=len(worker_args),
-                        desc="Processing fragments",
+            if use_batching:
+                batch_size = coverage_batch_size
+            else:
+                batch_size = len(contig_fragments)
+
+            contig_list = list(contig_fragments.items())
+            num_batches = (len(contig_list) + batch_size - 1) // batch_size
+
+            if use_batching:
+                logger.info(f"Processing {len(contig_fragments)} contigs ({total_bases:,} total bases) in {num_batches} batches (batch_size={batch_size}) using {cores} cores...")
+                logger.info(f"Estimated peak memory for coverage: ~{(batch_size * (total_bases / len(contig_fragments)) * 4 / 1e9):.2f} GB per batch")
+            else:
+                logger.info(f"Processing {len(contig_fragments)} contigs ({total_bases:,} total bases) using {cores} cores...")
+
+            results = []
+            for batch_idx in range(num_batches):
+                start_idx = batch_idx * batch_size
+                end_idx = min(start_idx + batch_size, len(contig_list))
+                batch_contigs = contig_list[start_idx:end_idx]
+
+                logger.info(f"Processing batch {batch_idx + 1}/{num_batches} ({len(batch_contigs)} contigs)...")
+
+                # Load coverage data only for this batch
+                coverage_data = {}
+                for bam_contig_name, _ in tqdm(batch_contigs, desc=f"Loading coverage (batch {batch_idx + 1}/{num_batches})"):
+                    bam_contig_length = bam_lengths.get(bam_contig_name)
+                    if bam_contig_length is None:
+                        coverage_data[bam_contig_name] = (None, None)
+                        continue
+
+                    try:
+                        coverage_arrays = bamfile.count_coverage(
+                            contig=bam_contig_name,
+                            start=0,
+                            stop=bam_contig_length,
+                            quality_threshold=0,
+                        )
+                        total_coverage_per_base = np.sum(coverage_arrays, axis=0)
+                        coverage_data[bam_contig_name] = (total_coverage_per_base, bam_contig_length)
+                    except Exception as e:
+                        logger.warning(f"Error loading coverage for contig {bam_contig_name}: {e}")
+                        coverage_data[bam_contig_name] = (None, None)
+
+                # Process this batch with pre-loaded coverage data
+                worker_args = [
+                    (
+                        bam_contig_name,
+                        contig_data_list,
+                        coverage_data[bam_contig_name][0],  # total_coverage_per_base
+                        coverage_data[bam_contig_name][1],  # bam_contig_length
                     )
-                )
+                    for bam_contig_name, contig_data_list in batch_contigs
+                ]
+
+                with Pool(processes=cores) as pool:
+                    batch_results = list(
+                        tqdm(
+                            pool.imap(_process_contig_coverage_worker, worker_args),
+                            total=len(worker_args),
+                            desc=f"Processing fragments (batch {batch_idx + 1}/{num_batches})",
+                        )
+                    )
+
+                results.extend(batch_results)
+
+                # Explicitly delete coverage_data to free memory before next batch
+                del coverage_data
+                logger.debug(f"Completed batch {batch_idx + 1}/{num_batches}")
 
             # Combine results
             for res_cov, res_std, _ in results:
@@ -1174,7 +1197,7 @@ def _get_total_mapped_reads(bam_file: str) -> int:
 
 
 def calculate_coverage_from_multiple_bams(
-    bam_files: List[str], fragments_dict: FragmentDict, cores: int = 16
+    bam_files: List[str], fragments_dict: FragmentDict, cores: int = 16, coverage_batch_size: int = 100000
 ) -> pd.DataFrame:
     """Calculate coverage from multiple alignment files (BAM/CRAM), creating separate columns for each sample.
     
@@ -1214,7 +1237,7 @@ def calculate_coverage_from_multiple_bams(
             
             # Calculate coverage for this alignment file
             coverage, coverage_std = calculate_fragment_coverage(
-                bam_file, fragments_dict, cores
+                bam_file, fragments_dict, cores, coverage_batch_size
             )
             if total_mapped_reads <= 0:
                 logger.warning(
