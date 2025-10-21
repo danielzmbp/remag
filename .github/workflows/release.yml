@@ -33,7 +33,7 @@ jobs:
       run: python -m build
     
     - name: Upload artifacts
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v4.3.1
       with:
         name: dist
         path: dist/
@@ -46,11 +46,11 @@ jobs:
       url: https://pypi.org/p/remag
     steps:
     - name: Download artifacts
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v4.1.7
       with:
         name: dist
         path: dist/
-    
+
     - name: Publish to PyPI
       uses: pypa/gh-action-pypi-publish@release/v1
       with:
@@ -64,9 +64,9 @@ jobs:
     - uses: actions/checkout@v4
       with:
         fetch-depth: 0
-    
+
     - name: Download artifacts
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v4.1.7
       with:
         name: dist
         path: dist/
@@ -116,7 +116,7 @@ jobs:
         BIOCONDA_TOKEN: ${{ secrets.BIOCONDA_TOKEN }}
     
     - name: Upload Bioconda recipe as artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v4.3.1
       with:
         name: bioconda-recipe
         path: .github/bioconda-recipe/meta.yaml
@@ -133,11 +133,11 @@ jobs:
         python-version: '3.9'
     
     - name: Download artifacts
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v4.1.7
       with:
         name: dist
         path: dist/
-    
+
     - name: Upload to Zenodo
       run: |
         pip install requests
