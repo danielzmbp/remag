@@ -61,7 +61,7 @@ requirements:
   host:
     - python >=3.8
     - pip
-    - setuptools >=61.0
+    - setuptools >=77.0
     - wheel
   run:
     - python >=3.8
@@ -73,17 +73,18 @@ requirements:
     - loguru >=0.6.0
     - scikit-learn >=1.0.0
     - tqdm >=4.62.0
-    - xgboost >=1.6.0
     - joblib >=1.1.0
     - psutil >=5.8.0
     - leidenalg >=0.9.0
     - python-igraph >=0.10.0
+    - biopython >=1.80
+    - einops >=0.6.0
+    - transformers >=4.30.0
     - miniprot
 
 test:
   imports:
     - remag
-    - remag.xgbclass
   commands:
     - remag --help
 
