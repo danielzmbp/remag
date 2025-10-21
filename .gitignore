@@ -51,3 +51,7 @@ upload_to_zenodo.sh
 # Project-specific files to exclude
 CLAUDE.md
 generate_bins.py
+
+# Large data files - should not be tracked
+standalone/eukaryotes.fasta
+standalone/predictions.tsv
