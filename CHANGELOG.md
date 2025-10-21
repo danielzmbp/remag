@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2025-10-21
+
+### Changed
+- **BREAKING**: Replaced XGBoost classifier with HyenaDNA LLM-based model for eukaryotic filtering
+  - Improved accuracy using pre-trained genomic foundation model
+  - Probability-based classification with confidence scores
+  - Adds window count and confidence metrics to classification output
+- Reduced console output verbosity for cleaner logs
+  - Training epoch prints reduced from every 5 to every 20 epochs
+  - Resolution parameters formatted to 2 decimal places
+  - Removed duplicate HyenaDNA filtering log message
+- Adaptive resolution now enabled by default for automatic clustering optimization
+  - Automatically determines optimal Leiden resolution based on core gene duplications
+  - Tests multiple resolution values (0.7x, 1.0x, 1.4x) and selects best result
+  - Can be disabled by explicitly providing `--leiden-resolution`
+
+### Added
+- Standalone HyenaDNA predictor for independent sequence classification
+  - Self-contained script for eukaryotic vs prokaryotic classification
+  - Minimal dependencies, can run without full REMAG pipeline
+  - Includes example test data and conda environment specification
+- Adaptive resolution determination system
+  - Organism count estimation from core gene duplications
+  - Multi-resolution testing to find optimal clustering parameters
+- Gene mapping cache system for performance optimization
+  - Caches miniprot PAF parsing results to avoid redundant runs
+  - Significantly speeds up resolution testing and refinement (~10x faster)
+- Batch processing controls for memory management
+  - `--coverage-batch-size` for controlling coverage calculation memory usage
+  - `--hyenadna-batch-size` for controlling HyenaDNA inference batch size
+- Barlow Twins training diagnostics
+  - Detailed cross-correlation matrix statistics tracking
+  - Separate invariance and redundancy loss components
+  - Helps identify training issues like collapsed embeddings
+- Development workflow documentation (AGENTS.md)
+  - Project structure and module organization guidelines
+  - Build, test, and code quality commands
+  - Commit message conventions and best practices
+
+### Removed
+- XGBoost classifier and all related dependencies (xgboost, scikit-learn)
+- Legacy xgbclass module and pre-trained models
+- Unused adaptive strategy parameters that provided no performance benefit
+
+### Fixed
+- XGBoost import errors and classification column name mismatches
+- HyenaDNA memory usage through streaming sequence processing
+
+### Performance
+- Gene mapping cache reduces refinement time by ~10x
+- HyenaDNA streaming reduces memory footprint for large datasets
+- Batch size controls allow tuning for available system resources
+
 ## [0.2.5] - 2025-10-17
 
 ### Changed
@@ -189,7 +242,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Various bug fixes and improvements
 
-[Unreleased]: https://github.com/danielzmbp/remag/compare/v0.2.5...HEAD
+[Unreleased]: https://github.com/danielzmbp/remag/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/danielzmbp/remag/compare/v0.2.5...v0.3.0
 [0.2.5]: https://github.com/danielzmbp/remag/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/danielzmbp/remag/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/danielzmbp/remag/compare/v0.2.2...v0.2.3
