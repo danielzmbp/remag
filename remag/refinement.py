@@ -265,11 +265,10 @@ def refine_bin_with_leiden_clustering(
             random_state=42,
             n_jobs=getattr(args, 'cores', 1)
         )
-        
+
         # Check clustering results
         n_clusters = len(set(cluster_labels))
-        logger.info(f"Bin {bin_id} {attempt_info}: Leiden clustering produced {n_clusters} clusters")
-        
+
         # Merge clusters that are too small to avoid over-fragmentation
         min_cluster_size = 5  # Hardcoded for refinement
         cluster_sizes = pd.Series(cluster_labels).value_counts()
@@ -472,7 +471,6 @@ def refine_contaminated_bins_with_embeddings(
                     "sub_bins": 0,
                 }
                 failed_refinement_bins.append(bin_id)
-                logger.info(f"Bin {bin_id} kept original due to failed refinement")
                 continue
                 
             # Check for duplicated core genes in refined bins using cached mappings
