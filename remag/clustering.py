@@ -248,9 +248,8 @@ def _leiden_clustering(embeddings, k=15, similarity_threshold=0.1, resolution=1.
     components = graph.connected_components()
     n_components = len(components)
     logger.info(f"Graph: {graph.vcount()} nodes, {graph.ecount()} edges, {n_components} connected components")
-    
+
     if n_components == 1:
-        logger.info("Single connected component - running Leiden on full graph")
         # Run Leiden on the entire graph
         partition = leidenalg.find_partition(
             graph, 
