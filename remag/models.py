@@ -16,6 +16,8 @@ from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 from loguru import logger
 from .utils import get_torch_device
+from .losses import BarlowTwinsLoss, HybridContrastiveLoss
+from .scg_features import SCGFeatureManager
 
 
 class EarlyStoppingManager:
@@ -86,14 +88,22 @@ class LearningRateScheduler:
 class TrainingManager:
     """Manages the complete training process."""
     
-    def __init__(self, args):
+    def __init__(self, args, scg_feature_manager=None):
         self.args = args
+        self.scg_feature_manager = scg_feature_manager
         self.early_stopping = EarlyStoppingManager(patience=20)
         self.device = get_torch_device()
+        self.use_scg_loss = (scg_feature_manager is not None and
+                             scg_feature_manager.has_scg_features and
+                             getattr(args, 'use_scg_loss', False))
     
     def setup_training(self, model, features_df):
         """Set up training components (dataset, dataloader, optimizer, scheduler)."""
-        dataset = SequenceDataset(features_df, max_positive_pairs=self.args.max_positive_pairs)
+        dataset = SequenceDataset(
+            features_df,
+            max_positive_pairs=self.args.max_positive_pairs,
+            scg_feature_manager=self.scg_feature_manager
+        )
         has_enough_data = len(dataset) > self.args.batch_size * 10
 
         dataloader_kwargs = {
@@ -106,13 +116,28 @@ class TrainingManager:
             dataloader_kwargs["pin_memory"] = True
 
         dataloader = DataLoader(dataset, **dataloader_kwargs)
-        
+
         optimizer = optim.AdamW(
             model.parameters(), lr=1e-4, weight_decay=0.05, betas=(0.9, 0.95)
         )
-        
+
         scheduler = LearningRateScheduler.create_warmup_cosine_scheduler(optimizer, self.args)
-        criterion = BarlowTwinsLoss(lambda_param=5e-3)
+
+        # Choose loss function based on SCG availability
+        if self.use_scg_loss:
+            scg_loss_weight = getattr(self.args, 'scg_loss_weight', 0.1)
+            scg_margin = getattr(self.args, 'scg_margin', 1.0)
+            criterion = HybridContrastiveLoss(
+                alpha=1.0,
+                beta=scg_loss_weight,
+                barlow_twins_lambda=5e-3,
+                scg_margin=scg_margin,
+                use_scg_co_occurrence=False
+            )
+            logger.info(f"Using HybridContrastiveLoss with SCG loss weight={scg_loss_weight}")
+        else:
+            criterion = BarlowTwinsLoss(lambda_param=5e-3)
+            logger.info("Using standard BarlowTwinsLoss (no SCG features)")
 
         return dataloader, optimizer, scheduler, criterion
     
@@ -122,7 +147,17 @@ class TrainingManager:
         running_loss = 0.0
         matrix_stats = None
 
-        for batch_idx, (features1, features2, base_ids) in enumerate(dataloader):
+        for batch_idx, batch_data in enumerate(dataloader):
+            # Unpack batch data (with or without SCG features)
+            if len(batch_data) == 5:
+                features1, features2, base_ids, scg_features1, scg_features2 = batch_data
+                scg_features1 = scg_features1.to(self.device)
+                scg_features2 = scg_features2.to(self.device)
+            else:
+                features1, features2, base_ids = batch_data
+                scg_features1 = None
+                scg_features2 = None
+
             features1, features2, base_ids = (
                 features1.to(self.device),
                 features2.to(self.device),
@@ -130,14 +165,33 @@ class TrainingManager:
             )
 
             optimizer.zero_grad()
+
+            # Forward pass
             output1, output2 = model(features1, features2)
 
-            # Get matrix statistics from last batch for debug logging
+            # Compute loss (different signatures for hybrid vs. standard loss)
             is_last_batch = (batch_idx == len(dataloader) - 1)
-            if is_last_batch:
-                loss, matrix_stats = criterion(output1, output2, base_ids, return_stats=True)
+            if self.use_scg_loss and scg_features1 is not None:
+                # Hybrid loss needs embeddings in addition to projections
+                embeddings1 = model.get_embedding(features1)
+                embeddings2 = model.get_embedding(features2)
+
+                if is_last_batch:
+                    loss, matrix_stats = criterion(
+                        output1, output2, embeddings1, embeddings2,
+                        scg_features1, scg_features2, base_ids, return_stats=True
+                    )
+                else:
+                    loss = criterion(
+                        output1, output2, embeddings1, embeddings2,
+                        scg_features1, scg_features2, base_ids
+                    )
             else:
-                loss = criterion(output1, output2, base_ids)
+                # Standard Barlow Twins loss
+                if is_last_batch:
+                    loss, matrix_stats = criterion(output1, output2, base_ids, return_stats=True)
+                else:
+                    loss = criterion(output1, output2, base_ids)
 
             loss.backward()
 
@@ -495,76 +549,21 @@ class SiameseNetwork(nn.Module):
 
 
 
-class BarlowTwinsLoss(nn.Module):
-    """
-    Barlow Twins loss for self-supervised learning.
-    
-    The loss function computes the cross-correlation matrix between embeddings from two views
-    and tries to make it as close as possible to the identity matrix. This encourages 
-    the network to produce similar embeddings for positive pairs while avoiding 
-    representational collapse by decorrelating different dimensions.
-    
-    Args:
-        lambda_param: weight of the off-diagonal terms (decorrelation loss)
-        eps: small value to avoid division by zero in normalization
-    """
-    
-    def __init__(self, lambda_param=5e-3, eps=1e-6):
-        super(BarlowTwinsLoss, self).__init__()
-        self.lambda_param = lambda_param
-        self.eps = eps
-    
-    def forward(self, output1, output2, base_ids=None, return_stats=False):
-        """
-        Args:
-            output1: a tensor of shape (batch_size, projection_dim)
-            output2: a tensor of shape (batch_size, projection_dim)
-            base_ids: unused in Barlow Twins but kept for compatibility
-            return_stats: if True, return (loss, stats_dict) instead of just loss
-        """
-        batch_size, projection_dim = output1.shape
-
-        # Normalize embeddings along the batch dimension (zero mean, unit std)
-        output1_norm = (output1 - output1.mean(dim=0)) / (output1.std(dim=0) + self.eps)
-        output2_norm = (output2 - output2.mean(dim=0)) / (output2.std(dim=0) + self.eps)
-
-        # Compute cross-correlation matrix
-        cross_corr = torch.matmul(output1_norm.T, output2_norm) / batch_size
-
-        # Compute invariance loss (diagonal terms should be close to 1)
-        invariance_loss = torch.pow(torch.diagonal(cross_corr) - 1.0, 2).sum()
-
-        # Compute redundancy reduction loss (off-diagonal terms should be close to 0)
-        off_diagonal_mask = ~torch.eye(projection_dim, dtype=torch.bool, device=output1.device)
-        redundancy_loss = torch.pow(cross_corr[off_diagonal_mask], 2).sum()
-
-        # Total loss
-        loss = invariance_loss + self.lambda_param * redundancy_loss
-
-        # Optionally compute statistics for debugging
-        if return_stats:
-            with torch.no_grad():
-                diagonal = torch.diagonal(cross_corr)
-                off_diagonal = cross_corr[off_diagonal_mask]
-
-                stats = {
-                    'mean_diagonal': diagonal.mean().item(),
-                    'std_diagonal': diagonal.std().item(),
-                    'mean_abs_off_diagonal': off_diagonal.abs().mean().item(),
-                    'max_abs_off_diagonal': off_diagonal.abs().max().item(),
-                    'invariance_loss': invariance_loss.item(),
-                    'redundancy_loss': redundancy_loss.item(),
-                }
-                return loss, stats
-
-        return loss
+# BarlowTwinsLoss moved to losses.py
 
 
 class SequenceDataset(Dataset):
-    def __init__(self, features_df, max_positive_pairs=500000):
-        """Initialize contrastive learning dataset with positive pairs from same contigs."""
+    def __init__(self, features_df, max_positive_pairs=500000, scg_feature_manager=None):
+        """Initialize contrastive learning dataset with positive pairs from same contigs.
+
+        Args:
+            features_df: DataFrame with k-mer and coverage features
+            max_positive_pairs: Maximum number of positive pairs to generate
+            scg_feature_manager: Optional SCGFeatureManager for SCG-aware training
+        """
         self.features_df = features_df
         self.fragment_headers = self.features_df.index.tolist()
+        self.scg_feature_manager = scg_feature_manager
 
         # Group fragment indices by base contig name
         self.contig_to_fragment_indices = self._group_indices_by_base_contig()
@@ -643,11 +642,31 @@ class SequenceDataset(Dataset):
         tensor1 = torch.tensor(self.features_df.iloc[idx1].values, dtype=torch.float32)
         tensor2 = torch.tensor(self.features_df.iloc[idx2].values, dtype=torch.float32)
         base_id = torch.tensor(self.index_to_base_id[idx1], dtype=torch.long)
-        return tensor1, tensor2, base_id
+
+        # Get SCG features if available
+        if self.scg_feature_manager is not None and self.scg_feature_manager.has_scg_features:
+            header1 = self.fragment_headers[idx1]
+            header2 = self.fragment_headers[idx2]
+            scg_features1 = self.scg_feature_manager.get_scg_features([header1])[0]
+            scg_features2 = self.scg_feature_manager.get_scg_features([header2])[0]
+            scg_tensor1 = torch.tensor(scg_features1, dtype=torch.float32)
+            scg_tensor2 = torch.tensor(scg_features2, dtype=torch.float32)
+        else:
+            # Return empty tensors if no SCG features
+            scg_tensor1 = torch.zeros(1, dtype=torch.float32)
+            scg_tensor2 = torch.zeros(1, dtype=torch.float32)
+
+        return tensor1, tensor2, base_id, scg_tensor1, scg_tensor2
 
 
-def train_siamese_network(features_df, args):
-    """Train the Siamese network for contrastive learning."""
+def train_siamese_network(features_df, args, scg_feature_manager=None):
+    """Train the Siamese network for contrastive learning.
+
+    Args:
+        features_df: DataFrame with k-mer and coverage features
+        args: Arguments object with training parameters
+        scg_feature_manager: Optional SCGFeatureManager for SCG-aware training
+    """
     model_path = get_model_path(args)
 
     # Feature dimensions: k-mer features are always 136, coverage is 2 per sample
@@ -709,7 +728,7 @@ def train_siamese_network(features_df, args):
     logger.info(f"Starting training for {args.epochs} epochs...")
 
     # Initialize training manager and set up training
-    trainer = TrainingManager(args)
+    trainer = TrainingManager(args, scg_feature_manager=scg_feature_manager)
     dataloader, optimizer, scheduler, criterion = trainer.setup_training(model, features_df)
 
     # Training loop
@@ -724,13 +743,26 @@ def train_siamese_network(features_df, args):
 
         # Log cross-correlation matrix statistics for debugging
         if matrix_stats is not None:
-            logger.debug(
+            # Log Barlow Twins stats (always present)
+            barlow_info = (
                 f"Cross-correlation matrix stats - "
                 f"Diagonal: {matrix_stats['mean_diagonal']:.4f} ± {matrix_stats['std_diagonal']:.4f}, "
                 f"Off-diagonal: {matrix_stats['mean_abs_off_diagonal']:.4f} (max: {matrix_stats['max_abs_off_diagonal']:.4f}), "
                 f"Invariance loss: {matrix_stats['invariance_loss']:.2f}, "
                 f"Redundancy loss: {matrix_stats['redundancy_loss']:.2f}"
             )
+
+            # Add SCG stats if using hybrid loss
+            if 'scg_loss' in matrix_stats and matrix_stats['scg_loss'] > 0:
+                scg_info = (
+                    f" | SCG stats - "
+                    f"Loss: {matrix_stats['scg_loss']:.4f}, "
+                    f"Duplicates: {matrix_stats.get('scg_n_duplicates', 0)}, "
+                    f"Avg dist: {matrix_stats.get('scg_avg_distance_duplicates', 0.0):.4f}"
+                )
+                barlow_info += scg_info
+
+            logger.debug(barlow_info)
 
         # Early stopping check
         trainer.early_stopping.check_improvement(avg_loss, model.state_dict())

@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 from loguru import logger
 
-from .miniprot_utils import estimate_organisms_from_all_contigs, check_core_gene_duplications_from_cache
+from .miniprot_utils import estimate_organisms_from_all_contigs, check_core_gene_duplications_from_cache, extract_gene_counts_from_mappings
 from .clustering import _leiden_clustering
 
 
@@ -130,12 +130,12 @@ def test_multiple_resolutions(embeddings_df, gene_mappings_cache, args, test_res
     return best_resolution, results
 
 
-def determine_optimal_resolution(embeddings_df, fragments_dict, args):
+def determine_optimal_resolution(embeddings_df, fragments_dict, args, gene_mappings=None):
     """
     Determine optimal Leiden resolution by analyzing core gene duplications.
 
     This is the main function that orchestrates the adaptive resolution process:
-    1. Run miniprot on all contigs to estimate organism count
+    1. Use existing gene mappings or run miniprot to estimate organism count
     2. Calculate base resolution from organism estimate
     3. Test multiple resolution values (base * [0.7, 1.0, 1.4])
     4. Pick the resolution with fewest core gene duplications
@@ -144,14 +144,19 @@ def determine_optimal_resolution(embeddings_df, fragments_dict, args):
         embeddings_df: DataFrame with embeddings for all contigs
         fragments_dict: Dictionary mapping headers to sequences
         args: Arguments object
+        gene_mappings: Optional pre-computed gene-to-contig mappings from miniprot.
+                      If None, will run miniprot to generate them.
 
     Returns:
         float: Optimal resolution parameter
     """
     logger.info("=== ADAPTIVE RESOLUTION DETERMINATION ===")
 
-    # Step 1: Estimate organism count from all contigs
-    gene_counts = estimate_organisms_from_all_contigs(fragments_dict, args)
+    # Step 1: Get gene counts from existing mappings or run miniprot
+    if gene_mappings is not None:
+        gene_counts = extract_gene_counts_from_mappings(gene_mappings)
+    else:
+        gene_counts = estimate_organisms_from_all_contigs(fragments_dict, args)
 
     if not gene_counts:
         logger.warning("No core genes found, falling back to default resolution")
@@ -208,17 +213,20 @@ def determine_optimal_resolution(embeddings_df, fragments_dict, args):
     # Import needed for cache path function
     from .miniprot_utils import get_gene_mappings_cache_path
 
-    # Check if cache already exists from organism estimation
-    cache_path = get_gene_mappings_cache_path(args)
-    gene_mappings_cache = None
+    # Use provided gene_mappings if available, otherwise try to load from cache
+    gene_mappings_cache = gene_mappings
 
-    if os.path.exists(cache_path):
-        try:
-            with open(cache_path, "r") as f:
-                gene_mappings_cache = json.load(f)
-            logger.info(f"Loaded existing gene mappings cache with {len(gene_mappings_cache)} contigs")
-        except Exception as e:
-            logger.warning(f"Failed to load gene mappings cache: {e}")
+    if gene_mappings_cache is None:
+        # Check if cache already exists from organism estimation
+        cache_path = get_gene_mappings_cache_path(args)
+
+        if os.path.exists(cache_path):
+            try:
+                with open(cache_path, "r") as f:
+                    gene_mappings_cache = json.load(f)
+                logger.info(f"Loaded existing gene mappings cache with {len(gene_mappings_cache)} contigs")
+            except Exception as e:
+                logger.warning(f"Failed to load gene mappings cache: {e}")
 
     if gene_mappings_cache is None:
         logger.warning("No gene mappings cache available - cannot test multiple resolutions")

@@ -11,9 +11,16 @@ from .utils import setup_logging
 from .features import filter_bacterial_contigs, get_features
 from .models import train_siamese_network, generate_embeddings
 from .clustering import cluster_contigs
-from .miniprot_utils import check_core_gene_duplications, check_core_gene_duplications_from_cache, get_gene_mappings_cache_path
+from .miniprot_utils import (
+    check_core_gene_duplications,
+    check_core_gene_duplications_from_cache,
+    get_gene_mappings_cache_path,
+    estimate_organisms_from_all_contigs,
+    check_miniprot_available
+)
 from .refinement import refine_contaminated_bins
 from .output import save_clusters_as_fasta
+from .scg_features import extract_scg_features, SCGFeatureManager
 
 
 def main(args):
@@ -70,9 +77,56 @@ def main(args):
         logger.error("No features generated. Exiting.")
         sys.exit(1)
 
+    # ====================================================================
+    # CONSOLIDATED MINIPROT RUN: Run once and reuse for all downstream steps
+    # ====================================================================
+    # Determine if we need to run miniprot at all
+    needs_miniprot = (
+        getattr(args, 'use_scg_loss', False) or  # SCG features need it
+        getattr(args, 'auto_resolution', False)   # Auto-resolution needs it
+        # Core gene duplication check will also use it if available
+    )
+
+    gene_mappings = None
+    if needs_miniprot and check_miniprot_available():
+        logger.info("=== RUNNING MINIPROT ONCE FOR ALL DOWNSTREAM STEPS ===")
+        logger.info("This single run will be used for: SCG features, auto-resolution, and core gene checks")
+
+        # Run miniprot on all contigs to create gene mappings
+        gene_counts = estimate_organisms_from_all_contigs(fragments_dict, args)
+
+        # Load the gene mappings cache that was just created
+        cache_path = get_gene_mappings_cache_path(args)
+        if os.path.exists(cache_path):
+            try:
+                with open(cache_path, "r") as f:
+                    gene_mappings = json.load(f)
+                logger.info(f"Loaded gene mappings for {len(gene_mappings)} contigs - will reuse for all steps")
+            except Exception as e:
+                logger.warning(f"Failed to load gene mappings cache: {e}")
+                gene_mappings = None
+        else:
+            logger.warning("Miniprot completed but no cache file was created")
+    elif needs_miniprot and not check_miniprot_available():
+        logger.warning("miniprot not available - some features will be disabled")
+
+    # Extract SCG features if SCG loss is enabled
+    scg_feature_manager = None
+    if getattr(args, 'use_scg_loss', False):
+        logger.info("Extracting SCG features for training...")
+        try:
+            scg_matrix_df, gene_family_index, contig_to_scg_dict = extract_scg_features(
+                fragments_dict, args, gene_mappings=gene_mappings, use_cached=True
+            )
+            scg_feature_manager = SCGFeatureManager(scg_matrix_df, contig_to_scg_dict)
+            logger.info(f"SCG feature manager initialized: {scg_feature_manager.has_scg_features}")
+        except Exception as e:
+            logger.warning(f"Failed to extract SCG features: {e}")
+            logger.warning("Continuing with standard training (no SCG loss)")
+
     logger.info("Training neural network and generating embeddings...")
     try:
-        model = train_siamese_network(features_df, args)
+        model = train_siamese_network(features_df, args, scg_feature_manager=scg_feature_manager)
         embeddings_df = generate_embeddings(model, features_df, args)
     except Exception as e:
         logger.error(f"Failed to train model or generate embeddings: {e}")
@@ -84,7 +138,9 @@ def main(args):
         logger.info("Auto-resolution enabled - determining optimal Leiden resolution...")
         try:
             from .adaptive_resolution import determine_optimal_resolution
-            optimal_resolution = determine_optimal_resolution(embeddings_df, fragments_dict, args)
+            optimal_resolution = determine_optimal_resolution(
+                embeddings_df, fragments_dict, args, gene_mappings=gene_mappings
+            )
             # Update args with optimal resolution
             args.leiden_resolution = optimal_resolution
             logger.info(f"Using automatically determined resolution: {optimal_resolution:.2f}")
@@ -102,30 +158,18 @@ def main(args):
     # Check for duplicated core genes using miniprot (using compleasm-style thresholds)
     logger.info("Checking for duplicated core genes...")
 
-    # If auto-resolution was enabled, try to reuse the gene mappings cache
-    gene_mappings_cache = None
-    if auto_resolution_enabled:
-        cache_path = get_gene_mappings_cache_path(args)
-        if os.path.exists(cache_path):
-            try:
-                with open(cache_path, "r") as f:
-                    gene_mappings_cache = json.load(f)
-                logger.info(f"Loaded gene mappings cache from auto-resolution ({len(gene_mappings_cache)} contigs)")
-                logger.info("Using cached gene mappings instead of re-running miniprot")
-            except Exception as e:
-                logger.warning(f"Failed to load gene mappings cache: {e}")
-                gene_mappings_cache = None
-
-    # Use cached approach if available, otherwise run miniprot
-    if gene_mappings_cache is not None:
+    # Reuse the gene_mappings from the consolidated miniprot run if available
+    # This avoids redundant miniprot execution
+    if gene_mappings is not None:
         try:
+            logger.info("Using pre-computed gene mappings from consolidated miniprot run (no redundant execution)")
             clusters_df = check_core_gene_duplications_from_cache(
                 clusters_df,
-                gene_mappings_cache,
+                gene_mappings,
                 args
             )
             # Store cache in args for refinement
-            args._gene_mappings_cache = gene_mappings_cache
+            args._gene_mappings_cache = gene_mappings
         except Exception as e:
             logger.warning(f"Cache-based duplication check failed: {e}")
             logger.warning("Falling back to full miniprot run")
@@ -138,6 +182,8 @@ def main(args):
                 use_header_cache=False
             )
     else:
+        # No gene mappings available - run miniprot now
+        # This happens when both SCG loss and auto-resolution are disabled
         clusters_df = check_core_gene_duplications(
             clusters_df,
             fragments_dict,

@@ -204,6 +204,29 @@ def estimate_organisms_from_all_contigs(fragments_dict, args, target_coverage_th
             logger.info(f"Organism estimation files preserved at: {temp_dir}")
 
 
+def extract_gene_counts_from_mappings(gene_mappings):
+    """
+    Extract gene counts from existing gene-to-contig mappings.
+
+    This function counts how many times each gene family appears across all contigs,
+    without needing to run miniprot again.
+
+    Args:
+        gene_mappings: Dict from parse_and_cache_paf_files() or estimate_organisms_from_all_contigs()
+                      Format: {contig_name: {gene_family: {score, coverage, identity}}}
+
+    Returns:
+        dict: {gene_family: occurrence_count} for all core genes found
+    """
+    gene_counts = {}
+
+    for contig_name, genes in gene_mappings.items():
+        for gene_family in genes.keys():
+            gene_counts[gene_family] = gene_counts.get(gene_family, 0) + 1
+
+    return gene_counts
+
+
 def get_core_gene_duplication_results_path(args):
     """Get the path for the core gene duplication results file."""
     return os.path.join(args.output, "core_gene_duplication_results.json")
