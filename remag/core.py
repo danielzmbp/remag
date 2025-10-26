@@ -230,6 +230,6 @@ def main(args):
         # Ensure only the first two columns are kept
         filtered_bins_df = filtered_bins_df[["contig", "cluster"]]
         filtered_bins_df.to_csv(bins_csv_path, index=False)
-        logger.info(f"bins.csv now contains {len(filtered_bins_df)} contigs from {len(valid_bins)} valid bins")
+        logger.debug(f"bins.csv now contains {len(filtered_bins_df)} contigs from {len(valid_bins)} valid bins")
 
     logger.info("REMAG analysis completed successfully!")

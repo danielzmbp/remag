@@ -21,7 +21,7 @@ def save_clusters_as_fasta(clusters_df, fragments_dict, args):
 
     # Group contigs by cluster directly
     cluster_contig_dict = {}
-    for _, row in tqdm(clusters_df.iterrows(), desc="Processing contigs"):
+    for _, row in clusters_df.iterrows():
         contig_name = row["contig"]
         cluster_id = row["cluster"]
         
@@ -42,9 +42,7 @@ def save_clusters_as_fasta(clusters_df, fragments_dict, args):
 
     # Write FASTA files
     logger.info("Bin composition:")
-    for cluster_id, contig_headers in tqdm(
-        filtered_cluster_contigs.items(), desc="Writing bin files"
-    ):
+    for cluster_id, contig_headers in filtered_cluster_contigs.items():
         if cluster_id == "noise":
             continue
 
