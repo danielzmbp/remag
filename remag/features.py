@@ -1333,7 +1333,7 @@ def calculate_coverage_from_multiple_bams(
     # Ensure all fragments are present and fill missing values with 0
     coverage_features = coverage_features.reindex(all_fragment_headers).fillna(0.0)
 
-    logger.info(
+    logger.debug(
         f"Coverage calculation complete. Created {len(coverage_features.columns)} coverage columns."
     )
     return coverage_features
