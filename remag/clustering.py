@@ -236,7 +236,7 @@ def _leiden_clustering(embeddings, k=15, similarity_threshold=0.1, resolution=1.
     Returns:
         numpy.array: Cluster labels (-1 for isolated nodes, 0+ for clusters)
     """
-    logger.info(f"Starting Leiden clustering with k={k}, resolution={resolution}, n_jobs={n_jobs}")
+    logger.info(f"Starting Leiden clustering with k={k}, resolution={resolution:.2f}, n_jobs={n_jobs}")
     
     # Construct k-NN graph with parallelization
     graph = _construct_knn_graph(embeddings, k=k, similarity_threshold=similarity_threshold, n_jobs=n_jobs, args=args)
