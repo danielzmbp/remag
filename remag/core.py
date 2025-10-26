@@ -52,7 +52,6 @@ def main(args):
             hyenadna_batch_size=hyenadna_batch_size,
             save_filtered_contigs=save_filtered_contigs,
         )
-        logger.info(f"Using filtered FASTA file: {input_fasta}")
     else:
         logger.info("Skipping eukaryotic filtering as requested")
 
