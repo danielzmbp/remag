@@ -174,7 +174,6 @@ def main(args):
     final_bins_df.to_csv(bins_csv_path, index=False)
     logger.info(f"bins.csv saved with {len(final_bins_df)} contigs from refined clusters")
 
-    logger.info("Saving bins as FASTA files...")
     valid_bins = save_clusters_as_fasta(clusters_df, fragments_dict, args)
     
     # Filter bins.csv to only include contigs from valid bins (those that meet minimum size)
