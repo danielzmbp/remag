@@ -601,9 +601,6 @@ class SequenceDataset(Dataset):
             raise ValueError("No positive pairs selected. Training cannot proceed.")
 
         random.shuffle(self.training_pairs)
-        logger.info(
-            f"Dataset initialized with {len(self.training_pairs)} positive pairs"
-        )
 
     def _group_indices_by_base_contig(self):
         """Group fragment indices by their original contig's base name."""

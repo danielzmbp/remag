@@ -231,7 +231,7 @@ class HyenaDNAClassifier:
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"Model file not found: {model_path}")
 
-        logger.info(f"Loading HyenaDNA model from {model_path}")
+        logger.debug(f"Loading HyenaDNA model from {model_path}")
         logger.info(f"Using device: {self.device}")
 
         # Load the model
@@ -250,7 +250,7 @@ class HyenaDNAClassifier:
             padding_side='left',
         )
 
-        logger.info("HyenaDNA classifier initialized successfully")
+        logger.debug("HyenaDNA classifier initialized successfully")
 
     @torch.inference_mode()
     def _predict_window_stats(

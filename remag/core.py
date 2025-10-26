@@ -43,12 +43,14 @@ def main(args):
     if not skip_bacterial_filter:
         logger.info("Filtering non-eukaryotic contigs using HyenaDNA classifier...")
         hyenadna_batch_size = getattr(args, "hyenadna_batch_size", 1024)
+        save_filtered_contigs = getattr(args, "save_filtered_contigs", False)
         input_fasta = filter_bacterial_contigs(
             args.fasta,
             args.output,
             min_contig_length=args.min_contig_length,
             cores=args.cores,
             hyenadna_batch_size=hyenadna_batch_size,
+            save_filtered_contigs=save_filtered_contigs,
         )
         logger.info(f"Using filtered FASTA file: {input_fasta}")
     else:
@@ -89,9 +91,6 @@ def main(args):
 
     gene_mappings = None
     if needs_miniprot and check_miniprot_available():
-        logger.info("=== RUNNING MINIPROT ONCE FOR ALL DOWNSTREAM STEPS ===")
-        logger.info("This single run will be used for: SCG features, auto-resolution, and core gene checks")
-
         # Run miniprot on all contigs to create gene mappings
         gene_counts = estimate_organisms_from_all_contigs(fragments_dict, args)
 
@@ -101,7 +100,7 @@ def main(args):
             try:
                 with open(cache_path, "r") as f:
                     gene_mappings = json.load(f)
-                logger.info(f"Loaded gene mappings for {len(gene_mappings)} contigs - will reuse for all steps")
+                logger.debug(f"Loaded gene mappings for {len(gene_mappings)} contigs - will reuse for all steps")
             except Exception as e:
                 logger.warning(f"Failed to load gene mappings cache: {e}")
                 gene_mappings = None
@@ -113,13 +112,11 @@ def main(args):
     # Extract SCG features if SCG loss is enabled
     scg_feature_manager = None
     if getattr(args, 'use_scg_loss', False):
-        logger.info("Extracting SCG features for training...")
         try:
             scg_matrix_df, gene_family_index, contig_to_scg_dict = extract_scg_features(
                 fragments_dict, args, gene_mappings=gene_mappings, use_cached=True
             )
             scg_feature_manager = SCGFeatureManager(scg_matrix_df, contig_to_scg_dict)
-            logger.info(f"SCG feature manager initialized: {scg_feature_manager.has_scg_features}")
         except Exception as e:
             logger.warning(f"Failed to extract SCG features: {e}")
             logger.warning("Continuing with standard training (no SCG loss)")
@@ -225,7 +222,7 @@ def main(args):
     valid_bins = save_clusters_as_fasta(clusters_df, fragments_dict, args)
     
     # Filter bins.csv to only include contigs from valid bins (those that meet minimum size)
-    logger.info("Filtering bins.csv to match saved bins...")
+    logger.debug("Filtering bins.csv to match saved bins...")
     if os.path.exists(bins_csv_path):
         import pandas as pd
         bins_df = pd.read_csv(bins_csv_path)

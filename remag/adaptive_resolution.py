@@ -150,7 +150,7 @@ def determine_optimal_resolution(embeddings_df, fragments_dict, args, gene_mappi
     Returns:
         float: Optimal resolution parameter
     """
-    logger.info("=== ADAPTIVE RESOLUTION DETERMINATION ===")
+    logger.info("Adaptive resolution determination")
 
     # Step 1: Get gene counts from existing mappings or run miniprot
     if gene_mappings is not None:
@@ -262,6 +262,6 @@ def determine_optimal_resolution(embeddings_df, fragments_dict, args, gene_mappi
         except Exception as e:
             logger.warning(f"Failed to save resolution testing results: {e}")
 
-    logger.info(f"=== ADAPTIVE RESOLUTION COMPLETE: {best_resolution:.2f} ===")
+    logger.info(f"Adaptive resolution complete: {best_resolution:.2f}")
 
     return best_resolution

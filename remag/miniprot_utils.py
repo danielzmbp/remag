@@ -172,7 +172,7 @@ def estimate_organisms_from_all_contigs(fragments_dict, args, target_coverage_th
             counts_list = list(gene_counts.values())
             max_count = max(counts_list)
             median_count = sorted(counts_list)[len(counts_list) // 2]
-            logger.info(f"Core gene occurrence statistics: max={max_count}, median={median_count}")
+            logger.debug(f"Core gene occurrence statistics: max={max_count}, median={median_count}")
 
         # Save cache if we have data
         if gene_mappings:
