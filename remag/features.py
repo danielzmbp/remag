@@ -672,7 +672,7 @@ def get_features(
             if "_coverage" in col:
                 sample_name = col.replace("_coverage", "").replace("_std", "")
                 sample_names.add(sample_name)
-        logger.info(f"Processing coverage from {len(sample_names)} samples: {sorted(sample_names)}")
+        logger.debug(f"Processing coverage from {len(sample_names)} samples: {sorted(sample_names)}")
     else:
         logger.info("Using k-mer features only")
 

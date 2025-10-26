@@ -36,7 +36,26 @@ def estimate_organisms_from_all_contigs(fragments_dict, args, target_coverage_th
     Returns:
         dict: {gene_family: occurrence_count} for all core genes found
     """
-    logger.info("Estimating organism count by running miniprot on all contigs...")
+    # Check for existing cache first
+    cache_path = get_gene_mappings_cache_path(args)
+    if os.path.exists(cache_path):
+        try:
+            import json
+            with open(cache_path, "r") as f:
+                gene_mappings = json.load(f)
+
+            # Extract gene counts from cached mappings
+            gene_counts = {}
+            for contig_name, genes in gene_mappings.items():
+                for gene_family in genes.keys():
+                    gene_counts[gene_family] = gene_counts.get(gene_family, 0) + 1
+
+            logger.info(f"Using cached miniprot results ({len(gene_mappings)} contigs, {len(gene_counts)} core genes)")
+            return gene_counts
+        except Exception as e:
+            logger.warning(f"Failed to load miniprot cache, will re-run: {e}")
+
+    logger.info(f"Running miniprot on {len(fragments_dict)} contigs...")
 
     # Check if miniprot is available
     if not check_miniprot_available():
@@ -64,8 +83,6 @@ def estimate_organisms_from_all_contigs(fragments_dict, args, target_coverage_th
                 f.write(f">{header}\n")
                 for i in range(0, len(seq), 60):
                     f.write(f"{seq[i: i+60]}\n")
-
-        logger.info(f"Running miniprot on {len(fragments_dict)} contigs...")
 
         # Run miniprot
         miniprot_output = os.path.join(temp_dir, "all_contigs.paf")
