@@ -53,7 +53,7 @@ def extract_scg_features(fragments_dict, args, gene_mappings=None, use_cached=Tr
 
     # Use provided gene_mappings if available
     if gene_mappings is not None:
-        logger.info(f"Using pre-computed gene mappings for SCG features (skipping redundant miniprot run)")
+        logger.debug("Using pre-computed gene mappings for SCG features")
     else:
         # Try to load cached gene mappings from adaptive resolution step
         cache_path = get_gene_mappings_cache_path(args)
