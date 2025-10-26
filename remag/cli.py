@@ -5,6 +5,7 @@ Command Line Interface for REMAG
 import argparse
 import glob
 import os
+import sys
 import rich_click as click
 from .core import main as run_remag
 
@@ -16,22 +17,22 @@ __version__ = version("remag")
 class SpaceSeparatedPaths(click.ParamType):
     """Custom click type that accepts space-separated file paths."""
     name = "paths"
-    
+
     def convert(self, value, param, ctx):
         if value is None:
             return value
-            
+
         # If it's already a list (from multiple calls), flatten it
         if isinstance(value, (list, tuple)):
             all_files = []
             for item in value:
                 all_files.extend(self.convert(item, param, ctx))
             return all_files
-            
+
         # Split on spaces to handle space-separated paths
         paths = value.split()
         validated_paths = []
-        
+
         for path in paths:
             # Handle glob patterns
             if "*" in path or "?" in path or "[" in path:
@@ -46,8 +47,30 @@ class SpaceSeparatedPaths(click.ParamType):
                 if not os.path.isfile(path):
                     self.fail(f"Path is not a file: {path}", param, ctx)
                 validated_paths.append(path)
-        
+
         return sorted(validated_paths)
+
+
+class IntegerRange(click.ParamType):
+    """Custom integer type with validation but no range display."""
+    name = "integer"
+
+    def __init__(self, min=None, max=None):
+        self.min = min
+        self.max = max
+
+    def convert(self, value, param, ctx):
+        try:
+            int_value = int(value)
+        except (ValueError, TypeError):
+            self.fail(f"{value!r} is not a valid integer", param, ctx)
+
+        if self.min is not None and int_value < self.min:
+            self.fail(f"{int_value} is too small (minimum: {self.min})", param, ctx)
+        if self.max is not None and int_value > self.max:
+            self.fail(f"{int_value} is too large (maximum: {self.max})", param, ctx)
+
+        return int_value
 
 
 click.rich_click.USE_RICH_MARKUP = True
@@ -65,6 +88,10 @@ click.rich_click.OPTION_GROUPS = {
             "options": ["--fasta", "--coverage", "--output"],
         },
         {
+            "name": "General",
+            "options": ["--threads", "--verbose", "--keep-intermediate"],
+        },
+        {
             "name": "Contrastive Learning",
             "options": ["--epochs", "--batch-size", "--embedding-dim", "--base-learning-rate", "--max-positive-pairs", "--num-augmentations"],
         },
@@ -78,14 +105,73 @@ click.rich_click.OPTION_GROUPS = {
         },
         {
             "name": "Filtering & Processing",
-            "options": ["--min-contig-length", "--min-bin-size", "--coverage-batch-size", "--hyenadna-batch-size", "--skip-bacterial-filter", "--skip-refinement", "--max-refinement-rounds", "--min-duplications-for-refinement", "--skip-chimera-detection", "--keep-intermediate"],
-        },
-        {
-            "name": "General",
-            "options": ["--threads", "--verbose"],
+            "options": ["--min-contig-length", "--min-bin-size", "--coverage-batch-size", "--hyenadna-batch-size", "--skip-bacterial-filter", "--skip-refinement", "--max-refinement-rounds", "--min-duplications-for-refinement", "--skip-chimera-detection"],
         },
     ]
 }
+
+# Store full option groups for restoration
+_FULL_OPTION_GROUPS = click.rich_click.OPTION_GROUPS.copy()
+
+
+def custom_help_callback(ctx, param, value):
+    """
+    Custom help callback that shows different content for -h vs --help.
+
+    -h: Shows only Input/Output and General options (quick reference)
+    --help: Shows all options (full documentation)
+    """
+    if not value or ctx.resilient_parsing:
+        return
+
+    # Detect which flag was used
+    show_basic_help = '-h' in sys.argv and '--help' not in sys.argv
+
+    if show_basic_help:
+        # Basic options to show
+        basic_option_names = {
+            'fasta', 'fasta_arg', 'coverage', 'output',
+            'threads', 'verbose', 'keep_intermediate'
+        }
+
+        # Store original docstring and replace with minimal version
+        original_doc = ctx.command.help
+        ctx.command.help = (
+            "**REMAG**: Recovery of Eukaryotic Metagenome-Assembled Genomes\n\n"
+            "A specialized metagenomic binning tool for recovering high-quality eukaryotic genomes "
+            "from mixed prokaryotic-eukaryotic samples using contrastive learning."
+        )
+
+        # Temporarily filter parameters to only show basic ones
+        original_params = ctx.command.params
+        basic_params = []
+
+        for p in original_params:
+            # Keep all arguments and the help/version options
+            if not isinstance(p, click.Option):
+                basic_params.append(p)
+            elif p.name in ['help', 'version']:
+                basic_params.append(p)
+            elif p.name in basic_option_names:
+                basic_params.append(p)
+
+        # Temporarily replace params with filtered list
+        ctx.command.params = basic_params
+
+        # Get help text with only basic parameters and minimal docstring
+        help_text = ctx.get_help()
+
+        # Restore original parameters and docstring
+        ctx.command.params = original_params
+        ctx.command.help = original_doc
+
+        click.echo(help_text, color=ctx.color)
+        click.echo("\n💡 Use 'remag --help' to see all advanced options")
+    else:
+        # Show full help for --help
+        click.echo(ctx.get_help(), color=ctx.color)
+
+    ctx.exit()
 
 
 def validate_coverage_options(ctx, param, value):
@@ -122,12 +208,17 @@ def validate_coverage_options(ctx, param, value):
 
 
 @click.command(name="remag")
-@click.help_option("--help", "-h")
+@click.option("--help", "-h", is_flag=True, expose_value=False, is_eager=True, callback=custom_help_callback, help="Show this message and exit.")
 @click.version_option(version=__version__, prog_name="REMAG")
+@click.argument(
+    "fasta_arg",
+    type=click.Path(exists=True, readable=True, path_type=str),
+    required=False,
+)
 @click.option(
     "-f",
     "--fasta",
-    required=True,
+    required=False,
     type=click.Path(exists=True, readable=True, path_type=str),
     help="Input FASTA file containing contigs to bin into genomes. Supports gzipped files.",
 )
@@ -142,9 +233,10 @@ def validate_coverage_options(ctx, param, value):
 @click.option(
     "-o",
     "--output",
-    required=True,
+    required=False,
+    default=None,
     type=click.Path(path_type=str),
-    help="Output directory for binning results and intermediate files.",
+    help="Output directory for binning results and intermediate files. If not specified, creates 'remag_output' in the same directory as the input FASTA.",
 )
 @click.option(
     "--epochs",
@@ -198,7 +290,7 @@ def validate_coverage_options(ctx, param, value):
 @click.option(
     "-t",
     "--threads",
-    type=click.IntRange(min=1, max=64),
+    type=IntegerRange(min=1, max=64),
     default=8,
     show_default=True,
     help="Number of CPU cores to use for parallel processing.",
@@ -297,6 +389,7 @@ def validate_coverage_options(ctx, param, value):
     help="Minimum cosine similarity threshold for k-NN graph edges in Leiden clustering.",
 )
 @click.option(
+    "-k",
     "--keep-intermediate",
     is_flag=True,
     default=False,
@@ -317,6 +410,7 @@ def validate_coverage_options(ctx, param, value):
     help="Batch size for HyenaDNA model inference. Higher values speed up GPU inference but use more VRAM. Use 2048-4096 for high-end GPUs.",
 )
 def main_cli(
+    fasta_arg,
     fasta,
     coverage,
     output,
@@ -347,7 +441,46 @@ def main_cli(
     coverage_batch_size,
     hyenadna_batch_size,
 ):
-    """REMAG: Recovery of eukaryotic genomes using contrastive learning."""
+    """
+    **REMAG**: Recovery of Eukaryotic Metagenome-Assembled Genomes
+
+    A specialized metagenomic binning tool for recovering high-quality eukaryotic genomes
+    from mixed prokaryotic-eukaryotic samples using contrastive learning.
+
+    ## Basic Usage
+
+    Single sample:
+    ```
+    remag contigs.fasta -c alignments.bam
+    ```
+
+    Multiple samples (glob patterns):
+    ```
+    remag contigs.fasta -c "samples/*.bam" -o output_dir
+    ```
+
+    ## Output
+
+    - `bins/` - Directory containing binned FASTA files (one per genome)
+    - `bins.csv` - Cluster assignments for all contigs
+    - `embeddings.csv` - Learned contig embeddings (if --keep-intermediate)
+    """
+    # Handle fasta input: accept either positional argument or --fasta flag
+    if fasta is None and fasta_arg is None:
+        raise click.UsageError("Missing input FASTA file. Provide it as a positional argument or use -f/--fasta")
+
+    # Prefer --fasta flag if both are provided
+    if fasta is not None:
+        fasta_path = fasta
+    else:
+        fasta_path = fasta_arg
+
+    # Handle output directory: default to 'remag_output' in same directory as FASTA
+    if output is None:
+        fasta_dir = os.path.dirname(os.path.abspath(fasta_path))
+        output = os.path.join(fasta_dir, "remag_output")
+        click.echo(f"Output directory not specified, using: {output}", err=True)
+
     # Validate resource parameters
     import multiprocessing
     import psutil
@@ -389,7 +522,7 @@ def main_cli(
                 tsv_files.append(file_path)
     
     args = argparse.Namespace(
-        fasta=fasta,
+        fasta=fasta_path,
         bam=bam_cram_files if bam_cram_files else None,
         tsv=tsv_files if tsv_files else None,
         output=output,
