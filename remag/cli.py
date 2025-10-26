@@ -305,6 +305,11 @@ def validate_coverage_options(ctx, param, value):
     help="Skip eukaryotic contig filtering using HyenaDNA classifier (keeps all contigs).",
 )
 @click.option(
+    "--save-filtered-contigs",
+    is_flag=True,
+    help="Save non-eukaryotic (filtered out) contigs to a separate FASTA file in the output directory.",
+)
+@click.option(
     "--skip-refinement",
     is_flag=True,
     help="Skip post-clustering bin refinement and optimization.",
@@ -401,6 +406,7 @@ def main_cli(
     min_bin_size,
     verbose,
     skip_bacterial_filter,
+    save_filtered_contigs,
     skip_refinement,
     max_refinement_rounds,
     min_duplications_for_refinement,
@@ -510,6 +516,7 @@ def main_cli(
         min_bin_size=min_bin_size,
         verbose=verbose,
         skip_bacterial_filter=skip_bacterial_filter,
+        save_filtered_contigs=save_filtered_contigs,
         skip_refinement=skip_refinement,
         max_refinement_rounds=max_refinement_rounds,
         min_duplications_for_refinement=min_duplications_for_refinement,
