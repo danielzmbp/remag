@@ -65,7 +65,7 @@ def estimate_organisms_from_all_contigs(fragments_dict, args, target_coverage_th
                 for i in range(0, len(seq), 60):
                     f.write(f"{seq[i: i+60]}\n")
 
-        logger.info(f"Running miniprot on {len(fragments_dict)} contigs for organism estimation...")
+        logger.info(f"Running miniprot on {len(fragments_dict)} contigs...")
 
         # Run miniprot
         miniprot_output = os.path.join(temp_dir, "all_contigs.paf")
