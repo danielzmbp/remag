@@ -111,7 +111,7 @@ def _build_scg_matrix(gene_mappings, fragments_dict, args):
     Returns:
         tuple: (scg_matrix_df, gene_family_index, contig_to_scg_dict)
     """
-    logger.info("Building SCG feature matrix...")
+    logger.debug("Building SCG feature matrix...")
 
     # Extract all unique gene families
     all_gene_families = set()
