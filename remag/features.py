@@ -781,12 +781,13 @@ def _validate_alignment_file(alignment_file: str) -> bool:
 
 
 def _map_fasta_to_bam_refs(
-    fragments_dict: FragmentDict, bam_references: Set[str]
+    fragments_dict: FragmentDict, bam_references: Set[str], disable_progress: bool = False
 ) -> Tuple[Dict[str, str], List[str]]:
     bam_ref_map = {}
     unmapped_fasta_headers = []
 
-    for original_header in tqdm(fragments_dict.keys(), desc="Mapping headers"):
+    iterator = fragments_dict.keys() if disable_progress else tqdm(fragments_dict.keys(), desc="Mapping headers")
+    for original_header in iterator:
         fasta_key = original_header
 
         # Try direct match
@@ -997,7 +998,7 @@ def _calculate_fragment_stats_vectorized(coverage_array, fragment_coords):
 
 
 def calculate_fragment_coverage(
-    bam_file: str, fragments_dict: FragmentDict, cores: int = 16, coverage_batch_size: int = 100000
+    bam_file: str, fragments_dict: FragmentDict, cores: int = 16, coverage_batch_size: int = 100000, disable_progress: bool = False
 ) -> Tuple[CoverageDict, CoverageDict]:
     """Calculate average coverage and standard deviation for each fragment."""
     fragment_coverage: CoverageDict = {}
@@ -1017,7 +1018,7 @@ def calculate_fragment_coverage(
 
             # Map FASTA headers to BAM references
             bam_ref_map, unmapped_headers = _map_fasta_to_bam_refs(
-                fragments_dict, bam_references
+                fragments_dict, bam_references, disable_progress=disable_progress
             )
 
             if unmapped_headers:
@@ -1066,7 +1067,8 @@ def calculate_fragment_coverage(
 
                 # Load coverage data only for this batch
                 coverage_data = {}
-                for bam_contig_name, _ in tqdm(batch_contigs, desc=f"Loading coverage (batch {batch_idx + 1}/{num_batches})"):
+                batch_iterator = batch_contigs if disable_progress else tqdm(batch_contigs, desc=f"Loading coverage (batch {batch_idx + 1}/{num_batches})")
+                for bam_contig_name, _ in batch_iterator:
                     bam_contig_length = bam_lengths.get(bam_contig_name)
                     if bam_contig_length is None:
                         coverage_data[bam_contig_name] = (None, None)
@@ -1097,13 +1099,16 @@ def calculate_fragment_coverage(
                 ]
 
                 with Pool(processes=cores) as pool:
-                    batch_results = list(
-                        tqdm(
-                            pool.imap(_process_contig_coverage_worker, worker_args),
-                            total=len(worker_args),
-                            desc=f"Processing fragments (batch {batch_idx + 1}/{num_batches})",
+                    if disable_progress:
+                        batch_results = list(pool.imap(_process_contig_coverage_worker, worker_args))
+                    else:
+                        batch_results = list(
+                            tqdm(
+                                pool.imap(_process_contig_coverage_worker, worker_args),
+                                total=len(worker_args),
+                                desc=f"Processing fragments (batch {batch_idx + 1}/{num_batches})",
+                            )
                         )
-                    )
 
                 results.extend(batch_results)
 
@@ -1255,7 +1260,8 @@ def calculate_coverage_from_multiple_bams(
     all_coverage_series = []
 
     # Use tqdm for progress if processing multiple files
-    bam_iterator = tqdm(bam_files, desc="Processing BAM files") if len(bam_files) > 1 else bam_files
+    disable_inner_progress = len(bam_files) > 1
+    bam_iterator = tqdm(bam_files, desc="Processing BAM files") if disable_inner_progress else bam_files
 
     for i, bam_file in enumerate(bam_iterator):
         logger.debug(
@@ -1265,10 +1271,10 @@ def calculate_coverage_from_multiple_bams(
         try:
             # Calculate total mapped reads for normalization
             total_mapped_reads = _get_total_mapped_reads(bam_file)
-            
+
             # Calculate coverage for this alignment file
             coverage, coverage_std = calculate_fragment_coverage(
-                bam_file, fragments_dict, cores, coverage_batch_size
+                bam_file, fragments_dict, cores, coverage_batch_size, disable_progress=disable_inner_progress
             )
             if total_mapped_reads <= 0:
                 logger.warning(
