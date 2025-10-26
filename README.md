@@ -12,14 +12,14 @@
 conda create -n remag -c bioconda -c conda-forge remag
 conda activate remag
 
-# Run REMAG
-remag -f contigs.fasta -c alignments.bam -o output_directory
+# Run REMAG (output directory optional - defaults to remag_output)
+remag contigs.fasta -c alignments.bam
 ```
 
 ### Option 2: Using Docker (No local installation needed)
 ```bash
 docker run --rm -v $(pwd):/data danielzmbp/remag:latest \
-  -f /data/contigs.fasta -c /data/alignments.bam -o /data/output
+  /data/contigs.fasta -c /data/alignments.bam -o /data/output
 ```
 
 ### Option 3: Using pip
@@ -33,7 +33,7 @@ conda install -c bioconda miniprot
 pip install remag
 
 # Run REMAG
-remag -f contigs.fasta -c alignments.bam -o output_directory
+remag contigs.fasta -c alignments.bam
 ```
 
 ## Installation
@@ -85,13 +85,13 @@ conda install -c conda-forge matplotlib umap-learn
 ### Using Docker
 
 ```bash
-# Pull and run the latest version
+# Pull and run the latest version (output directory defaults to remag_output)
 docker run --rm -v $(pwd):/data danielzmbp/remag:latest \
-  -f /data/contigs.fasta -c /data/alignments.bam -o /data/output
+  /data/contigs.fasta -c /data/alignments.bam
 
-# Or use a specific version
-docker run --rm -v $(pwd):/data danielzmbp/remag:0.2.5 \
-  -f /data/contigs.fasta -c /data/alignments.bam -o /data/output
+# Or specify output directory
+docker run --rm -v $(pwd):/data danielzmbp/remag:latest \
+  /data/contigs.fasta -c /data/alignments.bam -o /data/output
 
 # For interactive use
 docker run -it --rm -v $(pwd):/data danielzmbp/remag:latest /bin/bash
@@ -102,7 +102,7 @@ docker run -it --rm -v $(pwd):/data danielzmbp/remag:latest /bin/bash
 ```bash
 # Pull and run the latest version directly
 singularity run docker://danielzmbp/remag:latest \
-  -f contigs.fasta -c alignments.bam -o output_directory
+  contigs.fasta -c alignments.bam
 
 # Build Singularity image from Docker Hub
 singularity build remag_v0.2.5.sif docker://danielzmbp/remag:v0.2.5
@@ -112,18 +112,18 @@ singularity build remag_latest.sif docker://danielzmbp/remag:latest
 
 # Run with Singularity
 singularity run --bind $(pwd):/data remag_v0.2.5.sif \
-  -f /data/contigs.fasta -c /data/alignments.bam -o /data/output
+  /data/contigs.fasta -c /data/alignments.bam
 
 # Or use exec for direct command execution
 singularity exec --bind $(pwd):/data remag_v0.2.5.sif \
-  remag -f /data/contigs.fasta -c /data/alignments.bam -o /data/output
+  remag /data/contigs.fasta -c /data/alignments.bam -o /data/output
 
 # For interactive shell
 singularity shell --bind $(pwd):/data remag_v0.2.5.sif
 
 # Build a local Singularity image file (optional)
 singularity build remag.sif docker://danielzmbp/remag:latest
-singularity run remag.sif -f contigs.fasta -c alignments.bam -o output_directory
+singularity run remag.sif contigs.fasta -c alignments.bam
 ```
 
 ### From source
@@ -165,13 +165,36 @@ pip install "remag[plotting]"
 After installation, you can use REMAG via the command line:
 
 ```bash
-remag -f contigs.fasta -c alignments.bam -o output_directory
+# Basic usage (output defaults to remag_output in FASTA directory)
+remag contigs.fasta -c alignments.bam
+
+# With explicit output directory
+remag contigs.fasta -c alignments.bam -o output_directory
+
+# Multiple samples using glob patterns
+remag contigs.fasta -c "samples/*.bam"
+
+# Using explicit -f flag (both styles work)
+remag -f contigs.fasta -c alignments.bam
+
+# Keep intermediate files with -k shorthand
+remag contigs.fasta -c alignments.bam -k
 ```
 
 ### Python module mode
 
 ```bash
-python -m remag -f contigs.fasta -c alignments.bam -o output_directory
+python -m remag contigs.fasta -c alignments.bam
+```
+
+### Getting help
+
+```bash
+# Quick reference (basic options)
+remag -h
+
+# Full documentation (all advanced options)
+remag --help
 ```
 
 ## How REMAG Works
@@ -194,36 +217,28 @@ REMAG uses a sophisticated multi-stage pipeline specifically designed for eukary
 
 ## Options
 
+Use `remag -h` for quick reference or `remag --help` for full documentation.
+
+### Essential Options
+
 ```
-  -f, --fasta PATH                Input FASTA file with contigs to bin. Can be gzipped.  [required]
-  -c, --coverage PATH             Coverage files for calculation. Supports BAM, CRAM (indexed), and TSV formats. Auto-detects format by extension. Each file represents one sample. Supports space-separated paths and glob patterns (e.g., "*.bam", "*.cram", "*.tsv"). Use quotes around glob patterns.
-  -o, --output PATH               Output directory for results.  [required]
-  --epochs INTEGER RANGE          Training epochs for neural network.  [default: 400; 20<=x<=2000]
-  --batch-size INTEGER RANGE      Batch size for training.  [default: 2048; 16<=x<=8192]
-  --embedding-dim INTEGER RANGE   Embedding dimension for contrastive learning.  [default: 256; 64<=x<=512]
-  --base-learning-rate FLOAT RANGE
-                                  Base learning rate for contrastive learning training (scaled by batch size).  [default: 0.008; 0.00001<=x<=0.1]
-  --min-cluster-size INTEGER RANGE
-                                  Minimum number of contigs required to form a cluster/bin.  [default: 2; 2<=x<=100]
-  --leiden-resolution FLOAT       Resolution parameter for Leiden clustering (higher = more clusters).  [default: 1.0; 0.1<=x<=5.0]
-  --leiden-k-neighbors INTEGER    Number of nearest neighbors for k-NN graph construction in Leiden clustering.  [default: 15; 5<=x<=100]
-  --leiden-similarity-threshold FLOAT
-                                  Minimum cosine similarity threshold for k-NN graph edges in Leiden clustering.  [default: 0.1; 0.0<=x<=1.0]
-  --min-contig-length INTEGER RANGE
-                                  Minimum contig length in base pairs for binning consideration.  [default: 1000; 500<=x<=10000]
-  --max-positive-pairs INTEGER RANGE
-                                  Maximum number of positive pairs for contrastive learning training.  [default: 5000000; 100000<=x<=10000000]
-  -t, --threads INTEGER RANGE     Number of CPU cores to use for parallel processing.  [default: 8; 1<=x<=64]
-  --min-bin-size INTEGER RANGE    Minimum total bin size in base pairs for output.  [default: 100000; 50000<=x<=10000000]
+  FASTA_ARG                       Input FASTA file (positional argument). Can also use -f/--fasta
+  -f, --fasta PATH                Input FASTA file with contigs to bin. Can be gzipped.
+  -c, --coverage PATH             Coverage files for calculation. Supports BAM, CRAM (indexed), and TSV formats.
+                                  Auto-detects format by extension. Supports space-separated paths and glob patterns
+                                  (e.g., "*.bam", "*.cram", "*.tsv"). Use quotes around glob patterns.
+  -o, --output PATH               Output directory for results. [default: remag_output in FASTA directory]
+  -t, --threads INTEGER           Number of CPU cores to use for parallel processing.  [default: 8]
   -v, --verbose                   Enable verbose logging.
-  --skip-bacterial-filter         Skip bacterial contig filtering (4CAC classifier + contrastive learning).
-  --skip-refinement               Skip bin refinement.
-  --max-refinement-rounds INTEGER RANGE
-                                  Maximum refinement rounds.  [default: 2; 1<=x<=10]
-  --num-augmentations INTEGER RANGE
-                                  Number of random fragments per contig.  [default: 8; 1<=x<=32]
-  --keep-intermediate             Keep intermediate files (training fragments, etc.).
-  -h, --help                      Show this message and exit.
+  -k, --keep-intermediate         Keep intermediate files (embeddings, features, model, etc.).
+  -h, --help                      Show quick reference or full help.
+```
+
+### Advanced Options
+
+For complete list of advanced options (neural network parameters, clustering settings, refinement options, etc.), run:
+```bash
+remag --help
 ```
 
 ## Output
@@ -237,7 +252,7 @@ REMAG produces several output files:
 - `remag.log`: Detailed log file
 - `*_non_bacterial_filtered.fasta`: Filtered FASTA file with bacterial contigs removed (when bacterial filtering is enabled)
 
-### Additional files (with `--keep-intermediate` option):
+### Additional files (with `-k` / `--keep-intermediate` option):
 - `siamese_model.pt`: Trained Siamese neural network model
 - `params.json`: Complete run parameters for reproducibility
 - `features.csv`: Extracted k-mer and coverage features
