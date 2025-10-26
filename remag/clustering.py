@@ -182,9 +182,7 @@ def _construct_knn_graph(embeddings, k=15, similarity_threshold=0.1, n_jobs=1, a
     
     # Make graph undirected by averaging edge weights
     g = g.as_undirected(mode='mean')
-    
-    logger.info(f"Graph created: {g.vcount()} nodes, {g.ecount()} edges")
-    
+
     # Save graph if keep_intermediate is enabled
     if args and getattr(args, "keep_intermediate", False):
         # Save as edge list with weights
@@ -249,7 +247,7 @@ def _leiden_clustering(embeddings, k=15, similarity_threshold=0.1, resolution=1.
     # Find connected components
     components = graph.connected_components()
     n_components = len(components)
-    logger.info(f"Graph has {n_components} connected components")
+    logger.info(f"Graph: {graph.vcount()} nodes, {graph.ecount()} edges, {n_components} connected components")
     
     if n_components == 1:
         logger.info("Single connected component - running Leiden on full graph")
