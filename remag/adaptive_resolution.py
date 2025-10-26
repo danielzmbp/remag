@@ -148,7 +148,7 @@ def determine_optimal_resolution(embeddings_df, fragments_dict, args):
     Returns:
         float: Optimal resolution parameter
     """
-    logger.info("=== ADAPTIVE RESOLUTION DETERMINATION ===")
+    logger.info("Adaptive resolution determination")
 
     # Step 1: Estimate organism count from all contigs
     gene_counts = estimate_organisms_from_all_contigs(fragments_dict, args)
@@ -254,6 +254,6 @@ def determine_optimal_resolution(embeddings_df, fragments_dict, args):
         except Exception as e:
             logger.warning(f"Failed to save resolution testing results: {e}")
 
-    logger.info(f"=== ADAPTIVE RESOLUTION COMPLETE: {best_resolution:.2f} ===")
+    logger.info(f"Adaptive resolution complete: {best_resolution:.2f}")
 
     return best_resolution
