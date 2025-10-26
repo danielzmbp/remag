@@ -134,7 +134,6 @@ class TrainingManager:
                 scg_margin=scg_margin,
                 use_scg_co_occurrence=False
             )
-            logger.info(f"Using HybridContrastiveLoss with SCG loss weight={scg_loss_weight}")
         else:
             criterion = BarlowTwinsLoss(lambda_param=5e-3)
             logger.info("Using standard BarlowTwinsLoss (no SCG features)")
