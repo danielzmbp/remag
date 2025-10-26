@@ -93,7 +93,7 @@ def get_features_csv_path(output_dir):
     return os.path.join(output_dir, "features.csv")
 
 
-def filter_bacterial_contigs(fasta_file, output_dir, min_contig_length=1000, cores=8, hyenadna_batch_size=1024):
+def filter_bacterial_contigs(fasta_file, output_dir, min_contig_length=1000, cores=8, hyenadna_batch_size=1024, save_filtered_contigs=False):
     """
     Filter non-eukaryotic contigs using the HyenaDNA classifier.
     Keeps contigs predicted as eukaryotic with sufficient confidence.
@@ -104,6 +104,7 @@ def filter_bacterial_contigs(fasta_file, output_dir, min_contig_length=1000, cor
         min_contig_length: Minimum contig length threshold
         cores: Number of CPU cores to use (note: HyenaDNA uses GPU when available)
         hyenadna_batch_size: Batch size for HyenaDNA model inference (default: 1024)
+        save_filtered_contigs: If True, save non-eukaryotic contigs to a separate file
 
     Returns:
         str: Path to filtered FASTA file
@@ -149,6 +150,15 @@ def filter_bacterial_contigs(fasta_file, output_dir, min_contig_length=1000, cor
     # Use temporary file for writing sequences immediately
     temp_fasta = filtered_fasta + ".tmp"
 
+    # Prepare file for filtered out contigs if requested
+    filtered_out_fasta = None
+    filtered_out_file = None
+    if save_filtered_contigs:
+        filtered_out_fasta = os.path.join(
+            output_dir, f"{name_without_ext}_non_eukaryotic.fasta"
+        )
+        filtered_out_file = open(filtered_out_fasta + ".tmp", "w", encoding="utf-8")
+
     with open(classification_results, "w", encoding="utf-8") as results_file, \
          open(temp_fasta, "w", encoding="utf-8") as fasta_out:
 
@@ -187,6 +197,11 @@ def filter_bacterial_contigs(fasta_file, output_dir, min_contig_length=1000, cor
                     n_eukaryotic += 1
                 else:
                     n_filtered += 1
+                    # Save non-eukaryotic sequences if requested
+                    if filtered_out_file:
+                        filtered_out_file.write(f">{header}\n")
+                        for i in range(0, len(seq_upper), 60):
+                            filtered_out_file.write(f"{seq_upper[i:i+60]}\n")
 
             except Exception as e:
                 logger.error(f"Classification error for {header}: {e}")
@@ -196,6 +211,10 @@ def filter_bacterial_contigs(fasta_file, output_dir, min_contig_length=1000, cor
                     fasta_out.write(f"{seq_upper[i:i+60]}\n")
                 n_eukaryotic += 1
 
+    # Close the filtered out file if it was opened
+    if filtered_out_file:
+        filtered_out_file.close()
+
     logger.info(
         f"Processed {n_total} sequences: kept {n_eukaryotic} eukaryotic, filtered {n_filtered} non-eukaryotic"
     )
@@ -203,12 +222,23 @@ def filter_bacterial_contigs(fasta_file, output_dir, min_contig_length=1000, cor
     # Handle the case where no eukaryotic sequences were found
     if n_eukaryotic == 0:
         os.remove(temp_fasta)
+        if filtered_out_file:
+            os.remove(filtered_out_fasta + ".tmp")
         logger.warning("No eukaryotic sequences found, keeping all sequences")
         return fasta_file
 
     # Rename temp file to final filtered fasta
     os.rename(temp_fasta, filtered_fasta)
     logger.info(f"Filtered FASTA saved to: {filtered_fasta}")
+
+    # Rename filtered out temp file if it exists
+    if filtered_out_file and n_filtered > 0:
+        os.rename(filtered_out_fasta + ".tmp", filtered_out_fasta)
+        logger.info(f"Non-eukaryotic contigs saved to: {filtered_out_fasta}")
+    elif filtered_out_file and n_filtered == 0:
+        # Remove empty temp file
+        os.remove(filtered_out_fasta + ".tmp")
+
     return filtered_fasta
 
 
@@ -1225,7 +1255,7 @@ def calculate_coverage_from_multiple_bams(
     all_coverage_series = []
 
     for i, bam_file in enumerate(bam_files):
-        logger.info(
+        logger.debug(
             f"Processing alignment file {i+1}/{len(bam_files)}: {os.path.basename(bam_file)}"
         )
 

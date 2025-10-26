@@ -185,7 +185,7 @@ def _build_scg_matrix(gene_mappings, fragments_dict, args):
 
     # Log statistics
     n_contigs_with_scg = sum(1 for scgs in contig_to_scg_dict.values() if len(scgs) > 0)
-    logger.info(f"SCG matrix: {n_contigs} contigs × {n_genes} gene families")
+    logger.debug(f"SCG matrix: {n_contigs} contigs × {n_genes} gene families")
     logger.info(f"Contigs with SCG annotations: {n_contigs_with_scg}/{n_contigs} ({100*n_contigs_with_scg/n_contigs:.1f}%)")
 
     # Save annotations for reference
