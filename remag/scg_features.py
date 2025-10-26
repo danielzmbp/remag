@@ -119,7 +119,7 @@ def _build_scg_matrix(gene_mappings, fragments_dict, args):
         all_gene_families.update(contig_genes.keys())
 
     gene_family_index = sorted(list(all_gene_families))
-    logger.info(f"Found {len(gene_family_index)} unique gene families")
+    logger.debug(f"Found {len(gene_family_index)} unique gene families")
 
     # Create mapping from gene family to column index
     gene_to_col = {gene: idx for idx, gene in enumerate(gene_family_index)}

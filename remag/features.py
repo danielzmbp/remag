@@ -655,16 +655,16 @@ def get_features(
     if coverage_columns:
         # Apply log transformation to coverage features
         df[coverage_columns] = df[coverage_columns].map(lambda x: np.log1p(x))
-        logger.info(
+        logger.debug(
             f"Applied log transformation to {len(coverage_columns)} coverage features"
         )
 
-        logger.info("Applying global scaling to preserve co-abundance patterns across samples")
-        
+        logger.debug("Applying global scaling to preserve co-abundance patterns across samples")
+
         from sklearn.preprocessing import MinMaxScaler
         scaler = MinMaxScaler(feature_range=(0, 1))
         df[coverage_columns] = scaler.fit_transform(df[coverage_columns])
-        logger.info(f"Applied MinMaxScaler (0-1 range) to {len(coverage_columns)} coverage features")
+        logger.debug(f"Applied MinMaxScaler (0-1 range) to {len(coverage_columns)} coverage features")
         
         # Log sample information for debugging
         sample_names = set()
@@ -1051,10 +1051,10 @@ def calculate_fragment_coverage(
             num_batches = (len(contig_list) + batch_size - 1) // batch_size
 
             if use_batching:
-                logger.info(f"Processing {len(contig_fragments)} contigs ({total_bases:,} total bases) in {num_batches} batches (batch_size={batch_size}) using {cores} cores...")
-                logger.info(f"Estimated peak memory for coverage: ~{(batch_size * (total_bases / len(contig_fragments)) * 4 / 1e9):.2f} GB per batch")
+                logger.debug(f"Processing {len(contig_fragments)} contigs ({total_bases:,} total bases) in {num_batches} batches (batch_size={batch_size}) using {cores} cores...")
+                logger.debug(f"Estimated peak memory for coverage: ~{(batch_size * (total_bases / len(contig_fragments)) * 4 / 1e9):.2f} GB per batch")
             else:
-                logger.info(f"Processing {len(contig_fragments)} contigs ({total_bases:,} total bases) using {cores} cores...")
+                logger.debug(f"Processing {len(contig_fragments)} contigs ({total_bases:,} total bases) using {cores} cores...")
 
             results = []
             for batch_idx in range(num_batches):
@@ -1062,7 +1062,7 @@ def calculate_fragment_coverage(
                 end_idx = min(start_idx + batch_size, len(contig_list))
                 batch_contigs = contig_list[start_idx:end_idx]
 
-                logger.info(f"Processing batch {batch_idx + 1}/{num_batches} ({len(batch_contigs)} contigs)...")
+                logger.debug(f"Processing batch {batch_idx + 1}/{num_batches} ({len(batch_contigs)} contigs)...")
 
                 # Load coverage data only for this batch
                 coverage_data = {}
@@ -1137,7 +1137,7 @@ def calculate_fragment_coverage(
         fragment_coverage[missing_fh] = 0.0
         fragment_coverage_std[missing_fh] = 0.0
 
-    logger.info(
+    logger.debug(
         f"Coverage calculation complete. Total fragments: {len(all_fragment_headers)}"
     )
     return fragment_coverage, fragment_coverage_std
@@ -1217,7 +1217,7 @@ def _get_total_mapped_reads(bam_file: str) -> int:
     try:
         with pysam.AlignmentFile(bam_file, "rb") as bamfile:
             total_mapped = bamfile.mapped
-            logger.info(f"Alignment file {os.path.basename(bam_file)}: {total_mapped:,} mapped reads")
+            logger.debug(f"Alignment file {os.path.basename(bam_file)}: {total_mapped:,} mapped reads")
             return total_mapped
     except Exception as e:
         logger.error(f"Error calculating mapped reads for {bam_file}: {e}")
@@ -1254,7 +1254,10 @@ def calculate_coverage_from_multiple_bams(
 
     all_coverage_series = []
 
-    for i, bam_file in enumerate(bam_files):
+    # Use tqdm for progress if processing multiple files
+    bam_iterator = tqdm(bam_files, desc="Processing BAM files") if len(bam_files) > 1 else bam_files
+
+    for i, bam_file in enumerate(bam_iterator):
         logger.debug(
             f"Processing alignment file {i+1}/{len(bam_files)}: {os.path.basename(bam_file)}"
         )
@@ -1289,7 +1292,7 @@ def calculate_coverage_from_multiple_bams(
                     normalized_coverage_std = {
                         k: v / normalization_factor for k, v in coverage_std.items()
                     }
-                    logger.info(
+                    logger.debug(
                         f"Normalized coverage by {total_mapped_reads:,} mapped reads (factor: {normalization_factor:.2f})"
                     )
 
