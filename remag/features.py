@@ -576,7 +576,7 @@ def get_features(
     
     # Process sequences and generate fragments
     sequence_count = fragment_count = filtered_count = short_fragment_count = 0
-    logger.info(f"Using original contig + {num_augmentations} random fragments per contig")
+    logger.debug(f"Using original contig + {num_augmentations} random fragments per contig")
 
     # Collect all fragment sequences for batch processing
     all_fragments = []
