@@ -226,7 +226,7 @@ class HyenaDNAClassifier:
         if model_path is None:
             # Use default model path relative to this file
             curr_path = os.path.dirname(os.path.abspath(__file__))
-            model_path = os.path.join(curr_path, "models", "pytorch_model.bin")
+            model_path = os.path.join(curr_path, "models", "pytorch_model.bin.20251024")
 
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"Model file not found: {model_path}")
