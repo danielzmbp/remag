@@ -696,9 +696,10 @@ def check_core_gene_duplications(clusters_df, fragments_dict, args,
         gene_mappings_cache = parse_and_cache_paf_files(
             temp_dir, filtered_clusters, args, target_coverage_threshold, identity_threshold
         )
-        
-        # Store cache in args for immediate use during refinement
+
+        # Store cache and duplication results in args for immediate use during refinement
         args._gene_mappings_cache = gene_mappings_cache
+        args._duplication_results = duplication_results
 
     finally:
         # Clean up temp_miniprot folder unless keeping intermediate files
