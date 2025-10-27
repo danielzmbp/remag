@@ -51,28 +51,6 @@ class SpaceSeparatedPaths(click.ParamType):
         return sorted(validated_paths)
 
 
-class IntegerRange(click.ParamType):
-    """Custom integer type with validation but no range display."""
-    name = "integer"
-
-    def __init__(self, min=None, max=None):
-        self.min = min
-        self.max = max
-
-    def convert(self, value, param, ctx):
-        try:
-            int_value = int(value)
-        except (ValueError, TypeError):
-            self.fail(f"{value!r} is not a valid integer", param, ctx)
-
-        if self.min is not None and int_value < self.min:
-            self.fail(f"{int_value} is too small (minimum: {self.min})", param, ctx)
-        if self.max is not None and int_value > self.max:
-            self.fail(f"{int_value} is too large (maximum: {self.max})", param, ctx)
-
-        return int_value
-
-
 click.rich_click.USE_RICH_MARKUP = True
 click.rich_click.USE_MARKDOWN = True
 click.rich_click.SHOW_ARGUMENTS = True
@@ -236,49 +214,49 @@ def validate_coverage_options(ctx, param, value):
 )
 @click.option(
     "--epochs",
-    type=click.IntRange(min=10, max=2000),
+    type=int,
     default=400,
     show_default=True,
     help="Number of training epochs for contrastive learning model.",
 )
 @click.option(
     "--batch-size",
-    type=click.IntRange(min=16, max=8192),
-    default=2048,
+    type=int,
+    default=4096,
     show_default=True,
     help="Batch size for contrastive learning training.",
 )
 @click.option(
     "--embedding-dim",
-    type=click.IntRange(min=64, max=512),
+    type=int,
     default=256,
     show_default=True,
     help="Dimensionality of contig embeddings in contrastive learning.",
 )
 @click.option(
     "--base-learning-rate",
-    type=click.FloatRange(min=1e-5, max=0.1),
+    type=float,
     default=8e-3,
     show_default=True,
     help="Base learning rate for contrastive learning training (scaled by batch size).",
 )
 @click.option(
     "--min-cluster-size",
-    type=click.IntRange(min=2, max=100),
+    type=int,
     default=2,
     show_default=True,
     help="Minimum number of contigs required to form a cluster/bin.",
 )
 @click.option(
     "--min-contig-length",
-    type=click.IntRange(min=500, max=10000),
+    type=int,
     default=1000,
     show_default=True,
     help="Minimum contig length in base pairs for binning consideration.",
 )
 @click.option(
     "--max-positive-pairs",
-    type=click.IntRange(min=100000, max=10000000),
+    type=int,
     default=5000000,
     show_default=True,
     help="Maximum number of positive pairs for contrastive learning training.",
@@ -286,14 +264,14 @@ def validate_coverage_options(ctx, param, value):
 @click.option(
     "-t",
     "--threads",
-    type=IntegerRange(min=1, max=64),
+    type=int,
     default=8,
     show_default=True,
     help="Number of CPU cores to use for parallel processing.",
 )
 @click.option(
     "--min-bin-size",
-    type=click.IntRange(min=50000, max=10000000),
+    type=int,
     default=200000,
     show_default=True,
     help="Minimum total bin size in base pairs for output.",
@@ -316,21 +294,21 @@ def validate_coverage_options(ctx, param, value):
 )
 @click.option(
     "--max-refinement-rounds",
-    type=click.IntRange(min=1, max=10),
+    type=int,
     default=2,
     show_default=True,
     help="Maximum number of iterative bin refinement rounds.",
 )
 @click.option(
     "--min-duplications-for-refinement",
-    type=click.IntRange(min=1, max=10),
+    type=int,
     default=2,
     show_default=True,
     help="Minimum number of duplicated core genes required to trigger refinement.",
 )
 @click.option(
     "--num-augmentations",
-    type=click.IntRange(min=1, max=32),
+    type=int,
     default=8,
     show_default=True,
     help="Number of random fragments per contig for data augmentation.",
@@ -343,7 +321,7 @@ def validate_coverage_options(ctx, param, value):
 )
 @click.option(
     "--leiden-resolution",
-    type=click.FloatRange(min=0.05, max=5.0),
+    type=float,
     default=None,
     show_default=False,
     help="Resolution parameter for Leiden clustering (higher = more clusters). If not specified, auto-resolution is used to determine optimal value based on core gene duplications.",
@@ -357,14 +335,14 @@ def validate_coverage_options(ctx, param, value):
 )
 @click.option(
     "--leiden-k-neighbors",
-    type=click.IntRange(min=5, max=100),
+    type=int,
     default=15,
     show_default=True,
     help="Number of nearest neighbors for k-NN graph construction in Leiden clustering.",
 )
 @click.option(
     "--leiden-similarity-threshold",
-    type=click.FloatRange(min=0.0, max=1.0),
+    type=float,
     default=0.1,
     show_default=True,
     help="Minimum cosine similarity threshold for k-NN graph edges in Leiden clustering.",
@@ -378,14 +356,14 @@ def validate_coverage_options(ctx, param, value):
 )
 @click.option(
     "--coverage-batch-size",
-    type=click.IntRange(min=1000, max=500000),
+    type=int,
     default=100000,
     show_default=True,
     help="Number of contigs to process per batch when calculating coverage from alignment files. Reduce this value if running out of memory with very large datasets.",
 )
 @click.option(
     "--hyenadna-batch-size",
-    type=click.IntRange(min=16, max=4096),
+    type=int,
     default=1024,
     show_default=True,
     help="Batch size for HyenaDNA model inference. Higher values speed up GPU inference but use more VRAM. Use 2048-4096 for high-end GPUs.",
