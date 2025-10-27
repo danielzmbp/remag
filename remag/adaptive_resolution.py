@@ -60,19 +60,24 @@ def test_multiple_resolutions(embeddings_df, gene_mappings_cache, args, test_res
     """
     logger.info(f"Testing {len(test_resolutions)} resolution values: {[f'{r:.2f}' for r in test_resolutions]}")
 
+    # Fix other parameters - only vary resolution
+    fixed_k_neighbors = getattr(args, 'leiden_k_neighbors', 15)
+    fixed_similarity_threshold = getattr(args, 'leiden_similarity_threshold', 0.1)
+    fixed_n_jobs = getattr(args, 'cores', 1)
+
     results = {}
 
     for resolution in test_resolutions:
         logger.debug(f"Testing resolution={resolution:.2f}...")
 
-        # Perform clustering with this resolution
+        # Perform clustering with this resolution (other parameters fixed)
         cluster_labels = _leiden_clustering(
             embeddings_df.values,
-            k=getattr(args, 'leiden_k_neighbors', 15),
-            similarity_threshold=getattr(args, 'leiden_similarity_threshold', 0.1),
+            k=fixed_k_neighbors,
+            similarity_threshold=fixed_similarity_threshold,
             resolution=resolution,
             random_state=42,
-            n_jobs=getattr(args, 'cores', 1),
+            n_jobs=fixed_n_jobs,
             args=None  # Don't save intermediate graphs during testing
         )
 
