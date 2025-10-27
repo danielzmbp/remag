@@ -229,8 +229,8 @@ def refine_bin_with_leiden_clustering(
         
         return leiden_resolution, leiden_k_neighbors, leiden_similarity_threshold
     
-    # Try adaptive refinement with up to 3 attempts
-    max_attempts = 3
+    # Try adaptive refinement with up to 5 attempts
+    max_attempts = 5
     failure_reason = None
     refined_clusters_df = None
     n_clusters = 0
@@ -310,19 +310,91 @@ def refine_bin_with_leiden_clustering(
         
         # Validate refinement FIRST using only contigs that were actually refined (have embeddings)
         validation_result = validate_refinement_with_markers(available_embeddings, refined_clusters_df, bin_id, gene_mappings_cache, duplication_results)
-        
+
         if validation_result == 'success':
             logger.info(f"Bin {bin_id} {attempt_info}: Validation passed!")
+
+            # Optimize: Try lower resolutions to find most conservative solution
+            best_resolution = leiden_resolution
+            best_clusters_df = refined_clusters_df
+            best_n_clusters = n_clusters
+
+            # Test progressively lower resolutions: 0.7x, 0.5x, 0.35x
+            for lower_multiplier in [0.7, 0.5, 0.35]:
+                test_resolution = leiden_resolution * lower_multiplier
+
+                # Don't go below a reasonable minimum
+                if test_resolution < 0.05:
+                    break
+
+                logger.debug(f"Bin {bin_id} testing lower resolution {test_resolution:.2f} to find more conservative solution")
+
+                # Apply Leiden clustering with lower resolution
+                test_labels = _leiden_clustering(
+                    bin_embeddings.values,
+                    k=leiden_k_neighbors,
+                    similarity_threshold=leiden_similarity_threshold,
+                    resolution=test_resolution,
+                    random_state=42,
+                    n_jobs=getattr(args, 'cores', 1)
+                )
+
+                test_n_clusters = len(set(test_labels))
+
+                # Merge small clusters
+                cluster_sizes = pd.Series(test_labels).value_counts()
+                small_clusters = cluster_sizes[cluster_sizes < min_cluster_size].index
+                if len(small_clusters) > 0:
+                    largest_cluster = cluster_sizes.idxmax()
+                    test_labels = np.array([
+                        largest_cluster if c in small_clusters else c
+                        for c in test_labels
+                    ])
+                    test_n_clusters = len(set(test_labels))
+
+                if test_n_clusters < 2:
+                    break  # Too few clusters, stop trying lower resolutions
+
+                # Create test clusters dataframe
+                test_formatted_labels = [f"{bin_id}_{label}" for label in test_labels]
+                test_clusters_df = pd.DataFrame({
+                    'contig': available_embeddings,
+                    'cluster': test_formatted_labels,
+                    'original_bin': bin_id
+                })
+
+                # Validate this lower resolution
+                test_validation = validate_refinement_with_markers(
+                    available_embeddings, test_clusters_df, bin_id,
+                    gene_mappings_cache, duplication_results
+                )
+
+                if test_validation == 'success':
+                    # Lower resolution also works! Use it (more conservative)
+                    logger.info(f"Bin {bin_id} found more conservative solution at resolution {test_resolution:.2f} ({test_n_clusters} clusters vs {best_n_clusters})")
+                    best_resolution = test_resolution
+                    best_clusters_df = test_clusters_df
+                    best_n_clusters = test_n_clusters
+                else:
+                    # Lower resolution failed validation, stop here
+                    logger.debug(f"Bin {bin_id} resolution {test_resolution:.2f} too low: {test_validation}")
+                    break
+
+            # Use the best (most conservative) solution found
+            refined_clusters_df = best_clusters_df
+            n_clusters = best_n_clusters
+            leiden_resolution = best_resolution
+
             break  # Success - exit retry loop
         else:
             failure_reason = validation_result
             logger.warning(f"Bin {bin_id} {attempt_info}: Validation failed - {failure_reason}")
-            
+
             if attempt == max_attempts - 1:
                 logger.warning(f"Bin {bin_id} failed validation after {max_attempts} attempts, keeping original")
                 return None
             # Continue to next attempt with adjusted parameters
-    
+
     # If we get here, validation passed - continue with success path
     
     # AFTER validation passes, handle contigs without embeddings - assign them to the largest refined cluster

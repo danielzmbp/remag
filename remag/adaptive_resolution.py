@@ -63,7 +63,7 @@ def test_multiple_resolutions(embeddings_df, gene_mappings_cache, args, test_res
     results = {}
 
     for resolution in test_resolutions:
-        logger.info(f"Testing resolution={resolution:.2f}...")
+        logger.debug(f"Testing resolution={resolution:.2f}...")
 
         # Perform clustering with this resolution
         cluster_labels = _leiden_clustering(
@@ -96,18 +96,25 @@ def test_multiple_resolutions(embeddings_df, gene_mappings_cache, args, test_res
                 test_clusters_df, gene_mappings_cache, args
             )
 
-            # Calculate total duplications across all bins (sum unique values per bin)
+            # Calculate per-bin completeness metrics
+            bin_completeness = test_clusters_df.groupby('cluster')['total_core_genes_found'].first()
             total_duplications = int(test_clusters_df.groupby('cluster')['duplicated_core_genes_count'].first().sum())
             bins_with_duplications = int(test_clusters_df.groupby('cluster')['has_duplicated_core_genes'].first().sum())
 
+            # Completeness quality metrics
+            max_bin_completeness = int(bin_completeness.max()) if len(bin_completeness) > 0 else 0
+            median_bin_completeness = int(bin_completeness.median()) if len(bin_completeness) > 0 else 0
+
             logger.info(f"Resolution {resolution:.2f}: {n_clusters} clusters, "
-                       f"{bins_with_duplications} bins with duplications, "
-                       f"{total_duplications} total duplicated genes")
+                       f"max completeness={max_bin_completeness}, median={median_bin_completeness}, "
+                       f"{bins_with_duplications} contaminated, {total_duplications} total duplications")
 
             results[resolution] = {
                 'n_clusters': n_clusters,
                 'bins_with_duplications': bins_with_duplications,
                 'total_duplications': total_duplications,
+                'max_bin_completeness': max_bin_completeness,
+                'median_bin_completeness': median_bin_completeness,
                 'clusters_df': test_clusters_df
             }
 
@@ -117,14 +124,28 @@ def test_multiple_resolutions(embeddings_df, gene_mappings_cache, args, test_res
                 'n_clusters': n_clusters,
                 'bins_with_duplications': float('inf'),
                 'total_duplications': float('inf'),
+                'max_bin_completeness': 0,
+                'median_bin_completeness': 0,
                 'clusters_df': test_clusters_df
             }
 
-    # Pick the resolution with the fewest total duplications
-    best_resolution = min(results.keys(), key=lambda r: results[r]['total_duplications'])
+    # Pick the resolution that maximizes genome completeness
+    # Priority: 1) Highest max completeness (recover complete genomes, avoid fragmentation)
+    #           2) Highest median completeness (overall bin quality)
+    #           3) Fewest duplications (contamination)
+    # Rationale: One complete genome (e.g., 1911 genes) is more valuable than fragmenting
+    # it into multiple bins (e.g., two bins with 850 genes each), even if that increases
+    # the total bin count. This prevents scoring fragmentation artifacts as "better".
+    best_resolution = max(results.keys(), key=lambda r: (
+        results[r]['max_bin_completeness'],    # Primary: recover complete genomes
+        results[r]['median_bin_completeness'], # Secondary: overall bin quality
+        -results[r]['total_duplications']      # Tertiary: contamination (negated for max)
+    ))
     best_result = results[best_resolution]
 
     logger.info(f"Best resolution: {best_resolution:.2f} with {best_result['n_clusters']} clusters, "
+               f"max completeness={best_result['max_bin_completeness']}, "
+               f"median={best_result['median_bin_completeness']}, "
                f"{best_result['total_duplications']} total duplications")
 
     return best_resolution, results
@@ -180,7 +201,7 @@ def determine_optimal_resolution(embeddings_df, fragments_dict, args, gene_mappi
     # Use maximum for estimation (most conservative, ensures we don't underestimate diversity)
     estimated_organisms = max_count
 
-    logger.info(f"Core gene statistics: median={median_count:.1f}, 90th percentile={percentile_90:.1f}, max={max_count:.1f}")
+    logger.debug(f"Core gene statistics: median={median_count:.1f}, 90th percentile={percentile_90:.1f}, max={max_count:.1f}")
     logger.info(f"Estimated number of organisms: {estimated_organisms:.1f} (using max gene count)")
 
     # Step 3: Calculate base resolution
@@ -195,9 +216,11 @@ def determine_optimal_resolution(embeddings_df, fragments_dict, args, gene_mappi
 
     # Step 4: Test multiple resolutions around the base estimate
     test_resolutions = [
+        max(base_resolution * 0.5, 0.05),  # Very conservative (fewer bins), min 0.05
         max(base_resolution * 0.7, 0.05),  # Conservative (fewer bins), min 0.05
         base_resolution,                    # Base estimate
-        base_resolution * 1.4               # Aggressive (more bins)
+        base_resolution * 1.4,              # Aggressive (more bins)
+        base_resolution * 2.0               # Very aggressive (more bins)
     ]
 
     # Remove duplicates and sort
@@ -206,7 +229,7 @@ def determine_optimal_resolution(embeddings_df, fragments_dict, args, gene_mappi
     # Load gene mappings cache for quick duplication checking
     # The cache was created during organism estimation and contains:
     # {contig_name: {gene_family: {score, coverage, identity}}}
-    logger.info("Loading gene mappings cache for duplication checking...")
+    logger.debug("Loading gene mappings cache for duplication checking...")
 
     # Import needed for cache path function
     from .miniprot_utils import get_gene_mappings_cache_path
