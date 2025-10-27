@@ -283,6 +283,4 @@ def determine_optimal_resolution(embeddings_df, fragments_dict, args, gene_mappi
         except Exception as e:
             logger.warning(f"Failed to save resolution testing results: {e}")
 
-    logger.info(f"Adaptive resolution complete: {best_resolution:.2f}")
-
     return best_resolution
