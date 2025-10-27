@@ -216,11 +216,11 @@ def determine_optimal_resolution(embeddings_df, fragments_dict, args, gene_mappi
 
     # Step 4: Test multiple resolutions around the base estimate
     test_resolutions = [
-        max(base_resolution * 0.5, 0.05),  # Very conservative (fewer bins), min 0.05
-        max(base_resolution * 0.7, 0.05),  # Conservative (fewer bins), min 0.05
+        max(base_resolution * 0.3, 0.05),  # Very conservative (fewer bins), min 0.05
+        max(base_resolution * 0.6, 0.05),  # Conservative (fewer bins), min 0.05
         base_resolution,                    # Base estimate
-        base_resolution * 1.4,              # Aggressive (more bins)
-        base_resolution * 2.0               # Very aggressive (more bins)
+        base_resolution * 2.0,              # Aggressive (more bins)
+        base_resolution * 3.0               # Very aggressive (more bins)
     ]
 
     # Remove duplicates and sort
