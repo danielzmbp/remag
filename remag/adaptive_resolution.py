@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 from loguru import logger
 
-from .miniprot_utils import estimate_organisms_from_all_contigs, check_core_gene_duplications_from_cache
+from .miniprot_utils import estimate_organisms_from_all_contigs, check_core_gene_duplications_from_cache, extract_gene_counts_from_mappings
 from .clustering import _leiden_clustering
 
 
@@ -60,19 +60,24 @@ def test_multiple_resolutions(embeddings_df, gene_mappings_cache, args, test_res
     """
     logger.info(f"Testing {len(test_resolutions)} resolution values: {[f'{r:.2f}' for r in test_resolutions]}")
 
+    # Fix other parameters - only vary resolution
+    fixed_k_neighbors = getattr(args, 'leiden_k_neighbors', 15)
+    fixed_similarity_threshold = getattr(args, 'leiden_similarity_threshold', 0.1)
+    fixed_n_jobs = getattr(args, 'cores', 1)
+
     results = {}
 
     for resolution in test_resolutions:
-        logger.info(f"Testing resolution={resolution:.2f}...")
+        logger.debug(f"Testing resolution={resolution:.2f}...")
 
-        # Perform clustering with this resolution
+        # Perform clustering with this resolution (other parameters fixed)
         cluster_labels = _leiden_clustering(
             embeddings_df.values,
-            k=getattr(args, 'leiden_k_neighbors', 15),
-            similarity_threshold=getattr(args, 'leiden_similarity_threshold', 0.1),
+            k=fixed_k_neighbors,
+            similarity_threshold=fixed_similarity_threshold,
             resolution=resolution,
             random_state=42,
-            n_jobs=getattr(args, 'cores', 1),
+            n_jobs=fixed_n_jobs,
             args=None  # Don't save intermediate graphs during testing
         )
 
@@ -96,18 +101,25 @@ def test_multiple_resolutions(embeddings_df, gene_mappings_cache, args, test_res
                 test_clusters_df, gene_mappings_cache, args
             )
 
-            # Calculate total duplications across all bins (sum unique values per bin)
+            # Calculate per-bin completeness metrics (using single-copy genes only)
+            bin_completeness = test_clusters_df.groupby('cluster')['single_copy_genes_count'].first()
             total_duplications = int(test_clusters_df.groupby('cluster')['duplicated_core_genes_count'].first().sum())
             bins_with_duplications = int(test_clusters_df.groupby('cluster')['has_duplicated_core_genes'].first().sum())
 
+            # Completeness quality metrics (single-copy genes)
+            max_bin_completeness = int(bin_completeness.max()) if len(bin_completeness) > 0 else 0
+            median_bin_completeness = int(bin_completeness.median()) if len(bin_completeness) > 0 else 0
+
             logger.info(f"Resolution {resolution:.2f}: {n_clusters} clusters, "
-                       f"{bins_with_duplications} bins with duplications, "
-                       f"{total_duplications} total duplicated genes")
+                       f"max completeness={max_bin_completeness}, median={median_bin_completeness}, "
+                       f"{bins_with_duplications} contaminated, {total_duplications} total duplications")
 
             results[resolution] = {
                 'n_clusters': n_clusters,
                 'bins_with_duplications': bins_with_duplications,
                 'total_duplications': total_duplications,
+                'max_bin_completeness': max_bin_completeness,
+                'median_bin_completeness': median_bin_completeness,
                 'clusters_df': test_clusters_df
             }
 
@@ -117,25 +129,39 @@ def test_multiple_resolutions(embeddings_df, gene_mappings_cache, args, test_res
                 'n_clusters': n_clusters,
                 'bins_with_duplications': float('inf'),
                 'total_duplications': float('inf'),
+                'max_bin_completeness': 0,
+                'median_bin_completeness': 0,
                 'clusters_df': test_clusters_df
             }
 
-    # Pick the resolution with the fewest total duplications
-    best_resolution = min(results.keys(), key=lambda r: results[r]['total_duplications'])
+    # Pick the resolution that maximizes genome completeness (single-copy genes only)
+    # Priority: 1) Highest max completeness (recover complete, clean genomes)
+    #           2) Highest median completeness (overall bin quality)
+    #           3) Fewest duplications (contamination)
+    # Rationale: Completeness now counts only single-copy genes (non-duplicated),
+    # preventing contaminated bins from being rewarded with high scores. This avoids
+    # bias towards over-consolidation (fewer, larger, contaminated bins).
+    best_resolution = max(results.keys(), key=lambda r: (
+        results[r]['max_bin_completeness'],    # Primary: recover complete genomes
+        results[r]['median_bin_completeness'], # Secondary: overall bin quality
+        -results[r]['total_duplications']      # Tertiary: contamination (negated for max)
+    ))
     best_result = results[best_resolution]
 
     logger.info(f"Best resolution: {best_resolution:.2f} with {best_result['n_clusters']} clusters, "
+               f"max completeness={best_result['max_bin_completeness']}, "
+               f"median={best_result['median_bin_completeness']}, "
                f"{best_result['total_duplications']} total duplications")
 
     return best_resolution, results
 
 
-def determine_optimal_resolution(embeddings_df, fragments_dict, args):
+def determine_optimal_resolution(embeddings_df, fragments_dict, args, gene_mappings=None):
     """
     Determine optimal Leiden resolution by analyzing core gene duplications.
 
     This is the main function that orchestrates the adaptive resolution process:
-    1. Run miniprot on all contigs to estimate organism count
+    1. Use existing gene mappings or run miniprot to estimate organism count
     2. Calculate base resolution from organism estimate
     3. Test multiple resolution values (base * [0.7, 1.0, 1.4])
     4. Pick the resolution with fewest core gene duplications
@@ -144,12 +170,17 @@ def determine_optimal_resolution(embeddings_df, fragments_dict, args):
         embeddings_df: DataFrame with embeddings for all contigs
         fragments_dict: Dictionary mapping headers to sequences
         args: Arguments object
+        gene_mappings: Optional pre-computed gene-to-contig mappings from miniprot.
+                      If None, will run miniprot to generate them.
 
     Returns:
         float: Optimal resolution parameter
     """
-    # Step 1: Estimate organism count from all contigs
-    gene_counts = estimate_organisms_from_all_contigs(fragments_dict, args)
+    # Step 1: Get gene counts from existing mappings or run miniprot
+    if gene_mappings is not None:
+        gene_counts = extract_gene_counts_from_mappings(gene_mappings)
+    else:
+        gene_counts = estimate_organisms_from_all_contigs(fragments_dict, args)
 
     if not gene_counts:
         logger.warning("No core genes found, falling back to default resolution")
@@ -175,7 +206,7 @@ def determine_optimal_resolution(embeddings_df, fragments_dict, args):
     # Use maximum for estimation (most conservative, ensures we don't underestimate diversity)
     estimated_organisms = max_count
 
-    logger.info(f"Core gene statistics: median={median_count:.1f}, 90th percentile={percentile_90:.1f}, max={max_count:.1f}")
+    logger.debug(f"Core gene statistics: median={median_count:.1f}, 90th percentile={percentile_90:.1f}, max={max_count:.1f}")
     logger.info(f"Estimated number of organisms: {estimated_organisms:.1f} (using max gene count)")
 
     # Step 3: Calculate base resolution
@@ -190,9 +221,11 @@ def determine_optimal_resolution(embeddings_df, fragments_dict, args):
 
     # Step 4: Test multiple resolutions around the base estimate
     test_resolutions = [
-        max(base_resolution * 0.7, 0.05),  # Conservative (fewer bins), min 0.05
+        max(base_resolution * 0.3, 0.05),  # Very conservative (fewer bins), min 0.05
+        max(base_resolution * 0.6, 0.05),  # Conservative (fewer bins), min 0.05
         base_resolution,                    # Base estimate
-        base_resolution * 1.4               # Aggressive (more bins)
+        base_resolution * 2.0,              # Aggressive (more bins)
+        base_resolution * 3.0               # Very aggressive (more bins)
     ]
 
     # Remove duplicates and sort
@@ -201,22 +234,25 @@ def determine_optimal_resolution(embeddings_df, fragments_dict, args):
     # Load gene mappings cache for quick duplication checking
     # The cache was created during organism estimation and contains:
     # {contig_name: {gene_family: {score, coverage, identity}}}
-    logger.info("Loading gene mappings cache for duplication checking...")
+    logger.debug("Loading gene mappings cache for duplication checking...")
 
     # Import needed for cache path function
     from .miniprot_utils import get_gene_mappings_cache_path
 
-    # Check if cache already exists from organism estimation
-    cache_path = get_gene_mappings_cache_path(args)
-    gene_mappings_cache = None
+    # Use provided gene_mappings if available, otherwise try to load from cache
+    gene_mappings_cache = gene_mappings
 
-    if os.path.exists(cache_path):
-        try:
-            with open(cache_path, "r") as f:
-                gene_mappings_cache = json.load(f)
-            logger.info(f"Loaded existing gene mappings cache with {len(gene_mappings_cache)} contigs")
-        except Exception as e:
-            logger.warning(f"Failed to load gene mappings cache: {e}")
+    if gene_mappings_cache is None:
+        # Check if cache already exists from organism estimation
+        cache_path = get_gene_mappings_cache_path(args)
+
+        if os.path.exists(cache_path):
+            try:
+                with open(cache_path, "r") as f:
+                    gene_mappings_cache = json.load(f)
+                logger.info(f"Loaded existing gene mappings cache with {len(gene_mappings_cache)} contigs")
+            except Exception as e:
+                logger.warning(f"Failed to load gene mappings cache: {e}")
 
     if gene_mappings_cache is None:
         logger.warning("No gene mappings cache available - cannot test multiple resolutions")
