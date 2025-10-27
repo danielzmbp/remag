@@ -16,8 +16,7 @@ from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 from loguru import logger
 from .utils import get_torch_device
-from .losses import BarlowTwinsLoss, HybridContrastiveLoss
-from .scg_features import SCGFeatureManager
+from .losses import BarlowTwinsLoss
 
 
 class EarlyStoppingManager:
@@ -87,22 +86,17 @@ class LearningRateScheduler:
 
 class TrainingManager:
     """Manages the complete training process."""
-    
-    def __init__(self, args, scg_feature_manager=None):
+
+    def __init__(self, args):
         self.args = args
-        self.scg_feature_manager = scg_feature_manager
         self.early_stopping = EarlyStoppingManager(patience=20)
         self.device = get_torch_device()
-        self.use_scg_loss = (scg_feature_manager is not None and
-                             scg_feature_manager.has_scg_features and
-                             getattr(args, 'use_scg_loss', False))
     
     def setup_training(self, model, features_df):
         """Set up training components (dataset, dataloader, optimizer, scheduler)."""
         dataset = SequenceDataset(
             features_df,
-            max_positive_pairs=self.args.max_positive_pairs,
-            scg_feature_manager=self.scg_feature_manager
+            max_positive_pairs=self.args.max_positive_pairs
         )
         has_enough_data = len(dataset) > self.args.batch_size * 10
 
@@ -123,20 +117,9 @@ class TrainingManager:
 
         scheduler = LearningRateScheduler.create_warmup_cosine_scheduler(optimizer, self.args)
 
-        # Choose loss function based on SCG availability
-        if self.use_scg_loss:
-            scg_loss_weight = getattr(self.args, 'scg_loss_weight', 0.1)
-            scg_margin = getattr(self.args, 'scg_margin', 1.0)
-            criterion = HybridContrastiveLoss(
-                alpha=1.0,
-                beta=scg_loss_weight,
-                barlow_twins_lambda=5e-3,
-                scg_margin=scg_margin,
-                use_scg_co_occurrence=False
-            )
-        else:
-            criterion = BarlowTwinsLoss(lambda_param=5e-3)
-            logger.info("Using standard BarlowTwinsLoss (no SCG features)")
+        # Use BarlowTwinsLoss for contrastive learning
+        criterion = BarlowTwinsLoss(lambda_param=5e-3)
+        logger.info("Using BarlowTwinsLoss")
 
         return dataloader, optimizer, scheduler, criterion
     
@@ -147,16 +130,8 @@ class TrainingManager:
         matrix_stats = None
 
         for batch_idx, batch_data in enumerate(dataloader):
-            # Unpack batch data (with or without SCG features)
-            if len(batch_data) == 5:
-                features1, features2, base_ids, scg_features1, scg_features2 = batch_data
-                scg_features1 = scg_features1.to(self.device)
-                scg_features2 = scg_features2.to(self.device)
-            else:
-                features1, features2, base_ids = batch_data
-                scg_features1 = None
-                scg_features2 = None
-
+            # Unpack batch data
+            features1, features2, base_ids = batch_data
             features1, features2, base_ids = (
                 features1.to(self.device),
                 features2.to(self.device),
@@ -168,29 +143,12 @@ class TrainingManager:
             # Forward pass
             output1, output2 = model(features1, features2)
 
-            # Compute loss (different signatures for hybrid vs. standard loss)
+            # Compute Barlow Twins loss
             is_last_batch = (batch_idx == len(dataloader) - 1)
-            if self.use_scg_loss and scg_features1 is not None:
-                # Hybrid loss needs embeddings in addition to projections
-                embeddings1 = model.get_embedding(features1)
-                embeddings2 = model.get_embedding(features2)
-
-                if is_last_batch:
-                    loss, matrix_stats = criterion(
-                        output1, output2, embeddings1, embeddings2,
-                        scg_features1, scg_features2, base_ids, return_stats=True
-                    )
-                else:
-                    loss = criterion(
-                        output1, output2, embeddings1, embeddings2,
-                        scg_features1, scg_features2, base_ids
-                    )
+            if is_last_batch:
+                loss, matrix_stats = criterion(output1, output2, base_ids, return_stats=True)
             else:
-                # Standard Barlow Twins loss
-                if is_last_batch:
-                    loss, matrix_stats = criterion(output1, output2, base_ids, return_stats=True)
-                else:
-                    loss = criterion(output1, output2, base_ids)
+                loss = criterion(output1, output2, base_ids)
 
             loss.backward()
 
@@ -241,11 +199,11 @@ class EnhancedFusionLayer(nn.Module):
     DEFAULT_NUM_HEADS = 4
     DEFAULT_DROPOUT = 0.1
     GATE_INPUT_MULTIPLIER = 2  # For concatenated features in gates
-    MULTI_SCALE_CONCAT_MULTIPLIER = 6  # 3 scales * 2 (kmer+coverage) features each
-    COMPRESSOR_HIDDEN_MULTIPLIER = 4
-    COMPRESSOR_OUTPUT_MULTIPLIER = 2
-    INTERACTION_HIDDEN_MULTIPLIER = 3
-    INTERACTION_INTERMEDIATE_MULTIPLIER = 2
+    MULTI_SCALE_CONCAT_MULTIPLIER = 4  # 2 scales * 2 (kmer+coverage) features each
+    COMPRESSOR_HIDDEN_MULTIPLIER = 2
+    COMPRESSOR_OUTPUT_MULTIPLIER = 1
+    INTERACTION_HIDDEN_MULTIPLIER = 2
+    INTERACTION_INTERMEDIATE_MULTIPLIER = 1
     FINAL_FUSION_INPUT_MULTIPLIER = 4  # gated_kmer + gated_coverage + interaction + alignment
     FINAL_FUSION_HIDDEN_MULTIPLIER = 2
     RESIDUAL_WEIGHT_INIT = 0.5
@@ -285,13 +243,12 @@ class EnhancedFusionLayer(nn.Module):
             nn.Sequential(
                 nn.Linear(embedding_dim, embedding_dim // 2),
                 nn.ReLU(),
-                nn.Linear(embedding_dim // 2, embedding_dim)  # Project back to common dim
+                nn.Linear(embedding_dim // 2, embedding_dim)  # Fine scale
             ),
-            nn.Linear(embedding_dim, embedding_dim),  # Identity scale
             nn.Sequential(
                 nn.Linear(embedding_dim, embedding_dim * 2),
                 nn.ReLU(),
-                nn.Linear(embedding_dim * 2, embedding_dim)  # Project back to common dim
+                nn.Linear(embedding_dim * 2, embedding_dim)  # Coarse scale
             )
         ])
 
@@ -314,9 +271,7 @@ class EnhancedFusionLayer(nn.Module):
             nn.Linear(embedding_dim * self.COMPRESSOR_OUTPUT_MULTIPLIER, embedding_dim * self.INTERACTION_HIDDEN_MULTIPLIER),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(embedding_dim * self.INTERACTION_HIDDEN_MULTIPLIER, embedding_dim * self.INTERACTION_INTERMEDIATE_MULTIPLIER),
-            nn.ReLU(),
-            nn.Linear(embedding_dim * self.INTERACTION_INTERMEDIATE_MULTIPLIER, embedding_dim)
+            nn.Linear(embedding_dim * self.INTERACTION_HIDDEN_MULTIPLIER, embedding_dim)
         )
 
         # Adaptive dropout
@@ -353,6 +308,8 @@ class EnhancedFusionLayer(nn.Module):
         if coverage_features.size(1) != self.coverage_proj.in_features:
             raise ValueError(f"Coverage feature dimension mismatch: expected "
                            f"{self.coverage_proj.in_features}, got {coverage_features.size(1)}")
+
+        logger.debug(f"Fusion input shapes - kmer: {kmer_features.shape}, coverage: {coverage_features.shape}")
 
         batch_size = kmer_features.size(0)
 
@@ -406,10 +363,10 @@ class EnhancedFusionLayer(nn.Module):
 
         # Concatenate multi-scale features (now all have consistent dimensions)
         # Each scale produces embedding_dim features for both kmer and coverage -> embedding_dim * 2 per scale
-        # 3 scales * embedding_dim * 2 = embedding_dim * 6 total
-        multi_scale_concat = torch.cat(scale_features, dim=1)  # [B, embedding_dim * 6]
+        # 2 scales * embedding_dim * 2 = embedding_dim * 4 total
+        multi_scale_concat = torch.cat(scale_features, dim=1)  # [B, embedding_dim * 4]
 
-        # Feature interaction module expects embedding_dim * 2, so we need to compress first
+        # Compress multi-scale features before interaction module
         multi_scale_compressed = self.multi_scale_compressor(multi_scale_concat)
         interaction_features = self.interaction_module(multi_scale_compressed)
 
@@ -426,6 +383,8 @@ class EnhancedFusionLayer(nn.Module):
 
         # Final MLP
         output = self.fusion_mlp(final_features)
+
+        logger.debug(f"Fusion output shape: {output.shape}")
 
         return output
 
@@ -454,21 +413,29 @@ class SiameseNetwork(nn.Module):
             # Adaptively size the coverage encoder based on number of samples
             # Assume ~2 features per sample (mean + std), so n_samples ≈ n_coverage_features / 2
             n_samples_estimate = max(1, n_coverage_features // 2)
-            
+
             # Scale hidden dimensions based on number of samples
             # More samples = more complex co-abundance patterns = larger encoder
-            if n_samples_estimate <= 2:
+            if n_samples_estimate == 1:
+                # 1 sample: 2 features → 8 → 4
+                coverage_hidden1 = 8
+                coverage_hidden2 = 4
+            elif n_samples_estimate == 2:
+                # 2 samples: 4 features → 16 → 8
+                coverage_hidden1 = 16
+                coverage_hidden2 = 8
+            elif n_samples_estimate <= 5:
+                # 3-5 samples: 6-10 features → 32 → 16
                 coverage_hidden1 = 32
                 coverage_hidden2 = 16
-            elif n_samples_estimate <= 5:
+            elif n_samples_estimate <= 10:
+                # 6-10 samples: 12-20 features → 64 → 32
                 coverage_hidden1 = 64
                 coverage_hidden2 = 32
-            elif n_samples_estimate <= 10:
+            else:
+                # >10 samples: >20 features → 128 → 64
                 coverage_hidden1 = 128
                 coverage_hidden2 = 64
-            else:
-                coverage_hidden1 = 256
-                coverage_hidden2 = 128
                 
             logger.debug(f"Coverage encoder sized for ~{n_samples_estimate} samples: "
                         f"{n_coverage_features} -> {coverage_hidden1} -> {coverage_hidden2}")
@@ -514,22 +481,42 @@ class SiameseNetwork(nn.Module):
         """Internal method to encode features using appropriate architecture"""
         # Split input into k-mer and coverage features
         kmer_features = x[:, :self.n_kmer_features]
-        
+
         # Encode k-mer features
         kmer_encoded = self.kmer_encoder(kmer_features)
-        
+
         if self.has_coverage:
             # Normal path with coverage features
             coverage_features = x[:, self.n_kmer_features:]
             coverage_encoded = self.coverage_encoder(coverage_features)
-            
+
             # Advanced fusion with cross-attention
             representation = self.fusion_layer(kmer_encoded, coverage_encoded)
         else:
             # No coverage features - use simple projection
             representation = self.kmer_projection(kmer_encoded)
-        
+
         return representation
+
+    def get_encoder_embeddings(self, x):
+        """Get embeddings from individual encoders before fusion (for debugging/analysis)
+
+        Returns:
+            tuple: (kmer_encoded, coverage_encoded) or (kmer_encoded, None) if no coverage
+        """
+        # Split input into k-mer and coverage features
+        kmer_features = x[:, :self.n_kmer_features]
+
+        # Encode k-mer features
+        kmer_encoded = self.kmer_encoder(kmer_features)
+
+        if self.has_coverage:
+            # Encode coverage features
+            coverage_features = x[:, self.n_kmer_features:]
+            coverage_encoded = self.coverage_encoder(coverage_features)
+            return kmer_encoded, coverage_encoded
+        else:
+            return kmer_encoded, None
 
     def forward_one(self, x):
         # Used for training, returns projection
@@ -552,17 +539,15 @@ class SiameseNetwork(nn.Module):
 
 
 class SequenceDataset(Dataset):
-    def __init__(self, features_df, max_positive_pairs=500000, scg_feature_manager=None):
+    def __init__(self, features_df, max_positive_pairs=500000):
         """Initialize contrastive learning dataset with positive pairs from same contigs.
 
         Args:
             features_df: DataFrame with k-mer and coverage features
             max_positive_pairs: Maximum number of positive pairs to generate
-            scg_feature_manager: Optional SCGFeatureManager for SCG-aware training
         """
         self.features_df = features_df
         self.fragment_headers = self.features_df.index.tolist()
-        self.scg_feature_manager = scg_feature_manager
 
         # Group fragment indices by base contig name
         self.contig_to_fragment_indices = self._group_indices_by_base_contig()
@@ -639,29 +624,15 @@ class SequenceDataset(Dataset):
         tensor2 = torch.tensor(self.features_df.iloc[idx2].values, dtype=torch.float32)
         base_id = torch.tensor(self.index_to_base_id[idx1], dtype=torch.long)
 
-        # Get SCG features if available
-        if self.scg_feature_manager is not None and self.scg_feature_manager.has_scg_features:
-            header1 = self.fragment_headers[idx1]
-            header2 = self.fragment_headers[idx2]
-            scg_features1 = self.scg_feature_manager.get_scg_features([header1])[0]
-            scg_features2 = self.scg_feature_manager.get_scg_features([header2])[0]
-            scg_tensor1 = torch.tensor(scg_features1, dtype=torch.float32)
-            scg_tensor2 = torch.tensor(scg_features2, dtype=torch.float32)
-        else:
-            # Return empty tensors if no SCG features
-            scg_tensor1 = torch.zeros(1, dtype=torch.float32)
-            scg_tensor2 = torch.zeros(1, dtype=torch.float32)
-
-        return tensor1, tensor2, base_id, scg_tensor1, scg_tensor2
+        return tensor1, tensor2, base_id
 
 
-def train_siamese_network(features_df, args, scg_feature_manager=None):
+def train_siamese_network(features_df, args):
     """Train the Siamese network for contrastive learning.
 
     Args:
         features_df: DataFrame with k-mer and coverage features
         args: Arguments object with training parameters
-        scg_feature_manager: Optional SCGFeatureManager for SCG-aware training
     """
     model_path = get_model_path(args)
 
@@ -724,7 +695,7 @@ def train_siamese_network(features_df, args, scg_feature_manager=None):
     logger.info(f"Starting training for {args.epochs} epochs...")
 
     # Initialize training manager and set up training
-    trainer = TrainingManager(args, scg_feature_manager=scg_feature_manager)
+    trainer = TrainingManager(args)
     dataloader, optimizer, scheduler, criterion = trainer.setup_training(model, features_df)
 
     # Training loop
@@ -747,17 +718,6 @@ def train_siamese_network(features_df, args, scg_feature_manager=None):
                 f"Invariance loss: {matrix_stats['invariance_loss']:.2f}, "
                 f"Redundancy loss: {matrix_stats['redundancy_loss']:.2f}"
             )
-
-            # Add SCG stats if using hybrid loss
-            if 'scg_loss' in matrix_stats and matrix_stats['scg_loss'] > 0:
-                scg_info = (
-                    f" | SCG stats - "
-                    f"Loss: {matrix_stats['scg_loss']:.4f}, "
-                    f"Duplicates: {matrix_stats.get('scg_n_duplicates', 0)}, "
-                    f"Avg dist: {matrix_stats.get('scg_avg_distance_duplicates', 0.0):.4f}"
-                )
-                barlow_info += scg_info
-
             logger.debug(barlow_info)
 
         # Early stopping check
@@ -805,6 +765,8 @@ def generate_embeddings(model, features_df, args):
 
     model.eval()
     embeddings = {}
+    kmer_embeddings = {}
+    coverage_embeddings = {}
 
     # Filter to only original contigs (ending with .original) for efficiency
     original_contig_mask = features_df.index.str.endswith(".original")
@@ -814,6 +776,9 @@ def generate_embeddings(model, features_df, args):
         f"Generating embeddings for {len(original_features_df)} original contigs (filtered from {len(features_df)} total fragments)..."
     )
 
+    # Determine if we should save encoder embeddings
+    save_encoder_embeddings = getattr(args, "keep_intermediate", False)
+
     with torch.no_grad():
         batch_size = args.batch_size
         for i in range(0, len(original_features_df), batch_size):
@@ -821,16 +786,39 @@ def generate_embeddings(model, features_df, args):
             batch_features = torch.tensor(batch_df.values, dtype=torch.float32).to(device)
             batch_embeddings = model.get_embedding(batch_features)
             batch_embeddings = torch.nn.functional.normalize(batch_embeddings, p=2, dim=1)
-            
+
+            # Optionally extract encoder embeddings before fusion
+            if save_encoder_embeddings:
+                kmer_encoded, coverage_encoded = model.get_encoder_embeddings(batch_features)
+
             for j, header in enumerate(batch_df.index):
                 clean_header = header.replace(".original", "")
                 embeddings[clean_header] = batch_embeddings[j].cpu().numpy()
+
+                # Save encoder embeddings if requested
+                if save_encoder_embeddings:
+                    kmer_embeddings[clean_header] = kmer_encoded[j].cpu().numpy()
+                    if coverage_encoded is not None:
+                        coverage_embeddings[clean_header] = coverage_encoded[j].cpu().numpy()
 
     embeddings_df = pd.DataFrame.from_dict(embeddings, orient="index")
 
     # Always save embeddings for downstream analysis and visualization
     embeddings_df.to_csv(embeddings_path)
     logger.info(f"Embeddings saved to {embeddings_path}")
+
+    # Save encoder embeddings if requested (with -k flag)
+    if save_encoder_embeddings and kmer_embeddings:
+        kmer_embeddings_path = os.path.join(args.output, "kmer_embeddings.csv")
+        kmer_embeddings_df = pd.DataFrame.from_dict(kmer_embeddings, orient="index")
+        kmer_embeddings_df.to_csv(kmer_embeddings_path)
+        logger.info(f"K-mer encoder embeddings saved to {kmer_embeddings_path}")
+
+        if coverage_embeddings:
+            coverage_embeddings_path = os.path.join(args.output, "coverage_embeddings.csv")
+            coverage_embeddings_df = pd.DataFrame.from_dict(coverage_embeddings, orient="index")
+            coverage_embeddings_df.to_csv(coverage_embeddings_path)
+            logger.info(f"Coverage encoder embeddings saved to {coverage_embeddings_path}")
 
     return embeddings_df
 
