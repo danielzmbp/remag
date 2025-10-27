@@ -335,7 +335,7 @@ def validate_coverage_options(ctx, param, value):
 @click.option(
     "--num-augmentations",
     type=click.IntRange(min=1, max=32),
-    default=4,
+    default=8,
     show_default=True,
     help="Number of random fragments per contig for data augmentation.",
 )
@@ -489,20 +489,11 @@ def main_cli(
 
     # Validate resource parameters
     import multiprocessing
-    import psutil
-    
+
     max_cores = multiprocessing.cpu_count()
     if threads > max_cores:
         click.echo(f"Warning: Requested {threads} threads but only {max_cores} available. Using {max_cores}.", err=True)
         threads = max_cores
-    
-    # Check available memory for batch size
-    available_memory_gb = psutil.virtual_memory().available / (1024**3)
-    estimated_memory_per_batch = batch_size * 0.001  # Rough estimate: 1MB per sample
-    if estimated_memory_per_batch > available_memory_gb * 0.8:  # Use max 80% of available memory
-        recommended_batch_size = int((available_memory_gb * 0.8) / 0.001)
-        click.echo(f"Warning: Batch size {batch_size} may exceed available memory ({available_memory_gb:.1f}GB). "
-                   f"Consider reducing to {recommended_batch_size}.", err=True)
 
     # Handle auto-resolution vs manual resolution logic
     if leiden_resolution is not None:
