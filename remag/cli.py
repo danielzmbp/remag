@@ -272,7 +272,7 @@ def validate_coverage_options(ctx, param, value):
 @click.option(
     "--min-bin-size",
     type=int,
-    default=200000,
+    default=300000,
     show_default=True,
     help="Minimum total bin size in base pairs for output.",
 )
