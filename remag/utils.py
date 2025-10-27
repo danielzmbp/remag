@@ -329,4 +329,5 @@ def initialize_duplication_columns(clusters_df):
     clusters_df["has_duplicated_core_genes"] = False
     clusters_df["duplicated_core_genes_count"] = 0
     clusters_df["total_core_genes_found"] = 0
+    clusters_df["single_copy_genes_count"] = 0
     return clusters_df

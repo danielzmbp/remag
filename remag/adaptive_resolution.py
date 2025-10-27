@@ -101,12 +101,12 @@ def test_multiple_resolutions(embeddings_df, gene_mappings_cache, args, test_res
                 test_clusters_df, gene_mappings_cache, args
             )
 
-            # Calculate per-bin completeness metrics
-            bin_completeness = test_clusters_df.groupby('cluster')['total_core_genes_found'].first()
+            # Calculate per-bin completeness metrics (using single-copy genes only)
+            bin_completeness = test_clusters_df.groupby('cluster')['single_copy_genes_count'].first()
             total_duplications = int(test_clusters_df.groupby('cluster')['duplicated_core_genes_count'].first().sum())
             bins_with_duplications = int(test_clusters_df.groupby('cluster')['has_duplicated_core_genes'].first().sum())
 
-            # Completeness quality metrics
+            # Completeness quality metrics (single-copy genes)
             max_bin_completeness = int(bin_completeness.max()) if len(bin_completeness) > 0 else 0
             median_bin_completeness = int(bin_completeness.median()) if len(bin_completeness) > 0 else 0
 
@@ -134,13 +134,13 @@ def test_multiple_resolutions(embeddings_df, gene_mappings_cache, args, test_res
                 'clusters_df': test_clusters_df
             }
 
-    # Pick the resolution that maximizes genome completeness
-    # Priority: 1) Highest max completeness (recover complete genomes, avoid fragmentation)
+    # Pick the resolution that maximizes genome completeness (single-copy genes only)
+    # Priority: 1) Highest max completeness (recover complete, clean genomes)
     #           2) Highest median completeness (overall bin quality)
     #           3) Fewest duplications (contamination)
-    # Rationale: One complete genome (e.g., 1911 genes) is more valuable than fragmenting
-    # it into multiple bins (e.g., two bins with 850 genes each), even if that increases
-    # the total bin count. This prevents scoring fragmentation artifacts as "better".
+    # Rationale: Completeness now counts only single-copy genes (non-duplicated),
+    # preventing contaminated bins from being rewarded with high scores. This avoids
+    # bias towards over-consolidation (fewer, larger, contaminated bins).
     best_resolution = max(results.keys(), key=lambda r: (
         results[r]['max_bin_completeness'],    # Primary: recover complete genomes
         results[r]['median_bin_completeness'], # Secondary: overall bin quality
