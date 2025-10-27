@@ -301,30 +301,8 @@ def refine_bin_with_leiden_clustering(
     n_clusters = best_n_clusters
     leiden_resolution = best_resolution
 
-    # Continue with success path
-    
-    # AFTER validation passes, handle contigs without embeddings - assign them to the largest refined cluster
-    contigs_without_embeddings = [contig for contig in bin_contigs if contig not in available_embeddings]
-    if contigs_without_embeddings:
-        # Find the largest refined cluster
-        cluster_sizes = refined_clusters_df.groupby('cluster').size()
-        largest_cluster = cluster_sizes.idxmax()
-        
-        # Create entries for contigs without embeddings
-        additional_rows = []
-        for contig in contigs_without_embeddings:
-            additional_rows.append({
-                'contig': contig,
-                'cluster': largest_cluster,
-                'original_bin': bin_id
-            })
-        
-        # Add to refined_clusters_df
-        additional_df = pd.DataFrame(additional_rows)
-        refined_clusters_df = pd.concat([refined_clusters_df, additional_df], ignore_index=True)
-        
-        logger.debug(f"Bin {bin_id} assigned {len(contigs_without_embeddings)} contigs without embeddings to largest cluster {largest_cluster}")
-        
+    # Continue with success path - only return contigs with embeddings (that were actually refined)
+
     # Calculate final statistics
     n_refined_clusters = refined_clusters_df['cluster'].nunique()
     largest_subbin_size = refined_clusters_df.groupby('cluster').size().max()
