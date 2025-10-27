@@ -236,7 +236,7 @@ def validate_coverage_options(ctx, param, value):
 @click.option(
     "--base-learning-rate",
     type=float,
-    default=0.001,
+    default=0.005,
     show_default=True,
     help="Base learning rate for contrastive learning training (scaled by batch size).",
 )

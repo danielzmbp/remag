@@ -113,10 +113,10 @@ def test_multiple_resolutions(embeddings_df, gene_mappings_cache, args, test_res
 
             # Completeness quality metrics (single-copy genes)
             max_bin_completeness = int(bin_completeness.max()) if len(bin_completeness) > 0 else 0
-            p75_bin_completeness = int(np.percentile(bin_completeness, 75)) if len(bin_completeness) > 0 else 0
+            p90_bin_completeness = int(np.percentile(bin_completeness, 90)) if len(bin_completeness) > 0 else 0
 
             logger.info(f"Resolution {resolution:.2f}: {n_clusters} clusters, "
-                       f"max completeness={max_bin_completeness}, 75th percentile={p75_bin_completeness}, "
+                       f"max completeness={max_bin_completeness}, 90th percentile={p90_bin_completeness}, "
                        f"{bins_with_duplications} contaminated, {total_duplications} total duplications")
 
             results[resolution] = {
@@ -124,7 +124,7 @@ def test_multiple_resolutions(embeddings_df, gene_mappings_cache, args, test_res
                 'bins_with_duplications': bins_with_duplications,
                 'total_duplications': total_duplications,
                 'max_bin_completeness': max_bin_completeness,
-                'p75_bin_completeness': p75_bin_completeness,
+                'p90_bin_completeness': p90_bin_completeness,
                 'clusters_df': test_clusters_df
             }
 
@@ -135,27 +135,27 @@ def test_multiple_resolutions(embeddings_df, gene_mappings_cache, args, test_res
                 'bins_with_duplications': float('inf'),
                 'total_duplications': float('inf'),
                 'max_bin_completeness': 0,
-                'p75_bin_completeness': 0,
+                'p90_bin_completeness': 0,
                 'clusters_df': test_clusters_df
             }
 
     # Pick the resolution that maximizes genome completeness (single-copy genes only)
     # Priority: 1) Highest max completeness (recover complete, clean genomes)
-    #           2) Highest 75th percentile completeness (quality of better bins)
+    #           2) Highest 90th percentile completeness (quality of top bins)
     #           3) Fewest duplications (contamination)
     # Rationale: Completeness now counts only single-copy genes (non-duplicated),
     # preventing contaminated bins from being rewarded with high scores. This avoids
     # bias towards over-consolidation (fewer, larger, contaminated bins).
     best_resolution = max(results.keys(), key=lambda r: (
         results[r]['max_bin_completeness'],    # Primary: recover complete genomes
-        results[r]['p75_bin_completeness'],    # Secondary: quality of better bins
+        results[r]['p90_bin_completeness'],    # Secondary: quality of top bins
         -results[r]['total_duplications']      # Tertiary: contamination (negated for max)
     ))
     best_result = results[best_resolution]
 
     logger.info(f"Best resolution: {best_resolution:.2f} with {best_result['n_clusters']} clusters, "
                f"max completeness={best_result['max_bin_completeness']}, "
-               f"75th percentile={best_result['p75_bin_completeness']}, "
+               f"90th percentile={best_result['p90_bin_completeness']}, "
                f"{best_result['total_duplications']} total duplications")
 
     return best_resolution, results
@@ -226,11 +226,14 @@ def determine_optimal_resolution(embeddings_df, fragments_dict, args, gene_mappi
 
     # Step 4: Test multiple resolutions around the base estimate
     test_resolutions = [
-        max(base_resolution * 0.3, 0.05),  # Very conservative (fewer bins), min 0.05
-        max(base_resolution * 0.6, 0.05),  # Conservative (fewer bins), min 0.05
-        base_resolution,                    # Base estimate
-        base_resolution * 2.0,              # Aggressive (more bins)
-        base_resolution * 3.0               # Very aggressive (more bins)
+        base_resolution * 0.3,
+        base_resolution * 0.5,
+        base_resolution * 0.7,
+        base_resolution,
+        base_resolution * 1.5,
+        base_resolution * 2.0,
+        base_resolution * 2.5,
+        base_resolution * 3.0
     ]
 
     # Remove duplicates and sort
@@ -281,7 +284,7 @@ def determine_optimal_resolution(embeddings_df, fragments_dict, args, gene_mappi
                     'bins_with_duplications': data['bins_with_duplications'],
                     'total_duplications': data['total_duplications'],
                     'max_bin_completeness': data['max_bin_completeness'],
-                    'p75_bin_completeness': data['p75_bin_completeness']
+                    'p90_bin_completeness': data['p90_bin_completeness']
                 }
             serializable_results['selected_resolution'] = f"{best_resolution:.4f}"
             serializable_results['estimated_organisms'] = float(estimated_organisms)
