@@ -659,7 +659,7 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
     leiden_resolution = getattr(args, 'leiden_resolution', 1.0)
     
     logger.info(f"Running Leiden on {len(contig_names)} contigs "
-               f"(resolution={leiden_resolution}, k={clustering_manager.graph_manager.k}, "
+               f"(resolution={leiden_resolution:.2f}, k={clustering_manager.graph_manager.k}, "
                f"similarity_threshold={clustering_manager.graph_manager.similarity_threshold})")
     
     cluster_labels = _leiden_clustering(
