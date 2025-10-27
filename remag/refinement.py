@@ -10,7 +10,7 @@ from tqdm import tqdm
 from loguru import logger
 
 from .miniprot_utils import check_core_gene_duplications, check_core_gene_duplications_from_cache, get_core_gene_duplication_results_path, get_gene_mappings_cache_path
-from .clustering import _leiden_clustering
+from .clustering import _leiden_clustering, _construct_knn_graph, _leiden_clustering_on_graph
 
 
 def refine_bin_with_leiden_clustering(
@@ -186,10 +186,9 @@ def refine_bin_with_leiden_clustering(
         
         return 'success'
 
-    # Fixed resolution testing with gradual steps
-    # Start slightly higher in case base resolution is too low, then step down gradually
-    # This replaces the old adaptive logic to provide more predictable, thorough exploration
-    test_resolution_multipliers = [1.5, 1.0, 0.7, 0.5, 0.4, 0.3, 0.2]
+    # Fixed resolution testing with extended, gradual steps
+    # Start high to handle highly contaminated bins, step down to find most conservative solution
+    test_resolution_multipliers = [3.0, 2.5, 2.0, 1.5, 1.2, 1.0, 0.8, 0.6, 0.5, 0.4, 0.3, 0.2, 0.15, 0.1]
 
     # Get base parameters (keep k-neighbors and threshold fixed throughout)
     base_resolution = getattr(args, 'leiden_resolution', 1.0)
@@ -210,21 +209,34 @@ def refine_bin_with_leiden_clustering(
             f"Bin {bin_id} has {duplicated_genes_count} duplicated core genes out of {total_genes_found} total genes"
         )
 
+    # Construct k-NN graph ONCE (reuse for all resolution tests for performance)
+    logger.info(f"Constructing k-NN graph from {len(bin_embeddings)} embeddings (k={fixed_k_neighbors}, n_jobs={getattr(args, 'cores', 1)})")
+    graph = _construct_knn_graph(
+        bin_embeddings.values,
+        k=fixed_k_neighbors,
+        similarity_threshold=fixed_similarity_threshold,
+        n_jobs=getattr(args, 'cores', 1),
+        args=None  # Don't save graph during refinement
+    )
+    logger.info(f"Graph: {graph.vcount()} nodes, {graph.ecount()} edges, {len(graph.connected_components())} connected components")
+
+    # Track best solution found (most conservative = lowest resolution that works)
+    best_resolution = None
+    best_clusters_df = None
+    best_n_clusters = None
+
     # Test each resolution multiplier sequentially
     for attempt, resolution_multiplier in enumerate(test_resolution_multipliers, start=1):
         leiden_resolution = base_resolution * resolution_multiplier
 
         attempt_info = f"attempt {attempt}/{len(test_resolution_multipliers)}"
-        logger.info(f"Bin {bin_id} {attempt_info}: resolution={leiden_resolution:.2f} (base={base_resolution:.2f} × {resolution_multiplier:.1f}), k={fixed_k_neighbors}, threshold={fixed_similarity_threshold:.2f}")
-        
-        # Apply Leiden clustering
-        cluster_labels = _leiden_clustering(
-            bin_embeddings.values,  # Use the normalized embedding values
-            k=fixed_k_neighbors,
-            similarity_threshold=fixed_similarity_threshold,
+        logger.info(f"Bin {bin_id} {attempt_info}: resolution={leiden_resolution:.2f} (base={base_resolution:.2f} × {resolution_multiplier:.1f})")
+
+        # Apply Leiden clustering on pre-built graph (fast - no graph construction)
+        cluster_labels = _leiden_clustering_on_graph(
+            graph,
             resolution=leiden_resolution,
-            random_state=42,
-            n_jobs=getattr(args, 'cores', 1)
+            random_state=42
         )
 
         # Check clustering results
@@ -269,89 +281,27 @@ def refine_bin_with_leiden_clustering(
         validation_result = validate_refinement_with_markers(available_embeddings, refined_clusters_df, bin_id, gene_mappings_cache, duplication_results)
 
         if validation_result == 'success':
-            logger.info(f"Bin {bin_id} {attempt_info}: Validation passed!")
-
-            # Optimize: Try lower resolutions to find most conservative solution
+            logger.info(f"Bin {bin_id} {attempt_info}: Validation passed! (resolution={leiden_resolution:.2f}, {n_clusters} clusters)")
+            # Save this as best solution (lower resolution = more conservative)
             best_resolution = leiden_resolution
             best_clusters_df = refined_clusters_df
             best_n_clusters = n_clusters
-
-            # Test progressively lower resolutions: 0.6x, 0.3x
-            for lower_multiplier in [0.6, 0.3]:
-                test_resolution = leiden_resolution * lower_multiplier
-
-                # Don't go below a reasonable minimum
-                if test_resolution < 0.05:
-                    break
-
-                logger.debug(f"Bin {bin_id} testing lower resolution {test_resolution:.2f} to find more conservative solution")
-
-                # Apply Leiden clustering with lower resolution
-                test_labels = _leiden_clustering(
-                    bin_embeddings.values,
-                    k=fixed_k_neighbors,
-                    similarity_threshold=fixed_similarity_threshold,
-                    resolution=test_resolution,
-                    random_state=42,
-                    n_jobs=getattr(args, 'cores', 1)
-                )
-
-                test_n_clusters = len(set(test_labels))
-
-                # Merge small clusters
-                cluster_sizes = pd.Series(test_labels).value_counts()
-                small_clusters = cluster_sizes[cluster_sizes < min_cluster_size].index
-                if len(small_clusters) > 0:
-                    largest_cluster = cluster_sizes.idxmax()
-                    test_labels = np.array([
-                        largest_cluster if c in small_clusters else c
-                        for c in test_labels
-                    ])
-                    test_n_clusters = len(set(test_labels))
-
-                if test_n_clusters < 2:
-                    break  # Too few clusters, stop trying lower resolutions
-
-                # Create test clusters dataframe
-                test_formatted_labels = [f"{bin_id}_{label}" for label in test_labels]
-                test_clusters_df = pd.DataFrame({
-                    'contig': available_embeddings,
-                    'cluster': test_formatted_labels,
-                    'original_bin': bin_id
-                })
-
-                # Validate this lower resolution
-                test_validation = validate_refinement_with_markers(
-                    available_embeddings, test_clusters_df, bin_id,
-                    gene_mappings_cache, duplication_results
-                )
-
-                if test_validation == 'success':
-                    # Lower resolution also works! Use it (more conservative)
-                    logger.info(f"Bin {bin_id} found more conservative solution at resolution {test_resolution:.2f} ({test_n_clusters} clusters vs {best_n_clusters})")
-                    best_resolution = test_resolution
-                    best_clusters_df = test_clusters_df
-                    best_n_clusters = test_n_clusters
-                else:
-                    # Lower resolution failed validation, stop here
-                    logger.debug(f"Bin {bin_id} resolution {test_resolution:.2f} too low: {test_validation}")
-                    break
-
-            # Use the best (most conservative) solution found
-            refined_clusters_df = best_clusters_df
-            n_clusters = best_n_clusters
-            leiden_resolution = best_resolution
-
-            break  # Success - exit retry loop
+            # Continue testing remaining resolutions to find most conservative solution
         else:
-            logger.warning(f"Bin {bin_id} {attempt_info}: Validation failed - {validation_result}, trying next resolution")
+            logger.warning(f"Bin {bin_id} {attempt_info}: Validation failed - {validation_result}")
             # Continue to next resolution
-    else:
-        # For-else: executed if loop completes without break (no resolution worked)
+    # After testing all resolutions, check if any passed validation
+    if best_resolution is None:
         logger.warning(f"Bin {bin_id} failed validation with all {len(test_resolution_multipliers)} resolutions, keeping original")
         return None
 
-    # If we get here, validation passed - continue with success path
+    # Use the best (most conservative) solution found
+    logger.info(f"Bin {bin_id} selected best solution: resolution={best_resolution:.2f}, {best_n_clusters} clusters")
+    refined_clusters_df = best_clusters_df
+    n_clusters = best_n_clusters
+    leiden_resolution = best_resolution
+
+    # Continue with success path
     
     # AFTER validation passes, handle contigs without embeddings - assign them to the largest refined cluster
     contigs_without_embeddings = [contig for contig in bin_contigs if contig not in available_embeddings]
