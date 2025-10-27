@@ -12,7 +12,7 @@ import pandas as pd
 from loguru import logger
 
 from .miniprot_utils import estimate_organisms_from_all_contigs, check_core_gene_duplications_from_cache, extract_gene_counts_from_mappings
-from .clustering import _leiden_clustering
+from .clustering import _leiden_clustering, _construct_knn_graph, _leiden_clustering_on_graph
 
 
 def estimate_resolution_from_organisms(estimated_organisms, base_resolution=0.1, reference_organisms=100):
@@ -65,20 +65,25 @@ def test_multiple_resolutions(embeddings_df, gene_mappings_cache, args, test_res
     fixed_similarity_threshold = getattr(args, 'leiden_similarity_threshold', 0.1)
     fixed_n_jobs = getattr(args, 'cores', 1)
 
+    # Construct k-NN graph ONCE (reuse for all resolution tests for performance)
+    graph = _construct_knn_graph(
+        embeddings_df.values,
+        k=fixed_k_neighbors,
+        similarity_threshold=fixed_similarity_threshold,
+        n_jobs=fixed_n_jobs,
+        args=None  # Don't save graph during testing
+    )
+
     results = {}
 
     for resolution in test_resolutions:
         logger.debug(f"Testing resolution={resolution:.2f}...")
 
-        # Perform clustering with this resolution (other parameters fixed)
-        cluster_labels = _leiden_clustering(
-            embeddings_df.values,
-            k=fixed_k_neighbors,
-            similarity_threshold=fixed_similarity_threshold,
+        # Apply Leiden clustering on pre-built graph (fast - no graph construction)
+        cluster_labels = _leiden_clustering_on_graph(
+            graph,
             resolution=resolution,
-            random_state=42,
-            n_jobs=fixed_n_jobs,
-            args=None  # Don't save intermediate graphs during testing
+            random_state=42
         )
 
         # Convert cluster labels to DataFrame format for duplication checking
@@ -108,10 +113,10 @@ def test_multiple_resolutions(embeddings_df, gene_mappings_cache, args, test_res
 
             # Completeness quality metrics (single-copy genes)
             max_bin_completeness = int(bin_completeness.max()) if len(bin_completeness) > 0 else 0
-            median_bin_completeness = int(bin_completeness.median()) if len(bin_completeness) > 0 else 0
+            p75_bin_completeness = int(np.percentile(bin_completeness, 75)) if len(bin_completeness) > 0 else 0
 
             logger.info(f"Resolution {resolution:.2f}: {n_clusters} clusters, "
-                       f"max completeness={max_bin_completeness}, median={median_bin_completeness}, "
+                       f"max completeness={max_bin_completeness}, 75th percentile={p75_bin_completeness}, "
                        f"{bins_with_duplications} contaminated, {total_duplications} total duplications")
 
             results[resolution] = {
@@ -119,7 +124,7 @@ def test_multiple_resolutions(embeddings_df, gene_mappings_cache, args, test_res
                 'bins_with_duplications': bins_with_duplications,
                 'total_duplications': total_duplications,
                 'max_bin_completeness': max_bin_completeness,
-                'median_bin_completeness': median_bin_completeness,
+                'p75_bin_completeness': p75_bin_completeness,
                 'clusters_df': test_clusters_df
             }
 
@@ -130,27 +135,27 @@ def test_multiple_resolutions(embeddings_df, gene_mappings_cache, args, test_res
                 'bins_with_duplications': float('inf'),
                 'total_duplications': float('inf'),
                 'max_bin_completeness': 0,
-                'median_bin_completeness': 0,
+                'p75_bin_completeness': 0,
                 'clusters_df': test_clusters_df
             }
 
     # Pick the resolution that maximizes genome completeness (single-copy genes only)
     # Priority: 1) Highest max completeness (recover complete, clean genomes)
-    #           2) Highest median completeness (overall bin quality)
+    #           2) Highest 75th percentile completeness (quality of better bins)
     #           3) Fewest duplications (contamination)
     # Rationale: Completeness now counts only single-copy genes (non-duplicated),
     # preventing contaminated bins from being rewarded with high scores. This avoids
     # bias towards over-consolidation (fewer, larger, contaminated bins).
     best_resolution = max(results.keys(), key=lambda r: (
         results[r]['max_bin_completeness'],    # Primary: recover complete genomes
-        results[r]['median_bin_completeness'], # Secondary: overall bin quality
+        results[r]['p75_bin_completeness'],    # Secondary: quality of better bins
         -results[r]['total_duplications']      # Tertiary: contamination (negated for max)
     ))
     best_result = results[best_resolution]
 
     logger.info(f"Best resolution: {best_resolution:.2f} with {best_result['n_clusters']} clusters, "
                f"max completeness={best_result['max_bin_completeness']}, "
-               f"median={best_result['median_bin_completeness']}, "
+               f"75th percentile={best_result['p75_bin_completeness']}, "
                f"{best_result['total_duplications']} total duplications")
 
     return best_resolution, results
@@ -274,7 +279,9 @@ def determine_optimal_resolution(embeddings_df, fragments_dict, args, gene_mappi
                 serializable_results[f"{res:.4f}"] = {
                     'n_clusters': data['n_clusters'],
                     'bins_with_duplications': data['bins_with_duplications'],
-                    'total_duplications': data['total_duplications']
+                    'total_duplications': data['total_duplications'],
+                    'max_bin_completeness': data['max_bin_completeness'],
+                    'p75_bin_completeness': data['p75_bin_completeness']
                 }
             serializable_results['selected_resolution'] = f"{best_resolution:.4f}"
             serializable_results['estimated_organisms'] = float(estimated_organisms)
