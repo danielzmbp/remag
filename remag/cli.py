@@ -79,7 +79,7 @@ click.rich_click.OPTION_GROUPS = {
         },
         {
             "name": "Filtering & Processing",
-            "options": ["--min-contig-length", "--min-bin-size", "--coverage-batch-size", "--hyenadna-batch-size", "--skip-bacterial-filter", "--skip-refinement", "--max-refinement-rounds", "--min-duplications-for-refinement", "--skip-chimera-detection"],
+            "options": ["--min-contig-length", "--min-bin-size", "--coverage-batch-size", "--hyenadna-batch-size", "--skip-bacterial-filter", "--save-filtered-contigs", "--skip-refinement", "--max-refinement-rounds", "--min-duplications-for-refinement", "--skip-chimera-detection"],
         },
     ]
 }
