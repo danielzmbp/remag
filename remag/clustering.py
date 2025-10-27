@@ -171,8 +171,8 @@ def _construct_knn_graph(embeddings, k=15, similarity_threshold=0.1, n_jobs=1, a
             if similarity >= similarity_threshold:
                 edges.append((i, neighbor_idx))
                 weights.append(float(similarity))
-    
-    logger.info(f"Created {len(edges)} edges with similarity >= {similarity_threshold}")
+
+    logger.debug(f"Created {len(edges)} edges with similarity >= {similarity_threshold:.2f}")
     
     # Create igraph from edge list
     g = ig.Graph()
@@ -293,13 +293,13 @@ def _leiden_clustering(embeddings, k=15, similarity_threshold=0.1, resolution=1.
     unique_labels = np.unique(cluster_labels)
     n_clusters = len(unique_labels) - (1 if -1 in unique_labels else 0)
     n_noise = np.sum(cluster_labels == -1)
-    
-    logger.info(f"Leiden clustering complete: {n_clusters} clusters, {n_noise} noise points")
-    
+
+    logger.debug(f"Leiden clustering complete: {n_clusters} clusters, {n_noise} noise points")
+
     # Log cluster sizes
     if n_clusters > 0:
         cluster_sizes = np.bincount(cluster_labels[cluster_labels >= 0])
-        logger.info(f"Cluster sizes: {cluster_sizes.tolist()}")
+        logger.debug(f"Cluster sizes: {cluster_sizes.tolist()}")
     
     return cluster_labels
 

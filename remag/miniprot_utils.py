@@ -420,7 +420,7 @@ def check_core_gene_duplications_from_cache(clusters_df, gene_mappings_cache, ar
         1 for r in duplication_results.values() if r["has_duplications"]
     )
     total_bins_checked = len(duplication_results)
-    logger.info(
+    logger.debug(
         f"Checked {total_bins_checked} bins using cache: {bins_with_duplications} have duplicated core genes"
     )
 
