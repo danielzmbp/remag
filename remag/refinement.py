@@ -211,15 +211,10 @@ def refine_bin_with_leiden_clustering(
         )
 
     # Test each resolution multiplier sequentially
-    for attempt, resolution_multiplier in enumerate(test_resolution_multipliers):
+    for attempt, resolution_multiplier in enumerate(test_resolution_multipliers, start=1):
         leiden_resolution = base_resolution * resolution_multiplier
 
-        # Skip if resolution is below minimum threshold
-        if leiden_resolution < 0.05:
-            logger.debug(f"Bin {bin_id} skipping resolution {leiden_resolution:.3f} (below minimum 0.05)")
-            continue
-
-        attempt_info = f"attempt {attempt+1}/{len(test_resolution_multipliers)}"
+        attempt_info = f"attempt {attempt}/{len(test_resolution_multipliers)}"
         logger.info(f"Bin {bin_id} {attempt_info}: resolution={leiden_resolution:.2f} (base={base_resolution:.2f} × {resolution_multiplier:.1f}), k={fixed_k_neighbors}, threshold={fixed_similarity_threshold:.2f}")
         
         # Apply Leiden clustering
