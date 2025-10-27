@@ -207,20 +207,20 @@ def refine_bin_with_leiden_clustering(
             k_adjustment = 0
             threshold_multiplier = 1.0
         elif failure_reason == "no_duplications_resolved":
-            # Need MORE clusters - increase resolution, reduce connectivity
+            # Need MORE clusters - increase resolution
             resolution_multiplier = 2.0 * (attempt)  # 2.0x, 4.0x, 6.0x
-            k_adjustment = -5 * attempt  # Fewer neighbors = less connectivity
-            threshold_multiplier = 0.7  # Lower threshold = weaker connections
+            k_adjustment = 0  # Keep k-neighbors fixed
+            threshold_multiplier = 1.0  # Keep threshold fixed
         elif failure_reason in ["excessive_fragmentation", "trade_off_unfavorable"]:
-            # Need FEWER clusters - decrease resolution, increase connectivity
+            # Need FEWER clusters - decrease resolution
             resolution_multiplier = 0.4 / attempt  # 0.4x, 0.2x, 0.13x
-            k_adjustment = 10 * attempt  # More neighbors = more connectivity
-            threshold_multiplier = 1.5  # Higher threshold = stronger connections
+            k_adjustment = 0  # Keep k-neighbors fixed
+            threshold_multiplier = 1.0  # Keep threshold fixed
         else:
             # Default progression for unknown failures
             resolution_multiplier = 1.0 + (attempt - 1) * 0.5  # 1.0x, 1.5x, 2.0x
-            k_adjustment = 0
-            threshold_multiplier = 1.0
+            k_adjustment = 0  # Keep k-neighbors fixed
+            threshold_multiplier = 1.0  # Keep threshold fixed
         
         # Apply adjustments with bounds
         leiden_resolution = base_resolution * resolution_multiplier
