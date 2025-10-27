@@ -201,19 +201,22 @@ remag --help
 
 REMAG uses a sophisticated multi-stage pipeline specifically designed for eukaryotic genome recovery:
 
-1. **Bacterial Pre-filtering**: By default, REMAG automatically filters out bacterial contigs using the integrated 4CAC classifier (can be disabled with `--skip-bacterial-filter`)
+1. **Eukaryotic Filtering**: By default, REMAG automatically filters for eukaryotic contigs using the integrated HyenaDNA LLM-based classifier (can be disabled with `--skip-bacterial-filter`)
 2. **Feature Extraction**: Combines k-mer composition (4-mers) with coverage profiles across multiple samples. Large contigs are split into overlapping fragments for augmentation during training
 3. **Contrastive Learning**: Trains a Siamese neural network using the Barlow Twins self-supervised loss function. This creates embeddings where fragments from the same contig are close together
-4. **Clustering**: Graph-based Leiden clustering on the learned contig embeddings to form bins
-5. **Quality Assessment**: Uses miniprot to align bins against a database of eukaryotic core genes to detect contamination
-6. **Iterative Refinement**: Automatically splits contaminated bins based on core gene duplications to improve bin quality
+4. **Adaptive Resolution**: Automatically determines optimal Leiden clustering resolution by testing multiple resolutions and selecting the one that maximizes individual bin completeness
+5. **Clustering**: Graph-based Leiden clustering on the learned contig embeddings to form bins
+6. **Quality Assessment**: Uses miniprot to align bins against a database of eukaryotic core genes to detect contamination
+7. **Iterative Refinement**: Automatically splits contaminated bins based on core gene duplications, then tests lower resolutions to find the most conservative solution
 
 ## Key Features
 
-- **Automatic Bacterial Filtering**: The 4CAC classifier automatically identifies and removes bacterial sequences before binning
+- **Automatic Eukaryotic Filtering**: The HyenaDNA classifier uses a pre-trained genomic foundation model to identify and retain eukaryotic sequences
 - **Multi-Sample Support**: Can process coverage information from multiple samples (BAM/CRAM files) simultaneously
+- **Adaptive Resolution**: Automatically determines optimal clustering resolution based on bin completeness and contamination
 - **Barlow Twins Loss**: Uses a self-supervised contrastive learning approach that doesn't require negative pairs
 - **Fragment Augmentation**: Large contigs are split into multiple overlapping fragments during training to improve representation learning
+- **Conservative Refinement**: After successful bin refinement, tests lower resolutions to find the most consolidated solution that maintains quality
 
 ## Options
 
@@ -250,16 +253,19 @@ REMAG produces several output files:
 - `bins.csv`: Final contig-to-bin assignments
 - `embeddings.csv`: Contig embeddings from the neural network
 - `remag.log`: Detailed log file
-- `*_non_bacterial_filtered.fasta`: Filtered FASTA file with bacterial contigs removed (when bacterial filtering is enabled)
+- `*_eukaryotic_filtered.fasta`: Filtered FASTA file with only eukaryotic contigs retained (when eukaryotic filtering is enabled)
 
 ### Additional files (with `-k` / `--keep-intermediate` option):
 - `siamese_model.pt`: Trained Siamese neural network model
+- `kmer_embeddings.csv`: K-mer encoder embeddings (before fusion)
+- `coverage_embeddings.csv`: Coverage encoder embeddings (before fusion)
 - `params.json`: Complete run parameters for reproducibility
 - `features.csv`: Extracted k-mer and coverage features
 - `fragments.pkl`: Fragment information used during training
-- `classification_results.csv`: 4CAC bacterial classification results
+- `hyenadna_classification_results.csv`: HyenaDNA eukaryotic classification results
+- `organism_estimation_gene_counts.json`: Gene counts used for adaptive resolution determination
 - `refinement_summary.json`: Summary of the bin refinement process
-- `gene_mappings_cache.json`: Cached gene-to-contig mappings for faster refinement
+- `gene_contig_mappings.json`: Cached gene-to-contig mappings for faster refinement
 - `core_gene_duplication_results.json`: Core gene duplication analysis from refinement
 - `temp_miniprot/`: Temporary directory for miniprot alignments (removed unless --keep-intermediate)
 
@@ -284,8 +290,9 @@ This creates:
 ### Core dependencies (always installed):
 - Python 3.9+
 - PyTorch (≥1.11.0)
+- transformers (≥4.0.0) - for HyenaDNA classifier
+- einops (≥0.6.0) - for HyenaDNA model operations
 - scikit-learn (≥1.0.0)
-- XGBoost (≥1.6.0) - for 4CAC classifier
 - leidenalg (≥0.9.0) - for graph-based clustering
 - igraph (≥0.10.0) - for graph construction in Leiden clustering
 - pandas (≥1.3.0)
@@ -294,21 +301,23 @@ This creates:
 - loguru (≥0.6.0)
 - tqdm (≥4.62.0)
 - rich-click (≥1.5.0)
-- joblib (≥1.1.0)
-- psutil (≥5.8.0)
+
+### External dependencies (must be installed separately):
+- **miniprot** - Required for core gene analysis and quality assessment
+  - Install with: `conda install -c bioconda miniprot`
 
 ### Optional dependencies:
 - **For visualization**: matplotlib (≥3.5.0), umap-learn (≥0.5.0)
   - Install with: `pip install remag[plotting]`
 
-The package includes a pre-trained 4CAC classifier model for bacterial contig filtering. The 4CAC classifier code and models are adapted from the [Shamir-Lab/4CAC repository](https://github.com/Shamir-Lab/4CAC).
+The package includes a pre-trained HyenaDNA classifier model for eukaryotic contig filtering. The HyenaDNA model is a genomic foundation model based on the Hyena operator architecture.
 
 ## Acknowledgments
 
-The integrated 4CAC classifier (`xgbclass` module) is adapted from the work by Shamir Lab:
+The integrated HyenaDNA classifier uses a pre-trained genomic foundation model:
 
-- **Repository**: [Shamir-Lab/4CAC](https://github.com/Shamir-Lab/4CAC)
-- **Paper**: Pu L, Shamir R. 4CAC: 4-class classifier of metagenome contigs using machine learning and assembly graphs. Nucleic Acids Res. 2024;52(19):e94–e94.
+- **Repository**: [HazyResearch/hyena-dna](https://github.com/HazyResearch/hyena-dna)
+- **Paper**: Nguyen E, Poli M, Faizi M, et al. HyenaDNA: Long-Range Genomic Sequence Modeling at Single Nucleotide Resolution. NeurIPS 2023.
    
 
 ## License
