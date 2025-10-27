@@ -376,11 +376,15 @@ def check_core_gene_duplications_from_cache(clusters_df, gene_mappings_cache, ar
             gene: count for gene, count in gene_counts.items() if count > 1
         }
         has_duplications = len(duplicated_genes) > 0
-        
+
+        # Count single-copy genes (appear exactly once)
+        single_copy_genes_count = sum(1 for count in gene_counts.values() if count == 1)
+
         duplication_results[cluster_id] = {
             "has_duplications": has_duplications,
             "duplicated_genes": duplicated_genes,
             "total_genes_found": len(gene_counts),
+            "single_copy_genes_count": single_copy_genes_count,
         }
     
     # Add duplication information to clusters_df
@@ -391,6 +395,7 @@ def check_core_gene_duplications_from_cache(clusters_df, gene_mappings_cache, ar
         clusters_df.loc[mask, "has_duplicated_core_genes"] = result["has_duplications"]
         clusters_df.loc[mask, "duplicated_core_genes_count"] = len(result["duplicated_genes"])
         clusters_df.loc[mask, "total_core_genes_found"] = result["total_genes_found"]
+        clusters_df.loc[mask, "single_copy_genes_count"] = result["single_copy_genes_count"]
 
     # Log summary
     bins_with_duplications = sum(
@@ -628,10 +633,14 @@ def check_core_gene_duplications(clusters_df, fragments_dict, args,
                     }
                     has_duplications = len(duplicated_genes) > 0
 
+                    # Count single-copy genes (appear exactly once)
+                    single_copy_genes_count = sum(1 for count in gene_counts.values() if count == 1)
+
                     duplication_results[cluster_id] = {
                         "has_duplications": has_duplications,
                         "duplicated_genes": duplicated_genes,
                         "total_genes_found": len(gene_counts),
+                        "single_copy_genes_count": single_copy_genes_count,
                     }
 
                 else:
@@ -648,6 +657,7 @@ def check_core_gene_duplications(clusters_df, fragments_dict, args,
                         "has_duplications": False,
                         "duplicated_genes": {},
                         "total_genes_found": 0,
+                        "single_copy_genes_count": 0,
                     }
 
             except Exception as e:
@@ -656,6 +666,7 @@ def check_core_gene_duplications(clusters_df, fragments_dict, args,
                     "has_duplications": False,
                     "duplicated_genes": {},
                     "total_genes_found": 0,
+                    "single_copy_genes_count": 0,
                 }
 
         # Parse and cache gene mappings for potential reuse during refinement
@@ -688,6 +699,7 @@ def check_core_gene_duplications(clusters_df, fragments_dict, args,
             result["duplicated_genes"]
         )
         clusters_df.loc[mask, "total_core_genes_found"] = result["total_genes_found"]
+        clusters_df.loc[mask, "single_copy_genes_count"] = result["single_copy_genes_count"]
 
     # Log summary
     bins_with_duplications = sum(
