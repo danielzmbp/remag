@@ -210,7 +210,6 @@ def refine_bin_with_leiden_clustering(
         )
 
     # Construct k-NN graph ONCE (reuse for all resolution tests for performance)
-    logger.info(f"Constructing k-NN graph from {len(bin_embeddings)} embeddings (k={fixed_k_neighbors}, n_jobs={getattr(args, 'cores', 1)})")
     graph = _construct_knn_graph(
         bin_embeddings.values,
         k=fixed_k_neighbors,
@@ -259,8 +258,8 @@ def refine_bin_with_leiden_clustering(
             logger.info(f"Bin {bin_id} {attempt_info}: Merged {len(small_clusters)} small clusters, now {n_clusters} clusters")
         
         if n_clusters < 2:
-            logger.warning(f"Bin {bin_id} {attempt_info}: Insufficient clusters ({n_clusters}), trying next resolution")
-            continue
+            logger.warning(f"Bin {bin_id} {attempt_info}: Insufficient clusters ({n_clusters}), stopping (lower resolutions will also produce 1 cluster)")
+            break
         
         # Create cluster assignments DataFrame
         # Embeddings already use base contig names without .original suffix
@@ -288,7 +287,11 @@ def refine_bin_with_leiden_clustering(
             best_n_clusters = n_clusters
             # Continue testing remaining resolutions to find most conservative solution
         else:
-            logger.warning(f"Bin {bin_id} {attempt_info}: Validation failed - {validation_result}")
+            # Log excessive_fragmentation at debug level (expected during resolution testing)
+            if validation_result == 'excessive_fragmentation':
+                logger.debug(f"Bin {bin_id} {attempt_info}: Validation failed - {validation_result}")
+            else:
+                logger.warning(f"Bin {bin_id} {attempt_info}: Validation failed - {validation_result}")
             # Continue to next resolution
     # After testing all resolutions, check if any passed validation
     if best_resolution is None:
