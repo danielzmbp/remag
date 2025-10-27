@@ -96,10 +96,6 @@ click.rich_click.OPTION_GROUPS = {
             "options": ["--epochs", "--batch-size", "--embedding-dim", "--base-learning-rate", "--max-positive-pairs", "--num-augmentations"],
         },
         {
-            "name": "SCG-Aware Learning (Experimental)",
-            "options": ["--use-scg-loss", "--scg-loss-weight", "--scg-margin"],
-        },
-        {
             "name": "Clustering",
             "options": ["--min-cluster-size", "--leiden-resolution", "--auto-resolution", "--leiden-k-neighbors", "--leiden-similarity-threshold"],
         },
@@ -340,26 +336,6 @@ def validate_coverage_options(ctx, param, value):
     help="Number of random fragments per contig for data augmentation.",
 )
 @click.option(
-    "--use-scg-loss",
-    is_flag=True,
-    default=False,
-    help="Enable SCG-aware contrastive learning (EXPERIMENTAL). Uses single copy core genes to guide training by penalizing embeddings that would lead to SCG duplications in bins.",
-)
-@click.option(
-    "--scg-loss-weight",
-    type=click.FloatRange(min=0.0, max=1.0),
-    default=0.1,
-    show_default=True,
-    help="Weight for the SCG auxiliary loss term (beta parameter in hybrid loss). Only used if --use-scg-loss is enabled.",
-)
-@click.option(
-    "--scg-margin",
-    type=click.FloatRange(min=0.1, max=5.0),
-    default=1.0,
-    show_default=True,
-    help="Margin for SCG duplication penalty in the auxiliary loss. Higher values enforce stronger separation between contigs with shared SCGs. Only used if --use-scg-loss is enabled.",
-)
-@click.option(
     "--skip-chimera-detection",
     is_flag=True,
     default=True,
@@ -435,9 +411,6 @@ def main_cli(
     max_refinement_rounds,
     min_duplications_for_refinement,
     num_augmentations,
-    use_scg_loss,
-    scg_loss_weight,
-    scg_margin,
     skip_chimera_detection,
     auto_resolution,
     leiden_resolution,
@@ -539,9 +512,6 @@ def main_cli(
         max_refinement_rounds=max_refinement_rounds,
         min_duplications_for_refinement=min_duplications_for_refinement,
         num_augmentations=num_augmentations,
-        use_scg_loss=use_scg_loss,
-        scg_loss_weight=scg_loss_weight,
-        scg_margin=scg_margin,
         skip_chimera_detection=skip_chimera_detection,
         auto_resolution=auto_resolution,
         leiden_resolution=leiden_resolution,

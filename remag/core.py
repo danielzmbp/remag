@@ -20,7 +20,6 @@ from .miniprot_utils import (
 )
 from .refinement import refine_contaminated_bins
 from .output import save_clusters_as_fasta
-from .scg_features import extract_scg_features, SCGFeatureManager
 
 
 def main(args):
@@ -83,8 +82,7 @@ def main(args):
     # ====================================================================
     # Determine if we need to run miniprot at all
     needs_miniprot = (
-        getattr(args, 'use_scg_loss', False) or  # SCG features need it
-        getattr(args, 'auto_resolution', False)   # Auto-resolution needs it
+        getattr(args, 'auto_resolution', False)  # Auto-resolution needs it
         # Core gene duplication check will also use it if available
     )
 
@@ -108,21 +106,9 @@ def main(args):
     elif needs_miniprot and not check_miniprot_available():
         logger.warning("miniprot not available - some features will be disabled")
 
-    # Extract SCG features if SCG loss is enabled
-    scg_feature_manager = None
-    if getattr(args, 'use_scg_loss', False):
-        try:
-            scg_matrix_df, gene_family_index, contig_to_scg_dict = extract_scg_features(
-                fragments_dict, args, gene_mappings=gene_mappings, use_cached=True
-            )
-            scg_feature_manager = SCGFeatureManager(scg_matrix_df, contig_to_scg_dict)
-        except Exception as e:
-            logger.warning(f"Failed to extract SCG features: {e}")
-            logger.warning("Continuing with standard training (no SCG loss)")
-
     logger.info("Training neural network and generating embeddings...")
     try:
-        model = train_siamese_network(features_df, args, scg_feature_manager=scg_feature_manager)
+        model = train_siamese_network(features_df, args)
         embeddings_df = generate_embeddings(model, features_df, args)
     except Exception as e:
         logger.error(f"Failed to train model or generate embeddings: {e}")
@@ -158,7 +144,7 @@ def main(args):
     # This avoids redundant miniprot execution
     if gene_mappings is not None:
         try:
-            logger.info("Using pre-computed gene mappings from consolidated miniprot run (no redundant execution)")
+            logger.debug("Using pre-computed gene mappings from consolidated miniprot run (no redundant execution)")
             clusters_df = check_core_gene_duplications_from_cache(
                 clusters_df,
                 gene_mappings,
@@ -179,7 +165,7 @@ def main(args):
             )
     else:
         # No gene mappings available - run miniprot now
-        # This happens when both SCG loss and auto-resolution are disabled
+        # This happens when auto-resolution is disabled
         clusters_df = check_core_gene_duplications(
             clusters_df,
             fragments_dict,
