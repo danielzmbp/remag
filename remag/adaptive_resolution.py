@@ -66,12 +66,13 @@ def test_multiple_resolutions(embeddings_df, gene_mappings_cache, args, test_res
     fixed_n_jobs = getattr(args, 'cores', 1)
 
     # Construct k-NN graph ONCE (reuse for all resolution tests for performance)
+    # Save graph to disk so it can be reused during final clustering (saves ~1 minute)
     graph = _construct_knn_graph(
         embeddings_df.values,
         k=fixed_k_neighbors,
         similarity_threshold=fixed_similarity_threshold,
         n_jobs=fixed_n_jobs,
-        args=None  # Don't save graph during testing
+        args=args  # Save graph for reuse in final clustering
     )
 
     results = {}
@@ -139,23 +140,37 @@ def test_multiple_resolutions(embeddings_df, gene_mappings_cache, args, test_res
                 'clusters_df': test_clusters_df
             }
 
-    # Pick the resolution that maximizes genome completeness (single-copy genes only)
-    # Priority: 1) Highest max completeness (recover complete, clean genomes)
-    #           2) Highest 90th percentile completeness (quality of top bins)
-    #           3) Fewest duplications (contamination)
-    # Rationale: Completeness now counts only single-copy genes (non-duplicated),
-    # preventing contaminated bins from being rewarded with high scores. This avoids
-    # bias towards over-consolidation (fewer, larger, contaminated bins).
-    best_resolution = max(results.keys(), key=lambda r: (
-        results[r]['max_bin_completeness'],    # Primary: recover complete genomes
-        results[r]['p90_bin_completeness'],    # Secondary: quality of top bins
-        -results[r]['total_duplications']      # Tertiary: contamination (negated for max)
-    ))
-    best_result = results[best_resolution]
+    # Pick the resolution that minimizes contamination while maintaining realistic completeness
+    # Filter out biologically impossible solutions where p90 > 200 (indicates merged organisms)
+    # Database has 133 BUSCO eukaryotic core gene families, so p90 > 200 suggests multiple organisms merged
+    MAX_REALISTIC_P90 = 200
+    valid_resolutions = {
+        r: data for r, data in results.items()
+        if data['p90_bin_completeness'] <= MAX_REALISTIC_P90
+    }
+
+    if valid_resolutions:
+        # Among valid solutions, minimize duplications first (prioritize clean bins)
+        best_resolution = min(valid_resolutions.keys(), key=lambda r: (
+            valid_resolutions[r]['total_duplications'],        # Primary: minimize contamination
+            valid_resolutions[r]['bins_with_duplications'],    # Secondary: minimize contaminated bins
+            -valid_resolutions[r]['p90_bin_completeness']      # Tertiary: maximize completeness (negated for min)
+        ))
+        best_result = valid_resolutions[best_resolution]
+        logger.info(f"Selected from {len(valid_resolutions)}/{len(results)} valid resolutions (p90 ≤ {MAX_REALISTIC_P90})")
+    else:
+        # Fallback: if all resolutions exceed threshold, pick one with lowest contamination
+        logger.warning(f"All {len(results)} resolutions exceed p90={MAX_REALISTIC_P90} threshold - picking least contaminated")
+        best_resolution = min(results.keys(), key=lambda r: (
+            results[r]['total_duplications'],
+            results[r]['bins_with_duplications']
+        ))
+        best_result = results[best_resolution]
 
     logger.info(f"Best resolution: {best_resolution:.2f} with {best_result['n_clusters']} clusters, "
                f"max completeness={best_result['max_bin_completeness']}, "
                f"90th percentile={best_result['p90_bin_completeness']}, "
+               f"{best_result['bins_with_duplications']} contaminated bins, "
                f"{best_result['total_duplications']} total duplications")
 
     return best_resolution, results
@@ -224,8 +239,10 @@ def determine_optimal_resolution(embeddings_df, fragments_dict, args, gene_mappi
         reference_organisms=100  # Reference point: 100 organisms
     )
 
-    # Step 4: Test multiple resolutions around the base estimate
+    # Step 4: Test multiple resolutions around the base estimate (wide range)
     test_resolutions = [
+        base_resolution * 0.1,
+        base_resolution * 0.2,
         base_resolution * 0.3,
         base_resolution * 0.5,
         base_resolution * 0.7,
@@ -233,7 +250,13 @@ def determine_optimal_resolution(embeddings_df, fragments_dict, args, gene_mappi
         base_resolution * 1.5,
         base_resolution * 2.0,
         base_resolution * 2.5,
-        base_resolution * 3.0
+        base_resolution * 3.0,
+        base_resolution * 4.0,
+        base_resolution * 5.0,
+        base_resolution * 6.0,
+        base_resolution * 7.0,
+        base_resolution * 8.0,
+        base_resolution * 10.0
     ]
 
     # Remove duplicates and sort
