@@ -20,7 +20,7 @@ def check_miniprot_available():
     return shutil.which("miniprot") is not None
 
 
-def estimate_organisms_from_all_contigs(fragments_dict, args, target_coverage_threshold=0.55, identity_threshold=0.35):
+def estimate_organisms_from_all_contigs(fragments_dict, args, target_coverage_threshold=0.50, identity_threshold=0.30):
     """
     Run miniprot on all contigs to estimate the number of organisms based on core gene duplications.
 
@@ -30,8 +30,8 @@ def estimate_organisms_from_all_contigs(fragments_dict, args, target_coverage_th
     Args:
         fragments_dict: Dictionary mapping headers to sequences
         args: Arguments object containing output directory, cores, etc.
-        target_coverage_threshold: Minimum target coverage for alignments
-        identity_threshold: Minimum identity for alignments
+        target_coverage_threshold: Minimum target coverage for alignments (default: 0.50, lowered for better sensitivity)
+        identity_threshold: Minimum identity for alignments (default: 0.30, lowered for better sensitivity)
 
     Returns:
         dict: {gene_family: occurrence_count} for all core genes found
@@ -140,12 +140,10 @@ def estimate_organisms_from_all_contigs(fragments_dict, args, target_coverage_th
                             matching_bases = int(parts[9])
                             alignment_length = int(parts[10])
 
-                            # Extract gene family code
+                            # Extract gene family code (BUSCO format: {gene_id}at{taxid}_{species}_{seq}:{code})
                             full_gene_id = query_name.split()[0]
-                            if ":" in full_gene_id:
-                                gene_family_code = full_gene_id.split(":")[-1]
-                            else:
-                                gene_family_code = full_gene_id
+                            # Extract the gene family ID (e.g., "28947at2759" from "28947at2759_6832_0:00088a")
+                            gene_family_code = full_gene_id.split("_")[0]
 
                             # Calculate quality metrics
                             target_coverage = (
@@ -232,7 +230,7 @@ def get_gene_mappings_cache_path(args):
 
 
 def parse_and_cache_paf_files(temp_dir, filtered_clusters, args,
-                            target_coverage_threshold=0.55, identity_threshold=0.35):
+                            target_coverage_threshold=0.50, identity_threshold=0.30):
     """
     Parse PAF files from miniprot output and cache gene-to-contig mappings.
     
@@ -277,11 +275,10 @@ def parse_and_cache_paf_files(temp_dir, filtered_clusters, args,
                         alignment_length = int(parts[10])
 
                         # Extract gene family code from protein name (query)
+                        # BUSCO format: {gene_id}at{taxid}_{species}_{seq}:{code}
                         full_gene_id = query_name.split()[0]
-                        if ":" in full_gene_id:
-                            gene_family_code = full_gene_id.split(":")[-1]
-                        else:
-                            gene_family_code = full_gene_id
+                        # Extract the gene family ID (e.g., "28947at2759" from "28947at2759_6832_0:00088a")
+                        gene_family_code = full_gene_id.split("_")[0]
 
                         # Calculate quality metrics
                         target_coverage = (
@@ -419,22 +416,22 @@ def check_core_gene_duplications_from_cache(clusters_df, gene_mappings_cache, ar
     return clusters_df
 
 
-def check_core_gene_duplications(clusters_df, fragments_dict, args, 
-                                target_coverage_threshold=0.55, 
-                                identity_threshold=0.55,
+def check_core_gene_duplications(clusters_df, fragments_dict, args,
+                                target_coverage_threshold=0.50,
+                                identity_threshold=0.30,
                                 use_header_cache=False):
     """
     Check for duplicated core genes using miniprot.
-    
+
     This function consolidates the logic previously duplicated between
     quality.py and refinement.py with configurable thresholds.
-    
+
     Args:
         clusters_df: DataFrame with cluster assignments
         fragments_dict: Dictionary mapping headers to sequences
         args: Arguments object containing output directory, cores, etc.
-        target_coverage_threshold: Minimum target coverage (0.55 for quality, 0.60 for refinement)
-        identity_threshold: Minimum identity (0.35 for quality, 0.40 for refinement)
+        target_coverage_threshold: Minimum target coverage (default: 0.50, lowered for better sensitivity)
+        identity_threshold: Minimum identity (default: 0.30, lowered for better sensitivity)
         use_header_cache: Whether to use function-level caching for header lookup
     
     Returns:
@@ -570,13 +567,10 @@ def check_core_gene_duplications(clusters_df, fragments_dict, args,
                                         alignment_length = int(parts[10])
 
                                         # Extract gene family code from protein name (query)
+                                        # BUSCO format: {gene_id}at{taxid}_{species}_{seq}:{code}
                                         full_gene_id = query_name.split()[0]
-                                        if ":" in full_gene_id:
-                                            gene_family_code = full_gene_id.split(":")[
-                                                -1
-                                            ]
-                                        else:
-                                            gene_family_code = full_gene_id
+                                        # Extract the gene family ID (e.g., "28947at2759" from "28947at2759_6832_0:00088a")
+                                        gene_family_code = full_gene_id.split("_")[0]
 
                                         # Calculate quality metrics
                                         target_coverage = (
