@@ -525,6 +525,10 @@ def get_features(
     Returns:
         Tuple of (features DataFrame, fragments dictionary)
     """
+    # Set global random seed for reproducible fragment generation
+    random.seed(42)
+    np.random.seed(42)
+
     features_csv_path = get_features_csv_path(output_dir)
     fragments_path = os.path.join(output_dir, "fragments.pkl")
 
@@ -634,7 +638,7 @@ def get_features(
     elif tsv_files:
         logger.debug("Calculating coverage from TSV files...")
         coverage_calculator = TSVCoverageCalculator(tsv_files, cores)
-    
+
     if coverage_calculator:
         coverage_df = coverage_calculator.calculate_coverage(fragments_dict)
         df = pd.concat([df, coverage_df.reindex(df.index).fillna(0.0)], axis=1)
@@ -653,18 +657,16 @@ def get_features(
         col for col in df.columns if isinstance(col, str) and "coverage" in col.lower()
     ]
     if coverage_columns:
-        # Apply log transformation to coverage features
-        df[coverage_columns] = df[coverage_columns].map(lambda x: np.log1p(x))
-        logger.debug(
-            f"Applied log transformation to {len(coverage_columns)} coverage features"
-        )
+        # Coverage features are already log-transformed during calculation
+        # Now apply global MinMax scaling across all samples
+        logger.debug("Applying global MinMax scaling across all coverage features")
 
-        logger.debug("Applying global scaling to preserve co-abundance patterns across samples")
-
+        # Apply global MinMax scaling across all coverage columns
         from sklearn.preprocessing import MinMaxScaler
+
         scaler = MinMaxScaler(feature_range=(0, 1))
         df[coverage_columns] = scaler.fit_transform(df[coverage_columns])
-        logger.debug(f"Applied MinMaxScaler (0-1 range) to {len(coverage_columns)} coverage features")
+        logger.debug(f"Applied global MinMax scaling (0-1 range) to {len(coverage_columns)} coverage features")
         
         # Log sample information for debugging
         sample_names = set()
@@ -724,11 +726,11 @@ class BAMCoverageCalculator(CoverageCalculator):
 
 class TSVCoverageCalculator(CoverageCalculator):
     """Calculate coverage from TSV files."""
-    
+
     def __init__(self, tsv_files: List[str], cores: int = 16):
         super().__init__(cores)
         self.tsv_files = tsv_files
-    
+
     def calculate_coverage(self, fragments_dict: FragmentDict) -> pd.DataFrame:
         """Calculate coverage from TSV files."""
         return calculate_coverage_from_tsv(self.tsv_files, fragments_dict)
@@ -1215,6 +1217,11 @@ def calculate_coverage_from_tsv(
     # Ensure all fragments are present and fill missing values with 0
     coverage_features = coverage_features.reindex(all_fragment_headers).fillna(0.0)
 
+    # Apply log transformation to TSV coverage values for consistency with BAM processing
+    # This preserves relative differences and prevents compression of low-abundance organisms
+    logger.debug("Applying log transformation to TSV coverage values")
+    coverage_features = coverage_features.applymap(lambda x: np.log1p(x))
+
     return coverage_features
 
 
@@ -1233,9 +1240,9 @@ def calculate_coverage_from_multiple_bams(
     bam_files: List[str], fragments_dict: FragmentDict, cores: int = 16, coverage_batch_size: int = 100000
 ) -> pd.DataFrame:
     """Calculate coverage from multiple alignment files (BAM/CRAM), creating separate columns for each sample.
-    
+
     Coverage is normalized by total mapped reads per sample to account for different
-    sequencing depths, then scaled per-sample to preserve within-sample relationships.
+    sequencing depths, then log-transformed before global MinMax scaling.
 
     Args:
         bam_files: List of alignment file paths (BAM/CRAM)
@@ -1283,24 +1290,21 @@ def calculate_coverage_from_multiple_bams(
                 normalized_coverage = {fh: 0.0 for fh in all_fragment_headers}
                 normalized_coverage_std = {fh: 0.0 for fh in all_fragment_headers}
             else:
-                # Normalize by total mapped reads (convert to reads per million, RPM)
-                normalization_factor = total_mapped_reads / 1_000_000
-                if normalization_factor <= 0:
-                    logger.warning(
-                        f"Normalization factor for {os.path.basename(bam_file)} is non-positive ({normalization_factor:.2f}); assigning zero coverage."
-                    )
-                    normalized_coverage = {fh: 0.0 for fh in all_fragment_headers}
-                    normalized_coverage_std = {fh: 0.0 for fh in all_fragment_headers}
-                else:
-                    normalized_coverage = {
-                        k: v / normalization_factor for k, v in coverage.items()
-                    }
-                    normalized_coverage_std = {
-                        k: v / normalization_factor for k, v in coverage_std.items()
-                    }
-                    logger.debug(
-                        f"Normalized coverage by {total_mapped_reads:,} mapped reads (factor: {normalization_factor:.2f})"
-                    )
+                # Normalize by total mapped reads to account for sequencing depth differences
+                depth_normalized_coverage = {k: v / total_mapped_reads for k, v in coverage.items()}
+                depth_normalized_std = {k: v / total_mapped_reads for k, v in coverage_std.items()}
+
+                # Apply log transformation to preserve relative differences
+                log_coverage = {k: np.log1p(v) for k, v in depth_normalized_coverage.items()}
+                log_coverage_std = {k: np.log1p(v) for k, v in depth_normalized_std.items()}
+
+                # Use log-transformed values
+                normalized_coverage = log_coverage
+                normalized_coverage_std = log_coverage_std
+
+                logger.debug(
+                    f"Normalized by {total_mapped_reads:,} mapped reads and applied log transformation"
+                )
 
             sample_name = os.path.splitext(os.path.basename(bam_file))[0]
             mean_col_name = f"{sample_name}_coverage"

@@ -148,43 +148,58 @@ def refine_bin_with_leiden_clustering(
         # Check 0: Must resolve at least some contamination to justify any splitting
         if contamination_reduction == 0:
             logger.warning(f"Bin {bin_id} refinement resolves no duplications - keeping original bin")
-            return 'no_duplications_resolved'
-        
+            return 'no_duplications_resolved', None
+
         # Check 1: Trade-off assessment
         if split_penalty > 0 and not trade_off_acceptable:
             split_details = f" (genes: {', '.join(split_genes)})" if split_genes else ""
             resolved_details = f" (genes: {', '.join(resolved_genes)})" if resolved_genes else ""
             logger.warning(f"Bin {bin_id} trade-off unfavorable: splits {split_penalty} single-copy genes{split_details} but only resolves {contamination_reduction} duplications{resolved_details} (ratio {trade_off_ratio:.2f} < {margin_factor})")
-            return 'trade_off_unfavorable'
+            return 'trade_off_unfavorable', None
         
         # Check 2: Single-copy gene integrity - ensure most single-copy genes stay together
         single_copy_genes = [gene for gene, count in original_gene_counts.items() if count == 1]
+        single_copy_retention_ratio = 1.0  # Default to perfect if no single-copy genes to check
+
         if single_copy_genes:
             # Find which cluster has the most single-copy genes
             cluster_single_copy_counts = {}
             for cluster_id in cluster_genes:
-                cluster_single_copy_counts[cluster_id] = sum(1 for gene in single_copy_genes 
+                cluster_single_copy_counts[cluster_id] = sum(1 for gene in single_copy_genes
                                                             if gene in cluster_genes[cluster_id])
-            
+
             # Calculate retention ratio for the main cluster
             max_single_copy_retention = max(cluster_single_copy_counts.values()) if cluster_single_copy_counts else 0
             single_copy_retention_ratio = max_single_copy_retention / len(single_copy_genes)
-            
-            if single_copy_retention_ratio < 0.9:  # Less than 90% stay together
+
+            if single_copy_retention_ratio < 0.8:  # Less than 80% stay together
                 logger.warning(f"Bin {bin_id} excessive fragmentation of single-copy genes "
                               f"(only {single_copy_retention_ratio:.1%} stay together, {max_single_copy_retention}/{len(single_copy_genes)}) - keeping original bin")
-                return 'excessive_fragmentation'
+                return 'excessive_fragmentation', None
         
-        # Log success with details
-        if split_penalty == 0:
-            resolved_details = f" (genes: {', '.join(resolved_genes)})" if resolved_genes else ""
-            logger.info(f"Bin {bin_id} perfect separation: no single-copy genes split, resolves {contamination_reduction} duplications{resolved_details}")
+        # Log success with counts only (gene details omitted for cleaner output)
+        # Check if truly perfect (retention ratio >= 99% AND no splits)
+        is_truly_perfect = (split_penalty == 0 and single_copy_retention_ratio >= 0.99)
+
+        if is_truly_perfect:
+            logger.info(f"Bin {bin_id} perfect separation: {single_copy_retention_ratio:.1%} single-copy genes retained in main cluster, resolves {contamination_reduction} duplications")
+            quality_category = 'perfect'
+        elif split_penalty == 0:
+            logger.info(f"Bin {bin_id} good separation: {single_copy_retention_ratio:.1%} single-copy genes retained in main cluster (no splits), resolves {contamination_reduction} duplications")
+            quality_category = 'good'
         else:
-            split_details = f" (genes: {', '.join(split_genes)})" if split_genes else ""
-            resolved_details = f" (genes: {', '.join(resolved_genes)})" if resolved_genes else ""
-            logger.info(f"Bin {bin_id} acceptable trade-off: splits {split_penalty} single-copy genes{split_details} but resolves {contamination_reduction} duplications{resolved_details} (ratio {trade_off_ratio:.2f} > {margin_factor})")
-        
-        return 'success'
+            logger.info(f"Bin {bin_id} acceptable trade-off: splits {split_penalty} single-copy genes ({single_copy_retention_ratio:.1%} retained) but resolves {contamination_reduction} duplications (ratio {trade_off_ratio:.2f} > {margin_factor})")
+            quality_category = 'acceptable'
+
+        # Return success with quality metrics for ranking
+        metrics = {
+            'quality_category': quality_category,
+            'retention_ratio': single_copy_retention_ratio,
+            'split_penalty': split_penalty,
+            'contamination_reduction': contamination_reduction,
+            'trade_off_ratio': trade_off_ratio
+        }
+        return 'success', metrics
 
     # Fixed resolution testing with extended, gradual steps
     # Start high to handle highly contaminated bins, step down to find most conservative solution
@@ -219,10 +234,8 @@ def refine_bin_with_leiden_clustering(
     )
     logger.info(f"Graph: {graph.vcount()} nodes, {graph.ecount()} edges, {len(graph.connected_components())} connected components")
 
-    # Track best solution found (most conservative = lowest resolution that works)
-    best_resolution = None
-    best_clusters_df = None
-    best_n_clusters = None
+    # Track all successful solutions for quality ranking
+    successful_attempts = []
 
     # Test each resolution multiplier sequentially
     for attempt, resolution_multiplier in enumerate(test_resolution_multipliers, start=1):
@@ -277,15 +290,19 @@ def refine_bin_with_leiden_clustering(
         })
         
         # Validate refinement FIRST using only contigs that were actually refined (have embeddings)
-        validation_result = validate_refinement_with_markers(available_embeddings, refined_clusters_df, bin_id, gene_mappings_cache, duplication_results)
+        validation_result, quality_metrics = validate_refinement_with_markers(available_embeddings, refined_clusters_df, bin_id, gene_mappings_cache, duplication_results)
 
         if validation_result == 'success':
             logger.info(f"Bin {bin_id} {attempt_info}: Validation passed! (resolution={leiden_resolution:.2f}, {n_clusters} clusters)")
-            # Save this as best solution (lower resolution = more conservative)
-            best_resolution = leiden_resolution
-            best_clusters_df = refined_clusters_df
-            best_n_clusters = n_clusters
-            # Continue testing remaining resolutions to find most conservative solution
+            # Store this successful attempt with quality metrics for later ranking
+            successful_attempts.append({
+                'resolution': leiden_resolution,
+                'clusters_df': refined_clusters_df,
+                'n_clusters': n_clusters,
+                'metrics': quality_metrics,
+                'attempt': attempt
+            })
+            # Continue testing remaining resolutions to find all valid solutions
         else:
             # Log excessive_fragmentation at debug level (expected during resolution testing)
             if validation_result == 'excessive_fragmentation':
@@ -294,15 +311,36 @@ def refine_bin_with_leiden_clustering(
                 logger.warning(f"Bin {bin_id} {attempt_info}: Validation failed - {validation_result}")
             # Continue to next resolution
     # After testing all resolutions, check if any passed validation
-    if best_resolution is None:
+    if not successful_attempts:
         logger.warning(f"Bin {bin_id} failed validation with all {len(test_resolution_multipliers)} resolutions, keeping original")
         return None
 
-    # Use the best (most conservative) solution found
-    logger.info(f"Bin {bin_id} selected best solution: resolution={best_resolution:.2f}, {best_n_clusters} clusters")
-    refined_clusters_df = best_clusters_df
-    n_clusters = best_n_clusters
-    leiden_resolution = best_resolution
+    # Rank all successful attempts by quality
+    # Priority: 1) Quality category (perfect > good > acceptable)
+    #           2) Highest retention ratio (keep genomes together)
+    #           3) Fewest splits (simpler is better)
+    #           4) Most contamination resolved (more benefit)
+    quality_rank = {'perfect': 3, 'good': 2, 'acceptable': 1}
+
+    best_attempt = max(successful_attempts, key=lambda x: (
+        quality_rank[x['metrics']['quality_category']],      # Primary: quality category
+        x['metrics']['retention_ratio'],                      # Secondary: keep genomes together
+        -x['metrics']['split_penalty'],                       # Tertiary: fewer splits (negated)
+        x['metrics']['contamination_reduction']               # Quaternary: more benefit
+    ))
+
+    # Log selection rationale
+    logger.info(f"Bin {bin_id} ranked {len(successful_attempts)} successful attempts, selected best:")
+    logger.info(f"  Resolution: {best_attempt['resolution']:.2f} (attempt {best_attempt['attempt']})")
+    logger.info(f"  Quality: {best_attempt['metrics']['quality_category']}")
+    logger.info(f"  Retention: {best_attempt['metrics']['retention_ratio']:.1%}")
+    logger.info(f"  Splits: {best_attempt['metrics']['split_penalty']}")
+    logger.info(f"  Contamination resolved: {best_attempt['metrics']['contamination_reduction']}")
+
+    # Use the best quality solution
+    refined_clusters_df = best_attempt['clusters_df']
+    n_clusters = best_attempt['n_clusters']
+    leiden_resolution = best_attempt['resolution']
 
     # Continue with success path - only return contigs with embeddings (that were actually refined)
 
