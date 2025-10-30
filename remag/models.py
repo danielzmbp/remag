@@ -56,7 +56,7 @@ class LearningRateScheduler:
     @staticmethod
     def create_warmup_cosine_scheduler(optimizer, args):
         """Create a warmup + cosine annealing scheduler."""
-        base_learning_rate = getattr(args, 'base_learning_rate', 1e-3)
+        base_learning_rate = getattr(args, 'base_learning_rate', 0.0025)
         scaled_lr = (args.batch_size / 256) * base_learning_rate * 0.2
         warmup_epochs = 10
         warmup_start_lr = scaled_lr * 0.1
@@ -469,9 +469,13 @@ class SiameseNetwork(nn.Module):
                 nn.LeakyReLU(),
                 nn.Dropout(0.1),
             )
-        
+
+        # Determine representation dimension for projection head
+        # Fusion layer outputs embedding_dim
+        self.representation_dim = embedding_dim
+
         self.projection_head = nn.Sequential(
-            nn.Linear(embedding_dim, 512),
+            nn.Linear(self.representation_dim, 512),
             nn.BatchNorm1d(512),
             nn.ReLU(),
             nn.Linear(512, 512),
@@ -490,7 +494,7 @@ class SiameseNetwork(nn.Module):
             coverage_features = x[:, self.n_kmer_features:]
             coverage_encoded = self.coverage_encoder(coverage_features)
 
-            # Advanced fusion with cross-attention
+            # Use fusion layer to combine k-mer and coverage encodings
             representation = self.fusion_layer(kmer_encoded, coverage_encoded)
         else:
             # No coverage features - use simple projection
@@ -567,7 +571,7 @@ class SequenceDataset(Dataset):
             for base_name, indices in self.contig_to_fragment_indices.items()
             if len(indices) > 1
         }
-        
+
         logger.debug(f"Filtered to {len(self.contig_to_fragment_indices)} contigs with multiple fragments (removed {original_count - len(self.contig_to_fragment_indices)})")
 
         if not self.contig_to_fragment_indices:
@@ -590,8 +594,10 @@ class SequenceDataset(Dataset):
         """Group fragment indices by their original contig's base name."""
         groups = {}
         for i, fragment_header in enumerate(self.fragment_headers):
-            # Match patterns: .original, .h1.N, .h2.N, or .N (where N is a number)
-            match = re.match(r"(.+)\.(?:h[12]\.(\d+)|(\d+)|original)$", fragment_header)
+            # Match patterns: .original, .h1.N, .h2.N, .h1, .h2, or .N (where N is a number)
+            # Updated to handle both .h1/.h2 with and without fragment numbers
+            # Use non-greedy (.+?) to avoid matching the dot before the suffix
+            match = re.match(r"(.+?)\.(?:h[12](?:\.(\d+))?|(\d+)|original)$", fragment_header)
             if match:
                 base_name = match.group(1)
             else:
