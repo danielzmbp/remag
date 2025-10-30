@@ -290,7 +290,6 @@ This creates:
 ### Core dependencies (always installed):
 - Python 3.9+
 - PyTorch (≥1.11.0)
-- transformers (≥4.0.0) - for HyenaDNA classifier
 - einops (≥0.6.0) - for HyenaDNA model operations
 - scikit-learn (≥1.0.0)
 - leidenalg (≥0.9.0) - for graph-based clustering
