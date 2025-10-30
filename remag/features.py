@@ -3,6 +3,7 @@ Feature extraction module for REMAG
 """
 
 import itertools
+import hashlib
 import numpy as np
 import pandas as pd
 import pysam
@@ -379,8 +380,10 @@ def _generate_half_augmentations(
     if seq_length < min_contig_length:
         return fragments
 
-    # Seed RNG for reproducibility - include half_id for different seeds per half
-    random.seed(hash(f"{base_header}_{half_id}") % 2**32)
+    # Seed RNG for reproducibility using a stable hash (independent of PYTHONHASHSEED)
+    seed_material = f"{base_header}_{half_id}".encode("utf-8")
+    seed = int.from_bytes(hashlib.sha256(seed_material).digest()[:4], "big")
+    rng = random.Random(seed)
 
     # Generate edge-masked fragments
     selected_count = 0
@@ -391,10 +394,10 @@ def _generate_half_augmentations(
         attempts += 1
 
         # Choose masking strategy: favor both edges (more variable) vs other strategies
-        if random.choice([True, False]):
+        if rng.choice([True, False]):
             mask_strategy = "both"  # Both edges - more variable
         else:
-            mask_strategy = random.choice(
+            mask_strategy = rng.choice(
                 ["left", "right", "center"]
             )  # Other strategies
 
@@ -403,7 +406,7 @@ def _generate_half_augmentations(
             max_mask = seq_length - min_contig_length
             if max_mask <= 0:
                 continue
-            mask_size = random.randint(1, max_mask)
+            mask_size = rng.randint(1, max_mask)
             start_pos = mask_size
             end_pos = seq_length
 
@@ -412,7 +415,7 @@ def _generate_half_augmentations(
             max_mask = seq_length - min_contig_length
             if max_mask <= 0:
                 continue
-            mask_size = random.randint(1, max_mask)
+            mask_size = rng.randint(1, max_mask)
             start_pos = 0
             end_pos = seq_length - mask_size
 
@@ -421,8 +424,8 @@ def _generate_half_augmentations(
             max_total_mask = seq_length - min_contig_length
             if max_total_mask <= 0:
                 continue
-            total_mask = random.randint(1, max_total_mask)
-            left_mask = random.randint(0, total_mask)
+            total_mask = rng.randint(1, max_total_mask)
+            left_mask = rng.randint(0, total_mask)
             right_mask = total_mask - left_mask
             start_pos = left_mask
             end_pos = seq_length - right_mask
@@ -438,14 +441,14 @@ def _generate_half_augmentations(
             if max_center_mask <= 0:
                 continue
 
-            center_mask_size = random.randint(1, max_center_mask)
-            center_start = random.randint(
+            center_mask_size = rng.randint(1, max_center_mask)
+            center_start = rng.randint(
                 min_contig_length, seq_length - min_contig_length - center_mask_size
             )
             center_end = center_start + center_mask_size
 
             # Randomly choose left or right fragment
-            if random.choice([True, False]):
+            if rng.choice([True, False]):
                 # Left fragment: sequence[:center_start]
                 start_pos = 0
                 end_pos = center_start
@@ -643,13 +646,15 @@ def get_features(
         coverage_df = coverage_calculator.calculate_coverage(fragments_dict)
         df = pd.concat([df, coverage_df.reindex(df.index).fillna(0.0)], axis=1)
         
-        # Filter out fragments with zero coverage across all samples
+        # Identify fragments with zero coverage but keep them so embeddings can still use k-mer features
         coverage_columns = [col for col in coverage_df.columns if "coverage" in col.lower()]
         if coverage_columns:
             zero_coverage_mask = (df[coverage_columns] == 0).all(axis=1)
-            df = df[~zero_coverage_mask]
-            if zero_coverage_mask.sum() > 0:
-                logger.info(f"Filtered out {zero_coverage_mask.sum()} fragments with zero coverage across all samples")
+            zero_count = int(zero_coverage_mask.sum())
+            if zero_count > 0:
+                logger.debug(
+                    f"{zero_count} fragments have zero coverage across all samples; keeping them with k-mer features only"
+                )
     else:
         logger.info("No coverage data provided - using k-mer features only")
 
@@ -956,7 +961,10 @@ def _calculate_fragment_stats_vectorized(coverage_array, fragment_coords):
             fragment_coverage = coverage_array[start:end]
             if len(fragment_coverage) > 0:
                 means[i] = np.mean(fragment_coverage)
-                stds[i] = np.std(fragment_coverage)
+                stds[i] = np.std(fragment_coverage) if len(fragment_coverage) > 1 else 0.0
+            else:
+                means[i] = 0.0
+                stds[i] = 0.0
         return means, stds
     
     # For larger numbers of fragments, use advanced indexing for speedup
@@ -985,19 +993,26 @@ def _calculate_fragment_stats_vectorized(coverage_array, fragment_coords):
             for i, (start_idx, length) in enumerate(zip(cumulative_indices, fragment_lengths)):
                 if length > 0:
                     fragment_data = all_fragment_data[start_idx:start_idx + length]
-                    means[i] = np.mean(fragment_data)
-                    stds[i] = np.std(fragment_data)
+                    if len(fragment_data) > 0:
+                        means[i] = np.mean(fragment_data)
+                        stds[i] = np.std(fragment_data) if len(fragment_data) > 1 else 0.0
+                    else:
+                        means[i] = 0.0
+                        stds[i] = 0.0
         
         return means, stds
         
-    except (IndexError, ValueError) as e:
+    except (IndexError, ValueError, ZeroDivisionError) as e:
         # Fallback to individual processing if vectorized approach fails
         logger.debug(f"Vectorized processing failed, using fallback: {e}")
         for i, (start, end) in enumerate(fragment_coords):
             fragment_coverage = coverage_array[start:end]
             if len(fragment_coverage) > 0:
                 means[i] = np.mean(fragment_coverage)
-                stds[i] = np.std(fragment_coverage)
+                stds[i] = np.std(fragment_coverage) if len(fragment_coverage) > 1 else 0.0
+            else:
+                means[i] = 0.0
+                stds[i] = 0.0
         return means, stds
 
 
@@ -1133,7 +1148,21 @@ def calculate_fragment_coverage(
                         fragment_coverage_std[fragment_header] = 0.0
 
     except Exception as e:
+        import traceback
         logger.error(f"Error processing alignment file {bam_file}: {e}")
+        logger.debug(f"Traceback: {traceback.format_exc()}")
+
+        # Check if BAM file is empty or corrupted
+        try:
+            if bamfile:
+                total_mapped = bamfile.mapped
+                total_unmapped = bamfile.unmapped
+                logger.error(f"BAM file stats: {total_mapped} mapped reads, {total_unmapped} unmapped reads")
+                if total_mapped == 0:
+                    logger.error(f"BAM file {bam_file} has NO mapped reads - cannot calculate coverage")
+        except:
+            logger.error(f"Could not read BAM file stats for {bam_file}")
+
         return {}, {}
 
     # Assign zero coverage to any missing fragments
