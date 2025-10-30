@@ -3,7 +3,6 @@ Output module for REMAG
 """
 
 import os
-from tqdm import tqdm
 from loguru import logger
 
 from .utils import ContigHeaderMapper
