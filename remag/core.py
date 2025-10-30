@@ -5,6 +5,7 @@ Core module for REMAG - Main execution logic
 import json
 import os
 import sys
+from importlib.metadata import version
 from loguru import logger
 
 from .utils import setup_logging
@@ -26,8 +27,12 @@ def main(args):
     
     if getattr(args, "keep_intermediate", False):
         params_path = os.path.join(args.output, "params.json")
+        params = {
+            "version": version("remag"),
+            **vars(args)
+        }
         with open(params_path, "w", encoding="utf-8") as f:
-            json.dump(vars(args), f, indent=4)
+            json.dump(params, f, indent=4)
         logger.debug(f"Run parameters saved to {params_path}")
 
     # Apply eukaryotic filtering if not skipped
