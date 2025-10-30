@@ -10,7 +10,7 @@ from tqdm import tqdm
 from loguru import logger
 
 from .miniprot_utils import check_core_gene_duplications, check_core_gene_duplications_from_cache, get_core_gene_duplication_results_path, get_gene_mappings_cache_path
-from .clustering import _leiden_clustering, _construct_knn_graph, _leiden_clustering_on_graph
+from .clustering import _construct_knn_graph, _leiden_clustering_on_graph
 
 
 def refine_bin_with_leiden_clustering(
@@ -66,16 +66,16 @@ def refine_bin_with_leiden_clustering(
         cluster_sizes = refined_clusters_df.groupby('cluster').size()
         largest_cluster_size = cluster_sizes.max()
         original_size = len(original_contigs)
-        
+
         if largest_cluster_size < original_size * 0.4:
-            logger.warning(f"Bin {bin_id} extreme fragmentation detected (largest={largest_cluster_size}/{original_size}, <40% retention)")
+            logger.debug(f"Bin {bin_id} extreme fragmentation detected (largest={largest_cluster_size}/{original_size}, <40% retention)")
             return False
-        
+
         small_clusters = (cluster_sizes < 5).sum()
         if small_clusters > 1:
-            logger.warning(f"Bin {bin_id} refinement created {small_clusters} small clusters")
+            logger.debug(f"Bin {bin_id} refinement created {small_clusters} small clusters")
             return False
-        
+
         return True
     
     def validate_refinement_with_markers(original_contigs, refined_clusters_df, bin_id, gene_mappings_cache, duplication_results, margin_factor=2.0):
@@ -147,14 +147,14 @@ def refine_bin_with_leiden_clustering(
         
         # Check 0: Must resolve at least some contamination to justify any splitting
         if contamination_reduction == 0:
-            logger.warning(f"Bin {bin_id} refinement resolves no duplications - keeping original bin")
+            logger.debug(f"Bin {bin_id} refinement resolves no duplications - keeping original bin")
             return 'no_duplications_resolved', None
 
         # Check 1: Trade-off assessment
         if split_penalty > 0 and not trade_off_acceptable:
             split_details = f" (genes: {', '.join(split_genes)})" if split_genes else ""
             resolved_details = f" (genes: {', '.join(resolved_genes)})" if resolved_genes else ""
-            logger.warning(f"Bin {bin_id} trade-off unfavorable: splits {split_penalty} single-copy genes{split_details} but only resolves {contamination_reduction} duplications{resolved_details} (ratio {trade_off_ratio:.2f} < {margin_factor})")
+            logger.debug(f"Bin {bin_id} trade-off unfavorable: splits {split_penalty} single-copy genes{split_details} but only resolves {contamination_reduction} duplications{resolved_details} (ratio {trade_off_ratio:.2f} < {margin_factor})")
             return 'trade_off_unfavorable', None
         
         # Check 2: Single-copy gene integrity - ensure most single-copy genes stay together
@@ -172,8 +172,8 @@ def refine_bin_with_leiden_clustering(
             max_single_copy_retention = max(cluster_single_copy_counts.values()) if cluster_single_copy_counts else 0
             single_copy_retention_ratio = max_single_copy_retention / len(single_copy_genes)
 
-            if single_copy_retention_ratio < 0.8:  # Less than 80% stay together
-                logger.warning(f"Bin {bin_id} excessive fragmentation of single-copy genes "
+            if single_copy_retention_ratio < 0.75:  # Less than 75% stay together
+                logger.debug(f"Bin {bin_id} excessive fragmentation of single-copy genes "
                               f"(only {single_copy_retention_ratio:.1%} stay together, {max_single_copy_retention}/{len(single_copy_genes)}) - keeping original bin")
                 return 'excessive_fragmentation', None
         
@@ -182,13 +182,13 @@ def refine_bin_with_leiden_clustering(
         is_truly_perfect = (split_penalty == 0 and single_copy_retention_ratio >= 0.99)
 
         if is_truly_perfect:
-            logger.info(f"Bin {bin_id} perfect separation: {single_copy_retention_ratio:.1%} single-copy genes retained in main cluster, resolves {contamination_reduction} duplications")
+            logger.debug(f"Bin {bin_id} perfect separation: {single_copy_retention_ratio:.1%} single-copy genes retained in main cluster, resolves {contamination_reduction} duplications")
             quality_category = 'perfect'
         elif split_penalty == 0:
-            logger.info(f"Bin {bin_id} good separation: {single_copy_retention_ratio:.1%} single-copy genes retained in main cluster (no splits), resolves {contamination_reduction} duplications")
+            logger.debug(f"Bin {bin_id} good separation: {single_copy_retention_ratio:.1%} single-copy genes retained in main cluster (no splits), resolves {contamination_reduction} duplications")
             quality_category = 'good'
         else:
-            logger.info(f"Bin {bin_id} acceptable trade-off: splits {split_penalty} single-copy genes ({single_copy_retention_ratio:.1%} retained) but resolves {contamination_reduction} duplications (ratio {trade_off_ratio:.2f} > {margin_factor})")
+            logger.debug(f"Bin {bin_id} acceptable trade-off: splits {split_penalty} single-copy genes ({single_copy_retention_ratio:.1%} retained) but resolves {contamination_reduction} duplications (ratio {trade_off_ratio:.2f} > {margin_factor})")
             quality_category = 'acceptable'
 
         # Return success with quality metrics for ranking
@@ -203,7 +203,11 @@ def refine_bin_with_leiden_clustering(
 
     # Fixed resolution testing with extended, gradual steps
     # Start high to handle highly contaminated bins, step down to find most conservative solution
-    test_resolution_multipliers = [3.0, 2.5, 2.0, 1.5, 1.2, 1.0, 0.8, 0.6, 0.5, 0.4, 0.3, 0.2, 0.15, 0.1]
+    # 32 attempts with fine-scale granularity for more precise resolution selection
+    test_resolution_multipliers = [
+        3.0, 2.75, 2.5, 2.25, 2.0, 1.75, 1.5, 1.35, 1.2, 1.1, 1.0, 0.9, 0.8, 0.7, 0.65, 0.6,
+        0.55, 0.5, 0.45, 0.4, 0.35, 0.3, 0.25, 0.225, 0.2, 0.175, 0.15, 0.125, 0.1, 0.09, 0.08, 0.07
+    ]
 
     # Get base parameters (keep k-neighbors and threshold fixed throughout)
     base_resolution = getattr(args, 'leiden_resolution', 1.0)
@@ -242,7 +246,7 @@ def refine_bin_with_leiden_clustering(
         leiden_resolution = base_resolution * resolution_multiplier
 
         attempt_info = f"attempt {attempt}/{len(test_resolution_multipliers)}"
-        logger.info(f"Bin {bin_id} {attempt_info}: resolution={leiden_resolution:.2f} (base={base_resolution:.2f} × {resolution_multiplier:.1f})")
+        logger.debug(f"Bin {bin_id} {attempt_info}: resolution={leiden_resolution:.2f} (base={base_resolution:.2f} × {resolution_multiplier:.1f})")
 
         # Apply Leiden clustering on pre-built graph (fast - no graph construction)
         cluster_labels = _leiden_clustering_on_graph(
@@ -258,20 +262,20 @@ def refine_bin_with_leiden_clustering(
         min_cluster_size = 5  # Hardcoded for refinement
         cluster_sizes = pd.Series(cluster_labels).value_counts()
         small_clusters = cluster_sizes[cluster_sizes < min_cluster_size].index
-        
+
         if len(small_clusters) > 0:
             largest_cluster = cluster_sizes.idxmax()
             # Merge small clusters into the largest one
             cluster_labels = np.array([
-                largest_cluster if c in small_clusters else c 
+                largest_cluster if c in small_clusters else c
                 for c in cluster_labels
             ])
             # Recalculate number of clusters after merging
             n_clusters = len(set(cluster_labels))
-            logger.info(f"Bin {bin_id} {attempt_info}: Merged {len(small_clusters)} small clusters, now {n_clusters} clusters")
-        
+            logger.debug(f"Bin {bin_id} {attempt_info}: Merged {len(small_clusters)} small clusters, now {n_clusters} clusters")
+
         if n_clusters < 2:
-            logger.warning(f"Bin {bin_id} {attempt_info}: Insufficient clusters ({n_clusters}), stopping (lower resolutions will also produce 1 cluster)")
+            logger.debug(f"Bin {bin_id} {attempt_info}: Insufficient clusters ({n_clusters}), stopping (lower resolutions will also produce 1 cluster)")
             break
         
         # Create cluster assignments DataFrame
@@ -293,7 +297,7 @@ def refine_bin_with_leiden_clustering(
         validation_result, quality_metrics = validate_refinement_with_markers(available_embeddings, refined_clusters_df, bin_id, gene_mappings_cache, duplication_results)
 
         if validation_result == 'success':
-            logger.info(f"Bin {bin_id} {attempt_info}: Validation passed! (resolution={leiden_resolution:.2f}, {n_clusters} clusters)")
+            logger.debug(f"Bin {bin_id} {attempt_info}: Validation passed! (resolution={leiden_resolution:.2f}, {n_clusters} clusters)")
             # Store this successful attempt with quality metrics for later ranking
             successful_attempts.append({
                 'resolution': leiden_resolution,
@@ -304,11 +308,8 @@ def refine_bin_with_leiden_clustering(
             })
             # Continue testing remaining resolutions to find all valid solutions
         else:
-            # Log excessive_fragmentation at debug level (expected during resolution testing)
-            if validation_result == 'excessive_fragmentation':
-                logger.debug(f"Bin {bin_id} {attempt_info}: Validation failed - {validation_result}")
-            else:
-                logger.warning(f"Bin {bin_id} {attempt_info}: Validation failed - {validation_result}")
+            # Log all validation failures at debug level (expected during resolution testing)
+            logger.debug(f"Bin {bin_id} {attempt_info}: Validation failed - {validation_result}")
             # Continue to next resolution
     # After testing all resolutions, check if any passed validation
     if not successful_attempts:
@@ -329,13 +330,11 @@ def refine_bin_with_leiden_clustering(
         x['metrics']['contamination_reduction']               # Quaternary: more benefit
     ))
 
-    # Log selection rationale
-    logger.info(f"Bin {bin_id} ranked {len(successful_attempts)} successful attempts, selected best:")
-    logger.info(f"  Resolution: {best_attempt['resolution']:.2f} (attempt {best_attempt['attempt']})")
-    logger.info(f"  Quality: {best_attempt['metrics']['quality_category']}")
-    logger.info(f"  Retention: {best_attempt['metrics']['retention_ratio']:.1%}")
-    logger.info(f"  Splits: {best_attempt['metrics']['split_penalty']}")
-    logger.info(f"  Contamination resolved: {best_attempt['metrics']['contamination_reduction']}")
+    # Log selection rationale - concise one-line summary
+    logger.info(f"Bin {bin_id} refinement selected: resolution={best_attempt['resolution']:.2f}, "
+                f"splits {best_attempt['metrics']['split_penalty']} single-copy genes, "
+                f"resolves {best_attempt['metrics']['contamination_reduction']} duplications "
+                f"({best_attempt['metrics']['quality_category']} quality, {best_attempt['metrics']['retention_ratio']:.1%} retention)")
 
     # Use the best quality solution
     refined_clusters_df = best_attempt['clusters_df']
@@ -354,7 +353,7 @@ def refine_bin_with_leiden_clustering(
 
 
 def refine_contaminated_bins_with_embeddings(
-    clusters_df, embeddings_df, fragments_dict, args, refinement_round=1, max_refinement_rounds=2
+    clusters_df, embeddings_df, fragments_dict, args, refinement_round=1, max_refinement_rounds=16
 ):
     """
     Refine bins that have duplicated core genes using existing embeddings with k-NN graph
@@ -387,13 +386,15 @@ def refine_contaminated_bins_with_embeddings(
     # Load duplication results from memory or file
     duplication_results = {}
 
+    # Get results path (needed for saving updated results later)
+    results_path = get_core_gene_duplication_results_path(args)
+
     # First try to get from args (available even without -k flag)
     if hasattr(args, '_duplication_results'):
         duplication_results = args._duplication_results
         logger.debug(f"Using in-memory duplication results for {len(duplication_results)} bins")
     else:
         # Fall back to loading from file (only available with -k flag)
-        results_path = get_core_gene_duplication_results_path(args)
         if os.path.exists(results_path):
             try:
                 with open(results_path, "r") as f:
@@ -421,8 +422,35 @@ def refine_contaminated_bins_with_embeddings(
                 else:
                     logger.debug(f"REFINEMENT: {bin_id} skipped - only {duplicated_count} duplicated genes (< {min_duplications})")
             else:
-                # If no duplication data for this bin, skip refinement
-                logger.warning(f"REFINEMENT: {bin_id} skipped - no duplication data available")
+                # Bin is flagged as contaminated but missing from duplication_results
+                # This can happen if bins were created/renamed during refinement
+                # Get duplication count from clusters_df instead
+                bin_rows = clusters_df[clusters_df["cluster"] == bin_id]
+                if not bin_rows.empty:
+                    bin_data = bin_rows.iloc[0]
+                    dup_count = bin_data["duplicated_core_genes_count"] if "duplicated_core_genes_count" in bin_data.index else 0
+                    # Convert to int (handles numpy types from pandas)
+                    try:
+                        dup_count_int = int(dup_count)
+                    except (ValueError, TypeError):
+                        dup_count_int = 0
+
+                    if dup_count_int >= min_duplications:
+                        logger.info(f"REFINEMENT: {bin_id} selected - {dup_count_int} duplicated genes from clusters_df (not in duplication_results)")
+                        contaminated_bins.append(bin_id)
+                        # Add to duplication_results for consistency
+                        fake_duplicated_genes = {f"gene_{i}": 2 for i in range(dup_count_int)}
+                        total_genes_found = bin_data["total_core_genes_found"] if "total_core_genes_found" in bin_data.index else 0
+                        duplication_results[bin_id] = {
+                            "has_duplications": True,
+                            "duplicated_genes": fake_duplicated_genes,
+                            "total_genes_found": int(total_genes_found) if total_genes_found else 0
+                        }
+                        args._duplication_results = duplication_results
+                    else:
+                        logger.debug(f"REFINEMENT: {bin_id} skipped - only {dup_count_int} duplicated genes (< {min_duplications})")
+                else:
+                    logger.warning(f"REFINEMENT: {bin_id} skipped - no duplication data available")
 
     if not contaminated_bins:
         logger.info("No contaminated bins found, skipping refinement")
@@ -516,8 +544,8 @@ def refine_contaminated_bins_with_embeddings(
                         refined_clusters_df,
                         fragments_dict,
                         args,
-                        target_coverage_threshold=0.55,
-                        identity_threshold=0.35,
+                        target_coverage_threshold=0.45,
+                        identity_threshold=0.30,
                         use_header_cache=True
                     )
                     logger.debug(f"Successfully used miniprot duplication check for {bin_id}")
@@ -531,34 +559,80 @@ def refine_contaminated_bins_with_embeddings(
             # Extract duplication results for refined sub-bins and add to duplication_results dictionary
             # This ensures they're available for subsequent refinement rounds
             if not duplication_check_failed and 'has_duplicated_core_genes' in refined_clusters_df.columns:
+                logger.debug(f"Extracting duplication data from {len(refined_clusters_df['cluster'].unique())} refined sub-bins of {bin_id}")
+                logger.debug(f"DataFrame columns: {refined_clusters_df.columns.tolist()}")
+
                 for refined_bin_id in refined_clusters_df['cluster'].unique():
                     bin_data = refined_clusters_df[refined_clusters_df['cluster'] == refined_bin_id].iloc[0]
-                    has_dups = bin_data.get('has_duplicated_core_genes', False)
-                    dup_count = bin_data.get('duplicated_core_genes_count', 0)
-                    total_genes = bin_data.get('total_core_genes_found', 0)
-                    
+
+                    # Log RAW values (use .get() for logging only to avoid KeyError)
+                    raw_has_dups = bin_data.get('has_duplicated_core_genes', 'MISSING')
+                    raw_dup_count = bin_data.get('duplicated_core_genes_count', 'MISSING')
+                    raw_total_genes = bin_data.get('total_core_genes_found', 'MISSING')
+                    logger.debug(f"RAW {refined_bin_id}: has_dups={raw_has_dups}, dup_count={raw_dup_count}, total={raw_total_genes}")
+
+                    # Use bracket notation for pandas Series, not .get()
+                    has_dups = bin_data['has_duplicated_core_genes'] if 'has_duplicated_core_genes' in bin_data.index else False
+                    dup_count = bin_data['duplicated_core_genes_count'] if 'duplicated_core_genes_count' in bin_data.index else 0
+                    total_genes = bin_data['total_core_genes_found'] if 'total_core_genes_found' in bin_data.index else 0
+
+                    # Handle NaN values explicitly to prevent extraction failures
+                    if pd.isna(dup_count):
+                        logger.debug(f"{refined_bin_id}: dup_count was NaN, converting to 0")
+                        dup_count = 0
+                    if pd.isna(total_genes):
+                        logger.debug(f"{refined_bin_id}: total_genes was NaN, converting to 0")
+                        total_genes = 0
+                    if pd.isna(has_dups):
+                        logger.debug(f"{refined_bin_id}: has_dups was NaN, converting to False")
+                        has_dups = False
+
+                    # Ensure consistency: if has_dups is True, dup_count should be > 0
+                    if has_dups and dup_count == 0:
+                        logger.warning(
+                            f"INCONSISTENCY for {refined_bin_id}: "
+                            f"has_duplicated_core_genes={has_dups} (type {type(has_dups).__name__}) "
+                            f"but duplicated_core_genes_count={dup_count} (type {type(dup_count).__name__}). "
+                            f"Setting count to 1."
+                        )
+                        dup_count = 1  # Minimal contamination assumption
+
                     # Create fake duplicated_genes dict with count matching dup_count
+                    # Convert to int first (handles numpy types from pandas DataFrame)
                     fake_duplicated_genes = {}
-                    if isinstance(dup_count, (int, float)) and dup_count > 0:
-                        for i in range(int(dup_count)):
-                            fake_duplicated_genes[f"gene_{i}"] = 2  # Fake gene with 2 copies
-                    
+                    try:
+                        dup_count_int = int(dup_count)
+                        if dup_count_int > 0:
+                            for i in range(dup_count_int):
+                                fake_duplicated_genes[f"gene_{i}"] = 2  # Fake gene with 2 copies
+                    except (ValueError, TypeError):
+                        logger.debug(f"{refined_bin_id}: Could not convert dup_count={dup_count} (type={type(dup_count)}) to int")
+
                     # Add to duplication_results for next refinement round
                     duplication_results[refined_bin_id] = {
                         "has_duplications": bool(has_dups),
                         "duplicated_genes": fake_duplicated_genes,
                         "total_genes_found": int(total_genes) if total_genes else 0
                     }
+
+                    # Log ALL bins with what was stored
+                    logger.debug(
+                        f"Stored {refined_bin_id}: has_duplications={bool(has_dups)}, "
+                        f"duplicated_genes={len(fake_duplicated_genes)}, total_genes={int(total_genes)}"
+                    )
                 
-                # Save updated duplication results back to file for next refinement round
-                try:
-                    with open(results_path, "w") as f:
-                        json.dump(duplication_results, f, indent=2)
-                    logger.debug(f"Updated duplication results file with {len(refined_clusters_df['cluster'].unique())} refined sub-bins from {bin_id}")
-                except Exception as e:
-                    logger.warning(f"Failed to save updated duplication results: {e}")
-                    
-                logger.debug(f"Added duplication results for {len(refined_clusters_df['cluster'].unique())} refined sub-bins from {bin_id}")
+                # Update in-memory duplication results for next refinement round
+                args._duplication_results = duplication_results
+                logger.debug(f"Updated in-memory duplication results with {len(refined_clusters_df['cluster'].unique())} refined sub-bins from {bin_id}")
+
+                # Save updated duplication results back to file if keeping intermediate files
+                if getattr(args, "keep_intermediate", False):
+                    try:
+                        with open(results_path, "w") as f:
+                            json.dump(duplication_results, f, indent=2)
+                        logger.debug(f"Saved updated duplication results file with {len(refined_clusters_df['cluster'].unique())} refined sub-bins from {bin_id}")
+                    except Exception as e:
+                        logger.warning(f"Failed to save updated duplication results: {e}")
             
             # Count successful sub-bins
             sub_bins = refined_clusters_df["cluster"].nunique()
@@ -626,22 +700,83 @@ def refine_contaminated_bins_with_embeddings(
         logger.info(
             f"Checking for contaminated bins requiring round {refinement_round+1} refinement..."
         )
-        
+
         # Check for contaminated bins in the current result
+        # Apply same min_duplications filter to avoid false positives
+        # Also exclude bins that already failed refinement (refinement_failed == True)
         still_contaminated_bins = []
+
+        # Log duplication_results contents at start of round 2+ detection
+        logger.debug(f"Round {refinement_round+1} detection: duplication_results has {len(duplication_results)} bins")
+        if duplication_results:
+            contaminated_in_results = sum(1 for d in duplication_results.values() if len(d.get('duplicated_genes', {})) > 0)
+            logger.debug(f"  - {contaminated_in_results} bins in duplication_results have >0 duplicated genes")
+
         if "has_duplicated_core_genes" in final_clusters_df.columns:
-            still_contaminated_clusters = final_clusters_df[
-                final_clusters_df["has_duplicated_core_genes"] == True
-            ]["cluster"].unique()
-            still_contaminated_bins = [
-                c for c in still_contaminated_clusters
-            ]
-        
+            # Filter contaminated bins, excluding those that already failed refinement in previous rounds
+            contaminated_mask = final_clusters_df["has_duplicated_core_genes"] == True
+
+            # Also exclude bins with refinement_failed=True if the column exists
+            if "refinement_failed" in final_clusters_df.columns:
+                # Use fillna(False) to handle NaN values - only exclude if explicitly True
+                not_failed_mask = final_clusters_df["refinement_failed"].fillna(False) == False
+                still_contaminated_clusters = final_clusters_df[contaminated_mask & not_failed_mask]["cluster"].unique()
+
+                # Count how many were excluded
+                all_contaminated = final_clusters_df[contaminated_mask]["cluster"].nunique()
+                failed_contaminated = all_contaminated - len(still_contaminated_clusters)
+                logger.debug(f"Found {all_contaminated} contaminated bins, excluding {failed_contaminated} that failed refinement previously")
+            else:
+                still_contaminated_clusters = final_clusters_df[contaminated_mask]["cluster"].unique()
+                logger.debug(f"Found {len(still_contaminated_clusters)} bins flagged as contaminated in final_clusters_df")
+
+            # Filter by minimum duplications threshold
+            for bin_id in still_contaminated_clusters:
+
+                if bin_id in duplication_results:
+                    dup_data = duplication_results[bin_id]
+                    duplicated_count = len(dup_data.get("duplicated_genes", {}))
+                    has_dups_flag = dup_data.get("has_duplications", False)
+                    logger.debug(
+                        f"Checking {bin_id} in duplication_results: has_duplications={has_dups_flag}, "
+                        f"duplicated_genes count={duplicated_count}, total_genes={dup_data.get('total_genes_found', 0)}"
+                    )
+                    if duplicated_count >= min_duplications:
+                        still_contaminated_bins.append(bin_id)
+                        logger.debug(f"✓ Selected {bin_id} for refinement: {duplicated_count} duplicated genes (>= {min_duplications})")
+                    else:
+                        logger.debug(f"✗ Skipping {bin_id}: only {duplicated_count} duplicated genes (< {min_duplications})")
+                else:
+                    # Get count from clusters_df (fallback when not in duplication_results)
+                    logger.debug(f"{bin_id} NOT in duplication_results, checking clusters_df")
+                    if not bin_rows.empty:
+                        bin_data = bin_rows.iloc[0]
+                        dup_count = bin_data["duplicated_core_genes_count"] if "duplicated_core_genes_count" in bin_data.index else 0
+                        # Handle NaN values and convert to int (handles numpy types)
+                        if pd.isna(dup_count):
+                            dup_count = 0
+                        try:
+                            dup_count_int = int(dup_count)
+                        except (ValueError, TypeError):
+                            dup_count_int = 0
+
+                        logger.debug(f"{bin_id} from clusters_df: duplicated_core_genes_count={dup_count_int}")
+                        if dup_count_int >= min_duplications:
+                            still_contaminated_bins.append(bin_id)
+                            logger.debug(f"✓ Selected {bin_id} for refinement: {dup_count_int} duplicated genes (from clusters_df)")
+                        else:
+                            logger.debug(f"✗ Skipping {bin_id}: only {dup_count_int} duplicated genes (< {min_duplications})")
+
+        # Summary of round 2+ detection
+        logger.debug(f"Round {refinement_round+1} detection complete: {len(still_contaminated_bins)} bins selected for refinement")
+        if still_contaminated_bins:
+            logger.debug(f"  Selected bins: {', '.join(still_contaminated_bins)}")
+
         if still_contaminated_bins:
             logger.info(
                 f"Found {len(still_contaminated_bins)} bins still needing refinement, starting round {refinement_round+1}"
             )
-            
+
             # Recursively refine the still-contaminated bins
             final_clusters_df, fragments_dict, additional_refinement_summary = (
                 refine_contaminated_bins_with_embeddings(
@@ -653,12 +788,20 @@ def refine_contaminated_bins_with_embeddings(
                     max_refinement_rounds=max_refinement_rounds,
                 )
             )
-            
+
             # Merge refinement summaries
             refinement_summary.update(additional_refinement_summary)
         else:
             logger.info("No more contaminated bins found, refinement complete!")
-    
+
+            # Log summary of bins that still have contamination but couldn't be refined
+            if "refinement_failed" in final_clusters_df.columns:
+                failed_bins = final_clusters_df[
+                    final_clusters_df["refinement_failed"] == True
+                ]["cluster"].unique()
+                if len(failed_bins) > 0:
+                    logger.info(f"{len(failed_bins)} bins remain with contamination but could not be refined: {', '.join(failed_bins)}")
+
     return final_clusters_df, fragments_dict, refinement_summary
 
 
@@ -667,7 +810,7 @@ def refine_contaminated_bins_with_embeddings(
 
 
 def refine_contaminated_bins(
-    clusters_df, fragments_dict, args, refinement_round=1, max_refinement_rounds=2
+    clusters_df, fragments_dict, args, refinement_round=1, max_refinement_rounds=16
 ):
     """
     Refine bins that have duplicated core genes using existing embeddings with k-NN graph
