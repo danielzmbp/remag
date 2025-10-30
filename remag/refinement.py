@@ -719,7 +719,7 @@ def refine_contaminated_bins_with_embeddings(
             # Also exclude bins with refinement_failed=True if the column exists
             if "refinement_failed" in final_clusters_df.columns:
                 # Use fillna(False) to handle NaN values - only exclude if explicitly True
-                not_failed_mask = final_clusters_df["refinement_failed"].fillna(False) == False
+                not_failed_mask = final_clusters_df["refinement_failed"].fillna(False).infer_objects(copy=False) == False
                 still_contaminated_clusters = final_clusters_df[contaminated_mask & not_failed_mask]["cluster"].unique()
 
                 # Count how many were excluded
