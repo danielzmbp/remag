@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] - 2025-10-30
+
+### Added
+- Version number now included in `params.json` output for reproducibility tracking
+
+### Changed
+- **BREAKING**: Removed `transformers` library dependency in favor of standalone tokenizer
+  - Significantly reduces installation size and dependency conflicts
+  - Standalone character tokenizer with zero external dependencies
+- Quality-aware resolution selection using SCG - 5*dups metric instead of pure contamination minimization
+  - Balances completeness and contamination more effectively
+  - Results in higher-quality bins overall
+- Expanded refinement resolution testing from 14 to 32 fine-grained steps (0.07-3.0)
+  - Improved precision in finding optimal split points for contaminated bins
+  - Finer granularity around critical thresholds
+- Reduced logging verbosity by converting many info/warning messages to debug level
+  - Cleaner console output during normal operation
+  - Use `--verbose` flag to see detailed debug information
+- Lowered single-copy gene retention threshold from 80% to 75% in refinement validation
+
+### Fixed
+- Fragment generation now uses cryptographic hashing for deterministic, reproducible results
+  - Replaced Python's randomized `hash()` with `hashlib.sha256()`
+  - Ensures consistent results across different PYTHONHASHSEED values
+- Suppressed pandas FutureWarning for fillna downcasting using `.infer_objects(copy=False)`
+- Removed obsolete "Multiple bins detected" log message (redundant with adaptive resolution)
+
+### Performance
+- Deterministic fragment generation improves reproducibility across runs
+- Quality-aware selection produces better bins with improved completeness/contamination balance
+
+### Tuning
+- Base learning rate: 0.005 → 0.0025 for more stable training
+- Miniprot target coverage threshold: 0.50 → 0.45 for better gene detection sensitivity
+- Max refinement rounds: 2 → 16 for more thorough bin refinement
+
 ## [0.3.0] - 2025-10-21
 
 ### Changed
