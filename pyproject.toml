@@ -46,8 +46,10 @@ dependencies = [
     "leidenalg>=0.9.0",
     "igraph>=0.10.0",
     "einops>=0.6.0",
-    "transformers>=4.30.0",
 ]
+
+# External bioconda dependencies (install separately):
+# - miniprot: Required for core gene analysis
 
 [project.optional-dependencies]
 # GPU acceleration packages must be installed separately via conda
