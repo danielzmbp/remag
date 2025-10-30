@@ -8,7 +8,6 @@ sequence detection.
 
 import os
 import random
-from pathlib import Path
 from typing import List, Dict, Tuple
 from itertools import islice
 
@@ -17,9 +16,9 @@ import numpy as np
 from loguru import logger
 
 try:
-    from .hyenadna_model import CharacterTokenizer
+    from .standalone_tokenizer import StandaloneCharacterTokenizer as CharacterTokenizer
 except ImportError:
-    from hyenadna_model import CharacterTokenizer
+    from standalone_tokenizer import StandaloneCharacterTokenizer as CharacterTokenizer
 
 
 def sliding_window(sequence: str, window_size: int = 1024, stride: int = 512):
