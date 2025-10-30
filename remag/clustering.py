@@ -812,8 +812,6 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
             clusters_df = contig_clusters_df
         else:
             logger.info(f"Reclustering did not improve results ({n_recluster_clusters} clusters). Keeping original single bin.")
-    else:
-        logger.info(f"Multiple bins detected ({n_clusters}). No reclustering needed.")
 
     # Filter out noise contigs for final bins.csv
     final_bins_df = contig_clusters_df[contig_clusters_df["cluster"] != "noise"].copy()
