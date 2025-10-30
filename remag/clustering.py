@@ -42,25 +42,6 @@ class ClusteringManager:
             k=getattr(args, 'leiden_k_neighbors', 15),
             similarity_threshold=getattr(args, 'leiden_similarity_threshold', 0.1)
         )
-    
-    def load_eukaryotic_scores(self):
-        """Load eukaryotic classification scores."""
-        eukaryotic_scores = {}
-        from .features import get_classification_results_path
-        
-        classification_results_path = get_classification_results_path(self.args.fasta, self.args.output)
-        
-        if os.path.exists(classification_results_path):
-            try:
-                classification_df = pd.read_csv(classification_results_path, sep='\t')
-                eukaryotic_scores = dict(zip(classification_df['contig_id'], classification_df['eukaryote_prob']))
-                logger.info(f"Loaded eukaryotic scores for {len(eukaryotic_scores)} contigs")
-            except Exception as e:
-                logger.warning(f"Could not load classification results: {e}")
-        else:
-            logger.warning(f"Eukaryotic classification file not found: {classification_results_path}")
-        
-        return eukaryotic_scores
 
 
 def _construct_knn_graph(embeddings, k=15, similarity_threshold=0.1, n_jobs=1, args=None):
@@ -704,22 +685,15 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
 
     # Initialize clustering manager
     clustering_manager = ClusteringManager(args)
-    
-    # Load eukaryotic classification scores for logging purposes
-    eukaryotic_scores = clustering_manager.load_eukaryotic_scores()
 
     # Embeddings are already L2 normalized when saved to CSV
     logger.debug("Using pre-normalized embeddings for clustering...")
     norm_data = embeddings_df.values
     contig_names = list(embeddings_df.index)
-    
+
     # Log essential data properties
     logger.info(f"Clustering {len(contig_names)} contigs with {embeddings_df.shape[1]}D embeddings")
-    if eukaryotic_scores:
-        scores_array = np.array(list(eukaryotic_scores.values()))
-        high_conf_count = sum(1 for s in scores_array if s > 0.95)
-        logger.info(f"Eukaryotic classification: {len(eukaryotic_scores)} scored, {high_conf_count} high-confidence (>0.95)")
-    
+
     # Use Leiden clustering directly
     logger.info("Using Leiden clustering")
     leiden_resolution = getattr(args, 'leiden_resolution', 1.0)
