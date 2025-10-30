@@ -160,11 +160,11 @@ def validate_coverage_options(ctx, param, value):
             flattened_files.extend(item)
         else:
             flattened_files.append(item)
-    
+
     # Categorize files by extension
     bam_cram_files = []
     tsv_files = []
-    
+
     for file_path in flattened_files:
         ext = file_path.lower().split('.')[-1]
         if ext in ['bam', 'cram']:
@@ -173,11 +173,11 @@ def validate_coverage_options(ctx, param, value):
             tsv_files.append(file_path)
         else:
             raise click.BadParameter(f"Unsupported coverage file format: {file_path}. Supported formats: BAM, CRAM, TSV")
-    
+
     # Don't allow mixing BAM/CRAM with TSV files
     if bam_cram_files and tsv_files:
         raise click.BadParameter("Cannot mix BAM/CRAM files with TSV files. Use either alignment files or pre-computed coverage files, not both.")
-    
+
     return flattened_files
 
 
@@ -236,7 +236,7 @@ def validate_coverage_options(ctx, param, value):
 @click.option(
     "--base-learning-rate",
     type=float,
-    default=0.005,
+    default=0.0025,
     show_default=True,
     help="Base learning rate for contrastive learning training (scaled by batch size).",
 )
@@ -295,21 +295,21 @@ def validate_coverage_options(ctx, param, value):
 @click.option(
     "--max-refinement-rounds",
     type=int,
-    default=2,
+    default=16,
     show_default=True,
     help="Maximum number of iterative bin refinement rounds.",
 )
 @click.option(
     "--min-duplications-for-refinement",
     type=int,
-    default=2,
+    default=1,
     show_default=True,
     help="Minimum number of duplicated core genes required to trigger refinement.",
 )
 @click.option(
     "--num-augmentations",
     type=int,
-    default=8,
+    default=4,
     show_default=True,
     help="Number of random fragments per contig for data augmentation.",
 )
@@ -460,7 +460,7 @@ def main_cli(
     # Separate coverage files by type
     bam_cram_files = []
     tsv_files = []
-    
+
     if coverage:
         for file_path in coverage:
             ext = file_path.lower().split('.')[-1]
@@ -468,7 +468,7 @@ def main_cli(
                 bam_cram_files.append(file_path)
             elif ext in ['tsv', 'txt']:
                 tsv_files.append(file_path)
-    
+
     args = argparse.Namespace(
         fasta=fasta_path,
         bam=bam_cram_files if bam_cram_files else None,

@@ -12,7 +12,7 @@ import subprocess
 from tqdm import tqdm
 from loguru import logger
 
-from .utils import extract_base_contig_name, ContigHeaderMapper, initialize_duplication_columns
+from .utils import ContigHeaderMapper, initialize_duplication_columns
 
 
 def check_miniprot_available():
@@ -20,7 +20,7 @@ def check_miniprot_available():
     return shutil.which("miniprot") is not None
 
 
-def estimate_organisms_from_all_contigs(fragments_dict, args, target_coverage_threshold=0.50, identity_threshold=0.30):
+def estimate_organisms_from_all_contigs(fragments_dict, args, target_coverage_threshold=0.45, identity_threshold=0.30):
     """
     Run miniprot on all contigs to estimate the number of organisms based on core gene duplications.
 
@@ -30,8 +30,8 @@ def estimate_organisms_from_all_contigs(fragments_dict, args, target_coverage_th
     Args:
         fragments_dict: Dictionary mapping headers to sequences
         args: Arguments object containing output directory, cores, etc.
-        target_coverage_threshold: Minimum target coverage for alignments (default: 0.50, lowered for better sensitivity)
-        identity_threshold: Minimum identity for alignments (default: 0.30, lowered for better sensitivity)
+        target_coverage_threshold: Minimum target coverage for alignments (default: 0.45)
+        identity_threshold: Minimum identity for alignments (default: 0.30)
 
     Returns:
         dict: {gene_family: occurrence_count} for all core genes found
@@ -253,19 +253,19 @@ def get_gene_mappings_cache_path(args):
 
 
 def parse_and_cache_paf_files(temp_dir, filtered_clusters, args,
-                            target_coverage_threshold=0.50, identity_threshold=0.30):
+                            target_coverage_threshold=0.45, identity_threshold=0.30):
     """
     Parse PAF files from miniprot output and cache gene-to-contig mappings.
-    
+
     This function extracts all gene-to-contig mappings from PAF files and stores
     them in a format that can be reused during refinement without re-running miniprot.
-    
+
     Args:
         temp_dir: Directory containing PAF files
         filtered_clusters: Dictionary of cluster_id -> contig_headers
         args: Arguments object
-        target_coverage_threshold: Minimum target coverage for alignments
-        identity_threshold: Minimum identity for alignments
+        target_coverage_threshold: Minimum target coverage for alignments (default: 0.45)
+        identity_threshold: Minimum identity for alignments (default: 0.30)
     
     Returns:
         dict: {contig_name: {gene_family: {score, coverage, identity}}}
@@ -436,11 +436,14 @@ def check_core_gene_duplications_from_cache(clusters_df, gene_mappings_cache, ar
         except Exception as e:
             logger.warning(f"Failed to save duplication results: {e}")
 
+    # Store duplication results in args for refinement (consistent with check_core_gene_duplications)
+    args._duplication_results = duplication_results
+
     return clusters_df
 
 
 def check_core_gene_duplications(clusters_df, fragments_dict, args,
-                                target_coverage_threshold=0.50,
+                                target_coverage_threshold=0.45,
                                 identity_threshold=0.30,
                                 use_header_cache=False):
     """
@@ -453,8 +456,8 @@ def check_core_gene_duplications(clusters_df, fragments_dict, args,
         clusters_df: DataFrame with cluster assignments
         fragments_dict: Dictionary mapping headers to sequences
         args: Arguments object containing output directory, cores, etc.
-        target_coverage_threshold: Minimum target coverage (default: 0.50, lowered for better sensitivity)
-        identity_threshold: Minimum identity (default: 0.30, lowered for better sensitivity)
+        target_coverage_threshold: Minimum target coverage (default: 0.45)
+        identity_threshold: Minimum identity (default: 0.30)
         use_header_cache: Whether to use function-level caching for header lookup
     
     Returns:
