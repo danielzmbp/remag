@@ -550,8 +550,9 @@ class SequenceDataset(Dataset):
             features_df: DataFrame with k-mer and coverage features
             max_positive_pairs: Maximum number of positive pairs to generate
         """
-        self.features_df = features_df
-        self.fragment_headers = self.features_df.index.tolist()
+        self.fragment_headers = features_df.index.tolist()
+        # Cache numeric features as contiguous float32 array to avoid per-sample conversions
+        self._features = features_df.to_numpy(dtype=np.float32, copy=True)
 
         # Group fragment indices by base contig name
         self.contig_to_fragment_indices = self._group_indices_by_base_contig()
@@ -626,8 +627,8 @@ class SequenceDataset(Dataset):
 
     def __getitem__(self, idx):
         idx1, idx2 = self.training_pairs[idx]
-        tensor1 = torch.tensor(self.features_df.iloc[idx1].values, dtype=torch.float32)
-        tensor2 = torch.tensor(self.features_df.iloc[idx2].values, dtype=torch.float32)
+        tensor1 = torch.from_numpy(self._features[idx1])
+        tensor2 = torch.from_numpy(self._features[idx2])
         base_id = torch.tensor(self.index_to_base_id[idx1], dtype=torch.long)
 
         return tensor1, tensor2, base_id
