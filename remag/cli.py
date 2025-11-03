@@ -79,7 +79,7 @@ click.rich_click.OPTION_GROUPS = {
         },
         {
             "name": "Filtering & Processing",
-            "options": ["--min-contig-length", "--min-bin-size", "--coverage-batch-size", "--hyenadna-batch-size", "--skip-bacterial-filter", "--save-filtered-contigs", "--skip-refinement", "--max-refinement-rounds", "--min-duplications-for-refinement", "--skip-chimera-detection"],
+            "options": ["--min-contig-length", "--min-bin-size", "--coverage-batch-size", "--hyenadna-batch-size", "--skip-bacterial-filter", "--save-filtered-contigs", "--skip-refinement", "--save-bins-before-refinement", "--max-refinement-rounds", "--min-duplications-for-refinement", "--skip-chimera-detection"],
         },
     ]
 }
@@ -293,6 +293,11 @@ def validate_coverage_options(ctx, param, value):
     help="Skip post-clustering bin refinement and optimization.",
 )
 @click.option(
+    "--save-bins-before-refinement",
+    is_flag=True,
+    help="Save bins (bins.csv and FASTA files) before refinement step, with '_before_refinement' suffix.",
+)
+@click.option(
     "--max-refinement-rounds",
     type=int,
     default=16,
@@ -386,6 +391,7 @@ def main_cli(
     skip_bacterial_filter,
     save_filtered_contigs,
     skip_refinement,
+    save_bins_before_refinement,
     max_refinement_rounds,
     min_duplications_for_refinement,
     num_augmentations,
@@ -487,6 +493,7 @@ def main_cli(
         skip_bacterial_filter=skip_bacterial_filter,
         save_filtered_contigs=save_filtered_contigs,
         skip_refinement=skip_refinement,
+        save_bins_before_refinement=save_bins_before_refinement,
         max_refinement_rounds=max_refinement_rounds,
         min_duplications_for_refinement=min_duplications_for_refinement,
         num_augmentations=num_augmentations,
