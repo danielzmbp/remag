@@ -9,6 +9,7 @@ import pandas as pd
 import pysam
 import os
 import random
+from functools import lru_cache
 from collections import OrderedDict
 from multiprocessing import Pool
 from typing import Dict, List, Tuple, Optional, Set
@@ -19,6 +20,7 @@ from sklearn.preprocessing import MinMaxScaler
 from .utils import fasta_iter, FragmentDict, CoverageDict
 
 
+@lru_cache(maxsize=None)
 def generate_feature_mapping(kmer_len):
     BASE_COMPLEMENT = {"A": "T", "T": "A", "G": "C", "C": "G"}
     kmer_hash = {}
