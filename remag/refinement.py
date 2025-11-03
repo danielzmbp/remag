@@ -8,9 +8,241 @@ import pandas as pd
 import numpy as np
 from tqdm import tqdm
 from loguru import logger
+from sklearn.cluster import KMeans
 
 from .miniprot_utils import check_core_gene_duplications, check_core_gene_duplications_from_cache, get_core_gene_duplication_results_path, get_gene_mappings_cache_path
 from .clustering import _construct_knn_graph, _leiden_clustering_on_graph
+
+
+def estimate_organisms_from_scg(bin_contigs, gene_mappings_cache):
+    """
+    Estimate the number of organisms in a bin based on single-copy gene (SCG) duplications.
+
+    Args:
+        bin_contigs: List of contig names in the bin
+        gene_mappings_cache: Cached gene-to-contig mappings from miniprot
+
+    Returns:
+        int: Estimated number of organisms (minimum 2)
+    """
+    if gene_mappings_cache is None:
+        logger.warning("No gene mappings available, defaulting to 2 organisms")
+        return 2
+
+    # Count occurrences of each gene family across contigs in this bin
+    gene_counts = {}
+    for contig_name in bin_contigs:
+        if contig_name in gene_mappings_cache:
+            for gene_family in gene_mappings_cache[contig_name].keys():
+                gene_counts[gene_family] = gene_counts.get(gene_family, 0) + 1
+
+    if not gene_counts:
+        logger.warning("No genes found in bin, defaulting to 2 organisms")
+        return 2
+
+    # Estimate organisms as the maximum duplication count across all genes
+    # This represents the worst-case contamination
+    max_duplication = max(gene_counts.values())
+    estimated_organisms = max(2, max_duplication)  # Minimum 2 for splitting
+
+    logger.debug(f"SCG analysis: max duplication={max_duplication}, estimated organisms={estimated_organisms}")
+
+    return estimated_organisms
+
+
+def refine_bin_with_kmeans_clustering(
+    bin_contigs, embeddings_df, fragments_dict, args, bin_id, duplication_results
+):
+    """
+    Refine a single contaminated bin using SCG-guided KMeans clustering.
+
+    This approach:
+    1. Estimates number of organisms from SCG duplication counts
+    2. Tests multiple cluster numbers around that estimate (±50%)
+    3. Evaluates each clustering by core gene duplications
+    4. Selects the clustering that minimizes duplications while keeping completeness high
+
+    Args:
+        bin_contigs: List of contig names in this bin
+        embeddings_df: DataFrame with embeddings for all contigs
+        fragments_dict: Dictionary containing fragment sequences
+        args: Command line arguments
+        bin_id: Original bin ID being refined
+        duplication_results: Results from core gene duplication analysis
+
+    Returns:
+        DataFrame with cluster assignments or None if refinement failed
+    """
+    logger.info(f"Refining bin {bin_id} using SCG-guided KMeans clustering...")
+
+    # Load gene mappings cache for SCG-based estimation and validation
+    gene_mappings_cache = getattr(args, '_gene_mappings_cache', None)
+    if gene_mappings_cache is None:
+        cache_path = get_gene_mappings_cache_path(args)
+        if os.path.exists(cache_path):
+            try:
+                with open(cache_path, "r") as f:
+                    gene_mappings_cache = json.load(f)
+                logger.debug(f"Loaded gene mappings cache from {cache_path}")
+            except Exception as e:
+                logger.warning(f"Failed to load gene mappings cache: {e}")
+                gene_mappings_cache = None
+
+    # Extract embeddings for contigs in this bin
+    bin_embedding_names = bin_contigs
+    available_embeddings = [name for name in bin_embedding_names if name in embeddings_df.index]
+
+    if len(available_embeddings) < 2:
+        logger.warning(f"Bin {bin_id} has insufficient contigs with embeddings ({len(available_embeddings)})")
+        return None
+
+    bin_embeddings = embeddings_df.loc[available_embeddings]
+    logger.info(f"Using embeddings for {len(bin_embeddings)} contigs in bin {bin_id}")
+
+    # Estimate number of organisms from SCG duplications
+    estimated_organisms = estimate_organisms_from_scg(bin_contigs, gene_mappings_cache)
+    logger.info(f"Bin {bin_id} estimated to contain {estimated_organisms} organisms based on SCG analysis")
+
+    # Calculate original bin quality before refinement (for comparison)
+    original_bin_quality = None
+    if gene_mappings_cache is not None:
+        try:
+            # Create a temporary DataFrame with all contigs in a single cluster
+            temp_clusters_df = pd.DataFrame({
+                'contig': bin_contigs,
+                'cluster': [bin_id] * len(bin_contigs)
+            })
+
+            # Check duplications for the original bin
+            temp_clusters_df = check_core_gene_duplications_from_cache(
+                temp_clusters_df, gene_mappings_cache, args
+            )
+
+            # Extract metrics
+            original_scg = int(temp_clusters_df['single_copy_genes_count'].iloc[0])
+            original_dups = int(temp_clusters_df['duplicated_core_genes_count'].iloc[0])
+            original_bin_quality = original_scg - (5 * original_dups)
+
+            logger.info(f"Bin {bin_id} original quality: {original_bin_quality:.1f} (SCG={original_scg}, dups={original_dups})")
+        except Exception as e:
+            logger.warning(f"Failed to calculate original bin quality: {e}")
+            original_bin_quality = None
+
+    # Generate cluster number variations with balanced exploration
+    # Test conservative to aggressive splitting: 0.5x to 3.0x of estimated organisms
+    # This provides symmetric exploration around the SCG estimate
+    test_cluster_counts = []
+    for multiplier in [0.5, 0.75, 1.0, 1.5, 2.0, 2.5, 3.0]:
+        n_clusters = max(2, int(estimated_organisms * multiplier))
+        if n_clusters not in test_cluster_counts:
+            test_cluster_counts.append(n_clusters)
+
+    test_cluster_counts.sort()
+    logger.info(f"Testing {len(test_cluster_counts)} cluster counts: {test_cluster_counts}")
+
+    # Track successful solutions
+    successful_attempts = []
+
+    # Test each cluster count
+    for n_clusters in test_cluster_counts:
+        logger.debug(f"Bin {bin_id}: Testing k={n_clusters} clusters...")
+
+        # Run KMeans
+        kmeans = KMeans(
+            n_clusters=n_clusters,
+            random_state=42,
+            n_init=10,
+            max_iter=300,
+            algorithm='lloyd'  # Standard k-means algorithm
+        )
+
+        cluster_labels = kmeans.fit_predict(bin_embeddings.values)
+
+        # Create cluster assignments DataFrame
+        formatted_labels = [f"{bin_id}_{label}" for label in cluster_labels]
+
+        refined_clusters_df = pd.DataFrame({
+            'contig': available_embeddings,
+            'cluster': formatted_labels,
+            'original_bin': bin_id
+        })
+
+        # Check duplications using cached mappings
+        if gene_mappings_cache is not None:
+            try:
+                refined_clusters_df = check_core_gene_duplications_from_cache(
+                    refined_clusters_df, gene_mappings_cache, args
+                )
+            except Exception as e:
+                logger.warning(f"Failed to check duplications for k={n_clusters}: {e}")
+                continue
+        else:
+            logger.warning("No gene mappings cache, skipping duplication check")
+            continue
+
+        # Calculate metrics for this clustering
+        bin_scg = refined_clusters_df.groupby('cluster')['single_copy_genes_count'].first()
+        bin_dups = refined_clusters_df.groupby('cluster')['duplicated_core_genes_count'].first()
+
+        # Calculate per-bin quality scores (completeness - 5*contamination)
+        bin_quality_scores = bin_scg - (5 * bin_dups)
+
+        total_duplications = int(bin_dups.sum())
+        max_completeness = int(bin_scg.max()) if len(bin_scg) > 0 else 0
+        p90_completeness = int(np.percentile(bin_scg, 90)) if len(bin_scg) > 0 else 0
+        p90_quality = float(np.percentile(bin_quality_scores, 90)) if len(bin_quality_scores) > 0 else 0.0
+
+        # Store this attempt
+        successful_attempts.append({
+            'n_clusters': n_clusters,
+            'clusters_df': refined_clusters_df,
+            'total_duplications': total_duplications,
+            'max_completeness': max_completeness,
+            'p90_completeness': p90_completeness,
+            'p90_quality': p90_quality,
+            'inertia': kmeans.inertia_
+        })
+
+        logger.debug(f"Bin {bin_id} k={n_clusters}: p90 quality={p90_quality:.1f}, {total_duplications} total dups, p90 completeness={p90_completeness}, max completeness={max_completeness}")
+
+    if not successful_attempts:
+        logger.warning(f"Bin {bin_id} failed all clustering attempts")
+        return None
+
+    # Select best clustering: maximize p90 quality (completeness - 5*contamination) to avoid over-fragmentation
+    best_attempt = max(successful_attempts, key=lambda x: (
+        x['p90_quality'],                   # Primary: maximize p90 quality (completeness - 5*contamination)
+        x['p90_completeness'],              # Secondary: maximize p90 completeness
+        x['max_completeness']               # Tertiary: maximize max completeness
+    ))
+
+    logger.info(f"Bin {bin_id} refinement selected: k={best_attempt['n_clusters']} clusters, "
+                f"p90 quality={best_attempt['p90_quality']:.1f}, "
+                f"{best_attempt['total_duplications']} total duplications, "
+                f"p90 completeness={best_attempt['p90_completeness']} SCGs, "
+                f"max completeness={best_attempt['max_completeness']} SCGs")
+
+    # Compare to original bin quality - only refine if it improves quality
+    if original_bin_quality is not None:
+        if best_attempt['p90_quality'] <= original_bin_quality:
+            logger.info(f"Bin {bin_id} refinement rejected: p90 quality {best_attempt['p90_quality']:.1f} "
+                       f"does not improve original quality {original_bin_quality:.1f}")
+            return None
+        else:
+            logger.info(f"Bin {bin_id} refinement accepted: p90 quality improved from "
+                       f"{original_bin_quality:.1f} to {best_attempt['p90_quality']:.1f}")
+
+    refined_clusters_df = best_attempt['clusters_df']
+    n_refined_clusters = refined_clusters_df['cluster'].nunique()
+
+    # Check if refinement actually helped
+    if n_refined_clusters < 2:
+        logger.warning(f"Bin {bin_id} refinement produced only {n_refined_clusters} cluster(s)")
+        return None
+
+    logger.info(f"Bin {bin_id} successfully refined into {n_refined_clusters} sub-bins")
+
+    return refined_clusters_df
 
 
 def refine_bin_with_leiden_clustering(
@@ -201,12 +433,12 @@ def refine_bin_with_leiden_clustering(
         }
         return 'success', metrics
 
-    # Fixed resolution testing with extended, gradual steps
-    # Start high to handle highly contaminated bins, step down to find most conservative solution
-    # 32 attempts with fine-scale granularity for more precise resolution selection
+    # Balanced resolution testing with 16 values
+    # Equal exploration on both sides: 7 above, 1.0 at center, 8 below
     test_resolution_multipliers = [
-        3.0, 2.75, 2.5, 2.25, 2.0, 1.75, 1.5, 1.35, 1.2, 1.1, 1.0, 0.9, 0.8, 0.7, 0.65, 0.6,
-        0.55, 0.5, 0.45, 0.4, 0.35, 0.3, 0.25, 0.225, 0.2, 0.175, 0.15, 0.125, 0.1, 0.09, 0.08, 0.07
+        3.0, 2.5, 2.0, 1.75, 1.5, 1.25, 1.1,  # 7 above base
+        1.0,                                    # base resolution
+        0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2  # 8 below base
     ]
 
     # Get base parameters (keep k-neighbors and threshold fixed throughout)
@@ -356,22 +588,27 @@ def refine_contaminated_bins_with_embeddings(
     clusters_df, embeddings_df, fragments_dict, args, refinement_round=1, max_refinement_rounds=16
 ):
     """
-    Refine bins that have duplicated core genes using existing embeddings with k-NN graph
-    construction and Leiden clustering. This approach:
+    Refine bins that have duplicated core genes using SCG-guided KMeans clustering.
 
+    This approach:
     1. Identifies bins with duplicated core genes
     2. For each contaminated bin, extracts embeddings of its contigs
-    3. Constructs a k-NN graph and applies Leiden clustering
-    4. Checks for duplications in refined sub-bins
-    5. Iteratively refines still-contaminated sub-bins
+    3. Estimates number of organisms from single-copy gene (SCG) duplications
+    4. Tests multiple cluster counts around the SCG estimate (±50%)
+    5. Applies KMeans clustering with each cluster count
+    6. Selects the clustering that minimizes duplications while keeping completeness high
+    7. Checks for duplications in refined sub-bins
+    8. Iteratively refines still-contaminated sub-bins
 
-    This approach is much more efficient than retraining the entire pipeline as it
-    reuses existing embeddings and applies the same clustering method used in the
-    main pipeline.
+    This approach is efficient as it:
+    - Reuses existing embeddings (no retraining)
+    - Uses SCG counts to guide cluster number selection
+    - Uses standard KMeans algorithm for accurate clustering
+    - Prioritizes decontamination while maintaining genome completeness
 
     Args:
         clusters_df: DataFrame with cluster assignments and duplication flags
-        embeddings_df: DataFrame with embeddings for all contigs  
+        embeddings_df: DataFrame with embeddings for all contigs
         fragments_dict: Dictionary containing fragment sequences
         args: Command line arguments
         refinement_round: Current refinement round (1-indexed)
@@ -465,7 +702,7 @@ def refine_contaminated_bins_with_embeddings(
     logger.info(
         f"REFINEMENT: Starting round {refinement_round} - evaluating {len(contaminated_bins)} contaminated bins (min {min_duplications} duplicated genes)"
     )
-    logger.info("Using existing embeddings with k-NN graph construction and Leiden clustering")
+    logger.info("Using existing embeddings with SCG-guided KMeans clustering")
     
     # duplication_results already loaded above for filtering
     
@@ -490,9 +727,9 @@ def refine_contaminated_bins_with_embeddings(
                 continue
                 
             bin_contigs = bin_contigs_df["contig"].tolist()
-            
-            # Refine this bin using Leiden clustering
-            refined_clusters_df = refine_bin_with_leiden_clustering(
+
+            # Refine this bin using SCG-guided KMeans clustering
+            refined_clusters_df = refine_bin_with_kmeans_clustering(
                 bin_contigs, embeddings_df, fragments_dict, args, bin_id, duplication_results
             )
             
@@ -544,7 +781,7 @@ def refine_contaminated_bins_with_embeddings(
                         refined_clusters_df,
                         fragments_dict,
                         args,
-                        target_coverage_threshold=0.45,
+                        target_coverage_threshold=0.50,
                         identity_threshold=0.30,
                         use_header_cache=True
                     )
@@ -813,9 +1050,9 @@ def refine_contaminated_bins(
     clusters_df, fragments_dict, args, refinement_round=1, max_refinement_rounds=16
 ):
     """
-    Refine bins that have duplicated core genes using existing embeddings with k-NN graph
-    construction and Leiden clustering. This is a wrapper function that loads embeddings
-    and calls the new embedding-based refinement approach.
+    Refine bins that have duplicated core genes using SCG-guided KMeans clustering.
+    This is a wrapper function that loads embeddings and calls the embedding-based
+    refinement approach with automatic cluster number selection based on SCG counts.
 
     Args:
         clusters_df: DataFrame with cluster assignments and duplication flags
