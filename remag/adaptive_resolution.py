@@ -163,14 +163,20 @@ def test_multiple_resolutions(embeddings_df, gene_mappings_cache, args, test_res
     }
 
     if valid_resolutions:
-        # Among valid solutions, maximize p90 quality score (SCG - 5*dups)
-        best_resolution = max(valid_resolutions.keys(), key=lambda r: valid_resolutions[r]['p90_quality_score'])
+        # Among valid solutions, maximize p90 SCG completeness, then max SCG completeness
+        best_resolution = max(valid_resolutions.keys(), key=lambda r: (
+            valid_resolutions[r]['p90_bin_completeness'],
+            valid_resolutions[r]['max_bin_completeness']
+        ))
         best_result = valid_resolutions[best_resolution]
         logger.info(f"Selected from {len(valid_resolutions)}/{len(results)} valid resolutions (p90 SCG ≤ {MAX_REALISTIC_P90})")
     else:
-        # Fallback: if all resolutions exceed threshold, pick one with best quality score
-        logger.warning(f"All {len(results)} resolutions exceed p90 SCG={MAX_REALISTIC_P90} threshold - picking best quality score")
-        best_resolution = max(results.keys(), key=lambda r: results[r]['p90_quality_score'])
+        # Fallback: if all resolutions exceed threshold, pick one with best completeness
+        logger.warning(f"All {len(results)} resolutions exceed p90 SCG={MAX_REALISTIC_P90} threshold - picking best completeness")
+        best_resolution = max(results.keys(), key=lambda r: (
+            results[r]['p90_bin_completeness'],
+            results[r]['max_bin_completeness']
+        ))
         best_result = results[best_resolution]
 
     logger.info(f"Best resolution: {best_resolution:.2f} with {best_result['n_clusters']} clusters, "
@@ -248,24 +254,24 @@ def determine_optimal_resolution(embeddings_df, fragments_dict, args, gene_mappi
     )
 
     # Step 4: Test multiple resolutions around the base estimate
-    # Wide range from 0.01x to 3.0x with focus on lower values
+    # Balanced exploration: 7 below, 1.0 at center, 8 above (16 total)
     test_resolutions = [
-        base_resolution * 0.01,
-        base_resolution * 0.02,
-        base_resolution * 0.05,
-        base_resolution * 0.1,
-        base_resolution * 0.2,
+        base_resolution * 0.2,   # Conservative clustering
         base_resolution * 0.3,
         base_resolution * 0.4,
         base_resolution * 0.5,
         base_resolution * 0.6,
         base_resolution * 0.7,
         base_resolution * 0.8,
-        base_resolution * 1.0,
-        base_resolution * 1.2,
+        base_resolution * 1.0,   # Base estimate
+        base_resolution * 1.2,   # Aggressive splitting
         base_resolution * 1.5,
+        base_resolution * 1.75,
         base_resolution * 2.0,
-        base_resolution * 3.0
+        base_resolution * 2.5,
+        base_resolution * 3.0,
+        base_resolution * 3.5,
+        base_resolution * 4.0
     ]
 
     # Remove duplicates and sort
