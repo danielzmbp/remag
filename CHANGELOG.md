@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.3] - 2025-11-04
+
+### Added
+- LRU cache for k-mer mapping to improve performance during refinement
+- `--save-bins-before-refinement` option to preserve pre-refinement bin states
+- Seeded random number generation for improved reproducibility
+
+### Changed
+- **Default minimum contig length increased from 1024bp to 4096bp**
+- Improved resolution selection algorithm with better quality metrics
+- Enhanced bin refinement algorithms for more accurate splitting
+- Improved duplication detection thresholds to reduce false positives
+- Removed redundant eukaryotic classification logging from clustering output
+
+### Performance
+- Feature tensor caching in SequenceDataset reduces redundant computations
+- LRU cache significantly speeds up k-mer mapping lookups
+
 ## [0.3.2] - 2025-10-30
 
 ### Added
@@ -278,7 +296,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Various bug fixes and improvements
 
-[Unreleased]: https://github.com/danielzmbp/remag/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/danielzmbp/remag/compare/v0.3.3...HEAD
+[0.3.3]: https://github.com/danielzmbp/remag/compare/v0.3.2...v0.3.3
+[0.3.2]: https://github.com/danielzmbp/remag/compare/v0.3.0...v0.3.2
 [0.3.0]: https://github.com/danielzmbp/remag/compare/v0.2.5...v0.3.0
 [0.2.5]: https://github.com/danielzmbp/remag/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/danielzmbp/remag/compare/v0.2.3...v0.2.4
