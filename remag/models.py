@@ -105,10 +105,20 @@ class TrainingManager:
             features_df,
             max_positive_pairs=self.args.max_positive_pairs
         )
-        has_enough_data = len(dataset) > self.args.batch_size * 10
+
+        # Automatically adjust batch size if dataset is too small
+        effective_batch_size = self.args.batch_size
+        while len(dataset) < effective_batch_size and effective_batch_size > 1:
+            effective_batch_size = effective_batch_size // 2
+            logger.warning(
+                f"Dataset size ({len(dataset)}) < Batch size ({effective_batch_size * 2}). "
+                f"Automatically reducing batch size to {effective_batch_size}."
+            )
+
+        has_enough_data = len(dataset) > effective_batch_size * 10
 
         dataloader_kwargs = {
-            "batch_size": self.args.batch_size,
+            "batch_size": effective_batch_size,
             "shuffle": True,
             "drop_last": not has_enough_data,
             "worker_init_fn": seed_worker,
@@ -673,48 +683,27 @@ def train_siamese_network(features_df, args):
 
     device = get_torch_device()
 
-    dataset = SequenceDataset(features_df, max_positive_pairs=args.max_positive_pairs)
-    has_enough_data = len(dataset) > args.batch_size * 10
-
-    dataloader_kwargs = {
-        "batch_size": args.batch_size,
-        "shuffle": True,
-        "drop_last": not has_enough_data,
-        "worker_init_fn": seed_worker,
-        "generator": torch.Generator().manual_seed(42),
-    }
-    if device.type == "cuda":
-        dataloader_kwargs["num_workers"] = args.cores if args.cores > 0 else 4
-        dataloader_kwargs["pin_memory"] = True
-
-    dataloader = DataLoader(dataset, **dataloader_kwargs)
-
-    if len(dataloader) == 0:
-        logger.warning(
-            f"DataLoader is empty (Dataset size: {len(dataset)} < Batch size: {args.batch_size}). "
-            f"Creating untrained model. This typically happens with very small datasets. "
-            f"Consider reducing batch size with --batch-size {max(1, len(dataset)//2)}."
-        )
-        # Create untrained model to avoid crashes
-        model = SiameseNetwork(
-            n_kmer_features=n_kmer_features,
-            n_coverage_features=n_coverage_features,
-            embedding_dim=args.embedding_dim
-        ).to(device)
-        torch.save(model.state_dict(), model_path)
-        return model
-
     # Initialize model, loss, optimizer
     model = SiameseNetwork(
         n_kmer_features=n_kmer_features,
         n_coverage_features=n_coverage_features,
         embedding_dim=args.embedding_dim
     ).to(device)
-    logger.info(f"Starting training for {args.epochs} epochs...")
 
     # Initialize training manager and set up training
     trainer = TrainingManager(args)
     dataloader, optimizer, scheduler, criterion = trainer.setup_training(model, features_df)
+
+    # Check if dataloader is empty (dataset too small)
+    if len(dataloader) == 0:
+        logger.warning(
+            f"Dataset is very small. Creating untrained model. "
+            f"This typically happens with very small datasets."
+        )
+        torch.save(model.state_dict(), model_path)
+        return model
+
+    logger.info(f"Starting training for {args.epochs} epochs...")
 
     # Training loop
     epoch_progress = tqdm(range(args.epochs), desc="Training Progress")
