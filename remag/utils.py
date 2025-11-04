@@ -8,7 +8,6 @@ import sys
 from loguru import logger
 from typing import Dict, List, Union
 import torch
-from functools import wraps
 
 
 class PathManager:
@@ -58,26 +57,6 @@ class PathManager:
     
     def get_fragments_path(self):
         return os.path.join(self.output_dir, "fragments.pkl")
-
-
-def handle_errors(operation_name):
-    """Decorator for consistent error handling across modules."""
-    def decorator(func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            try:
-                return func(*args, **kwargs)
-            except FileNotFoundError as e:
-                logger.error(f"{operation_name} failed - File not found: {e}")
-                raise
-            except PermissionError as e:
-                logger.error(f"{operation_name} failed - Permission denied: {e}")
-                raise
-            except Exception as e:
-                logger.error(f"{operation_name} failed with error: {e}")
-                raise
-        return wrapper
-    return decorator
 
 
 def get_torch_device():
@@ -236,22 +215,6 @@ class ContigHeaderMapper:
         return contig_name in self._contig_to_header_map
 
 
-def build_contig_to_header_map(fragments_dict: FragmentDict) -> Dict[str, str]:
-    """Build a mapping from contig names to their headers in fragments_dict.
-    
-    This is a convenience function for simple use cases. For repeated lookups,
-    use ContigHeaderMapper class instead.
-    
-    Args:
-        fragments_dict: Dictionary with headers as keys and fragment data as values
-        
-    Returns:
-        Dictionary mapping base contig names to their headers
-    """
-    mapper = ContigHeaderMapper(fragments_dict)
-    return mapper.get_mapping()
-
-
 def group_contigs_by_cluster(clusters_df):
     """Group contigs by their cluster assignments.
     
@@ -266,51 +229,6 @@ def group_contigs_by_cluster(clusters_df):
     """
     cluster_groups = clusters_df.groupby('cluster')['contig'].apply(set).to_dict()
     return cluster_groups
-
-
-def count_contigs_per_cluster(clusters_df):
-    """Count the number of contigs in each cluster.
-    
-    Args:
-        clusters_df: DataFrame with 'contig' and 'cluster' columns
-        
-    Returns:
-        Dictionary mapping cluster IDs to contig counts
-    """
-    return clusters_df['cluster'].value_counts().to_dict()
-
-
-def filter_clusters_by_size(cluster_contig_dict, fragments_dict, min_size, exclude_noise=True):
-    """Filter clusters based on total sequence size.
-    
-    Common pattern used in multiple modules to filter out small bins.
-    
-    Args:
-        cluster_contig_dict: Dictionary mapping cluster IDs to sets of contig headers
-        fragments_dict: Dictionary containing fragment sequences
-        min_size: Minimum total sequence size for a cluster
-        exclude_noise: Whether to exclude 'noise' cluster
-        
-    Returns:
-        Dictionary with filtered clusters meeting size criteria
-    """
-    filtered_clusters = {}
-    
-    for cluster_id, contig_headers in cluster_contig_dict.items():
-        if exclude_noise and cluster_id == "noise":
-            continue
-            
-        # Calculate total size
-        total_size = sum(
-            len(fragments_dict[h]["sequence"]) 
-            for h in contig_headers 
-            if h in fragments_dict
-        )
-        
-        if total_size >= min_size:
-            filtered_clusters[cluster_id] = contig_headers
-            
-    return filtered_clusters
 
 
 def initialize_duplication_columns(clusters_df):
