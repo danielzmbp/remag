@@ -250,7 +250,7 @@ def validate_coverage_options(ctx, param, value):
 @click.option(
     "--min-contig-length",
     type=int,
-    default=1000,
+    default=4096,
     show_default=True,
     help="Minimum contig length in base pairs for binning consideration.",
 )
