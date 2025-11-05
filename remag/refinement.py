@@ -441,8 +441,6 @@ def refine_contaminated_bins_with_embeddings(
                         refined_clusters_df,
                         fragments_dict,
                         args,
-                        target_coverage_threshold=0.50,
-                        identity_threshold=0.30,
                         use_header_cache=True
                     )
                     logger.debug(f"Successfully used miniprot duplication check for {bin_id}")
