@@ -14,13 +14,17 @@ from loguru import logger
 
 from .utils import ContigHeaderMapper, initialize_duplication_columns
 
+# Miniprot alignment quality thresholds
+DEFAULT_TARGET_COVERAGE_THRESHOLD = 0.30
+DEFAULT_IDENTITY_THRESHOLD = 0.50
+
 
 def check_miniprot_available():
     """Check if miniprot is available in PATH."""
     return shutil.which("miniprot") is not None
 
 
-def estimate_organisms_from_all_contigs(fragments_dict, args, target_coverage_threshold=0.50, identity_threshold=0.35):
+def estimate_organisms_from_all_contigs(fragments_dict, args, target_coverage_threshold=DEFAULT_TARGET_COVERAGE_THRESHOLD, identity_threshold=DEFAULT_IDENTITY_THRESHOLD):
     """
     Run miniprot on all contigs to estimate the number of organisms based on core gene duplications.
 
@@ -30,8 +34,8 @@ def estimate_organisms_from_all_contigs(fragments_dict, args, target_coverage_th
     Args:
         fragments_dict: Dictionary mapping headers to sequences
         args: Arguments object containing output directory, cores, etc.
-        target_coverage_threshold: Minimum target coverage for alignments (default: 0.50)
-        identity_threshold: Minimum identity for alignments (default: 0.35)
+        target_coverage_threshold: Minimum target coverage for alignments (default: 0.30)
+        identity_threshold: Minimum identity for alignments (default: 0.40)
 
     Returns:
         dict: {gene_family: occurrence_count} for all core genes found
@@ -253,7 +257,7 @@ def get_gene_mappings_cache_path(args):
 
 
 def parse_and_cache_paf_files(temp_dir, filtered_clusters, args,
-                            target_coverage_threshold=0.50, identity_threshold=0.35):
+                            target_coverage_threshold=DEFAULT_TARGET_COVERAGE_THRESHOLD, identity_threshold=DEFAULT_IDENTITY_THRESHOLD):
     """
     Parse PAF files from miniprot output and cache gene-to-contig mappings.
 
@@ -264,8 +268,8 @@ def parse_and_cache_paf_files(temp_dir, filtered_clusters, args,
         temp_dir: Directory containing PAF files
         filtered_clusters: Dictionary of cluster_id -> contig_headers
         args: Arguments object
-        target_coverage_threshold: Minimum target coverage for alignments (default: 0.50)
-        identity_threshold: Minimum identity for alignments (default: 0.35)
+        target_coverage_threshold: Minimum target coverage for alignments (default: 0.30)
+        identity_threshold: Minimum identity for alignments (default: 0.40)
     
     Returns:
         dict: {contig_name: {gene_family: {score, coverage, identity}}}
@@ -443,8 +447,8 @@ def check_core_gene_duplications_from_cache(clusters_df, gene_mappings_cache, ar
 
 
 def check_core_gene_duplications(clusters_df, fragments_dict, args,
-                                target_coverage_threshold=0.50,
-                                identity_threshold=0.35,
+                                target_coverage_threshold=DEFAULT_TARGET_COVERAGE_THRESHOLD,
+                                identity_threshold=DEFAULT_IDENTITY_THRESHOLD,
                                 use_header_cache=False):
     """
     Check for duplicated core genes using miniprot.
@@ -456,8 +460,8 @@ def check_core_gene_duplications(clusters_df, fragments_dict, args,
         clusters_df: DataFrame with cluster assignments
         fragments_dict: Dictionary mapping headers to sequences
         args: Arguments object containing output directory, cores, etc.
-        target_coverage_threshold: Minimum target coverage (default: 0.50)
-        identity_threshold: Minimum identity (default: 0.35)
+        target_coverage_threshold: Minimum target coverage (default: 0.30)
+        identity_threshold: Minimum identity (default: 0.40)
         use_header_cache: Whether to use function-level caching for header lookup
     
     Returns:
