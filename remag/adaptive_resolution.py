@@ -66,12 +66,13 @@ def test_multiple_resolutions(embeddings_df, gene_mappings_cache, args, test_res
     fixed_n_jobs = getattr(args, 'cores', 1)
 
     # Construct k-NN graph ONCE (reuse for all resolution tests for performance)
+    # Save graph to disk so it can be reused during final clustering (saves ~1 minute)
     graph = _construct_knn_graph(
         embeddings_df.values,
         k=fixed_k_neighbors,
         similarity_threshold=fixed_similarity_threshold,
         n_jobs=fixed_n_jobs,
-        args=None  # Don't save graph during testing
+        args=args  # Save graph for reuse in final clustering
     )
 
     results = {}

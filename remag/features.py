@@ -525,6 +525,10 @@ def get_features(
     Returns:
         Tuple of (features DataFrame, fragments dictionary)
     """
+    # Set global random seed for reproducible fragment generation
+    random.seed(42)
+    np.random.seed(42)
+
     features_csv_path = get_features_csv_path(output_dir)
     fragments_path = os.path.join(output_dir, "fragments.pkl")
 
