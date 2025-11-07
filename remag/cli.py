@@ -222,7 +222,7 @@ def validate_coverage_options(ctx, param, value):
 @click.option(
     "--batch-size",
     type=int,
-    default=4096,
+    default=2048,
     show_default=True,
     help="Batch size for contrastive learning training.",
 )
