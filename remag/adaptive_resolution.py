@@ -12,7 +12,7 @@ import pandas as pd
 from loguru import logger
 
 from .miniprot_utils import estimate_organisms_from_all_contigs, check_core_gene_duplications_from_cache
-from .clustering import _leiden_clustering, _construct_knn_graph, _leiden_clustering_on_graph
+from .clustering import _construct_knn_graph, _leiden_clustering_on_graph
 
 
 def estimate_resolution_from_organisms(estimated_organisms, base_resolution=0.1, reference_organisms=100):
