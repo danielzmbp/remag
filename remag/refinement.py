@@ -345,19 +345,26 @@ def refine_contaminated_bins_with_embeddings(
     """
     # Identify contaminated bins - attempt refinement with even single duplicated genes
     min_duplications = getattr(args, 'min_duplications_for_refinement', 1)
-    
-    # Load duplication results to check counts
+
+    # Load duplication results from memory or file
     duplication_results = {}
-    results_path = get_core_gene_duplication_results_path(args)
-    if os.path.exists(results_path):
-        try:
-            with open(results_path, "r") as f:
-                duplication_results = json.load(f)
-            logger.info(f"Loaded duplication results for {len(duplication_results)} bins")
-        except Exception as e:
-            logger.warning(f"Failed to load duplication results: {e}")
+
+    # First try to get from args (available even without -k flag)
+    if hasattr(args, '_duplication_results'):
+        duplication_results = args._duplication_results
+        logger.debug(f"Using in-memory duplication results for {len(duplication_results)} bins")
     else:
-        logger.warning("No duplication results file found; refinement will only run for bins with verified duplication counts")
+        # Fall back to loading from file (only available with -k flag)
+        results_path = get_core_gene_duplication_results_path(args)
+        if os.path.exists(results_path):
+            try:
+                with open(results_path, "r") as f:
+                    duplication_results = json.load(f)
+                logger.info(f"Loaded duplication results from file for {len(duplication_results)} bins")
+            except Exception as e:
+                logger.warning(f"Failed to load duplication results from file: {e}")
+        else:
+            logger.warning("No duplication results available (neither in memory nor file); skipping refinement")
     
     # Filter for bins with multiple duplications
     contaminated_bins = []
