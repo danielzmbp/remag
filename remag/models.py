@@ -19,6 +19,13 @@ from .utils import get_torch_device
 from .losses import BarlowTwinsLoss
 
 
+def seed_worker(worker_id):
+    """Seed worker processes for DataLoader reproducibility."""
+    worker_seed = torch.initial_seed() % 2**32
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
+
+
 class EarlyStoppingManager:
     """Manages early stopping logic during training."""
     
@@ -91,7 +98,7 @@ class TrainingManager:
         self.args = args
         self.early_stopping = EarlyStoppingManager(patience=20)
         self.device = get_torch_device()
-    
+
     def setup_training(self, model, features_df):
         """Set up training components (dataset, dataloader, optimizer, scheduler)."""
         dataset = SequenceDataset(
@@ -104,6 +111,8 @@ class TrainingManager:
             "batch_size": self.args.batch_size,
             "shuffle": True,
             "drop_last": not has_enough_data,
+            "worker_init_fn": seed_worker,
+            "generator": torch.Generator().manual_seed(42),
         }
         if self.device.type == "cuda":
             dataloader_kwargs["num_workers"] = self.args.cores if self.args.cores > 0 else 4
@@ -671,6 +680,8 @@ def train_siamese_network(features_df, args):
         "batch_size": args.batch_size,
         "shuffle": True,
         "drop_last": not has_enough_data,
+        "worker_init_fn": seed_worker,
+        "generator": torch.Generator().manual_seed(42),
     }
     if device.type == "cuda":
         dataloader_kwargs["num_workers"] = args.cores if args.cores > 0 else 4
