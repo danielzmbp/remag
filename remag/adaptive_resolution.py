@@ -12,7 +12,7 @@ import pandas as pd
 from loguru import logger
 
 from .miniprot_utils import estimate_organisms_from_all_contigs, check_core_gene_duplications_from_cache, extract_gene_counts_from_mappings
-from .clustering import _leiden_clustering
+from .clustering import _leiden_clustering, _construct_knn_graph, _leiden_clustering_on_graph
 
 
 def estimate_resolution_from_organisms(estimated_organisms, base_resolution=0.1, reference_organisms=100):
@@ -65,20 +65,25 @@ def test_multiple_resolutions(embeddings_df, gene_mappings_cache, args, test_res
     fixed_similarity_threshold = getattr(args, 'leiden_similarity_threshold', 0.1)
     fixed_n_jobs = getattr(args, 'cores', 1)
 
+    # Construct k-NN graph ONCE (reuse for all resolution tests for performance)
+    graph = _construct_knn_graph(
+        embeddings_df.values,
+        k=fixed_k_neighbors,
+        similarity_threshold=fixed_similarity_threshold,
+        n_jobs=fixed_n_jobs,
+        args=None  # Don't save graph during testing
+    )
+
     results = {}
 
     for resolution in test_resolutions:
         logger.debug(f"Testing resolution={resolution:.2f}...")
 
-        # Perform clustering with this resolution (other parameters fixed)
-        cluster_labels = _leiden_clustering(
-            embeddings_df.values,
-            k=fixed_k_neighbors,
-            similarity_threshold=fixed_similarity_threshold,
+        # Apply Leiden clustering on pre-built graph (fast - no graph construction)
+        cluster_labels = _leiden_clustering_on_graph(
+            graph,
             resolution=resolution,
-            random_state=42,
-            n_jobs=fixed_n_jobs,
-            args=None  # Don't save intermediate graphs during testing
+            random_state=42
         )
 
         # Convert cluster labels to DataFrame format for duplication checking
