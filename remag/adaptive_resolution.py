@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 from loguru import logger
 
-from .miniprot_utils import estimate_organisms_from_all_contigs, check_core_gene_duplications_from_cache, extract_gene_counts_from_mappings
+from .miniprot_utils import estimate_organisms_from_all_contigs, check_core_gene_duplications_from_cache
 from .clustering import _leiden_clustering, _construct_knn_graph, _leiden_clustering_on_graph
 
 
@@ -183,7 +183,11 @@ def determine_optimal_resolution(embeddings_df, fragments_dict, args, gene_mappi
     """
     # Step 1: Get gene counts from existing mappings or run miniprot
     if gene_mappings is not None:
-        gene_counts = extract_gene_counts_from_mappings(gene_mappings)
+        # Extract gene counts from existing mappings (inline to avoid extra function)
+        gene_counts = {}
+        for contig_name, genes in gene_mappings.items():
+            for gene_family in genes.keys():
+                gene_counts[gene_family] = gene_counts.get(gene_family, 0) + 1
     else:
         gene_counts = estimate_organisms_from_all_contigs(fragments_dict, args)
 
