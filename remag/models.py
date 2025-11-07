@@ -705,8 +705,12 @@ def train_siamese_network(features_df, args):
     logger.info(f"Starting training for {args.epochs} epochs...")
 
     # Training loop
-    epoch_progress = tqdm(range(args.epochs), desc="Training Progress")
-    
+    # Only show progress bar in verbose mode
+    if getattr(args, 'verbose', False):
+        epoch_progress = tqdm(range(args.epochs), desc="Training Progress")
+    else:
+        epoch_progress = range(args.epochs)
+
     for epoch in epoch_progress:
         avg_loss, matrix_stats = trainer.train_epoch(model, dataloader, optimizer, criterion)
         scheduler.step()
@@ -732,12 +736,13 @@ def train_siamese_network(features_df, args):
             logger.info(f"Early stopping after {epoch+1} epochs (patience: {trainer.early_stopping.patience})")
             break
 
-        # Update progress bar
-        epoch_progress.set_postfix({
-            "Loss": f"{avg_loss:.4f}",
-            "LR": f"{current_lr:.2e}",
-            "Best": f"{trainer.early_stopping.best_loss:.4f}"
-        })
+        # Update progress bar (only if verbose mode enabled)
+        if getattr(args, 'verbose', False):
+            epoch_progress.set_postfix({
+                "Loss": f"{avg_loss:.4f}",
+                "LR": f"{current_lr:.2e}",
+                "Best": f"{trainer.early_stopping.best_loss:.4f}"
+            })
 
         # Print to screen every 20 epochs or on the last epoch
         if (epoch + 1) % 20 == 0 or epoch == args.epochs - 1:
