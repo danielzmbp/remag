@@ -460,14 +460,15 @@ def _permutation_anova_chimera_test(h1_embeddings, h2_embeddings, n_permutations
         return ms_between / ms_within if ms_within > 0 else 0.0
     
     observed_f = calculate_f_statistic(all_distances, group_labels)
-    
-    # Permutation test
+
+    # Permutation test with seeded RNG for reproducibility
     extreme_count = 0
     all_indices = list(range(len(all_distances)))
-    
+    rng = np.random.default_rng(42)  # Create seeded RNG
+
     for _ in range(n_permutations):
-        # Randomly shuffle group labels
-        shuffled_labels = np.random.permutation(group_labels)
+        # Randomly shuffle group labels using seeded RNG
+        shuffled_labels = rng.permutation(group_labels)
         permuted_f = calculate_f_statistic(all_distances, shuffled_labels)
         
         if permuted_f >= observed_f:
