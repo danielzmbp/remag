@@ -218,11 +218,11 @@ class EnhancedFusionLayer(nn.Module):
     DEFAULT_NUM_HEADS = 4
     DEFAULT_DROPOUT = 0.1
     GATE_INPUT_MULTIPLIER = 2  # For concatenated features in gates
-    MULTI_SCALE_CONCAT_MULTIPLIER = 4  # 2 scales * 2 (kmer+coverage) features each
-    COMPRESSOR_HIDDEN_MULTIPLIER = 2
-    COMPRESSOR_OUTPUT_MULTIPLIER = 1
-    INTERACTION_HIDDEN_MULTIPLIER = 2
-    INTERACTION_INTERMEDIATE_MULTIPLIER = 1
+    MULTI_SCALE_CONCAT_MULTIPLIER = 6  # 3 scales * 2 (kmer+coverage) features each
+    COMPRESSOR_HIDDEN_MULTIPLIER = 4
+    COMPRESSOR_OUTPUT_MULTIPLIER = 2
+    INTERACTION_HIDDEN_MULTIPLIER = 3
+    INTERACTION_INTERMEDIATE_MULTIPLIER = 2
     FINAL_FUSION_INPUT_MULTIPLIER = 4  # gated_kmer + gated_coverage + interaction + alignment
     FINAL_FUSION_HIDDEN_MULTIPLIER = 2
     RESIDUAL_WEIGHT_INIT = 0.5
@@ -262,12 +262,13 @@ class EnhancedFusionLayer(nn.Module):
             nn.Sequential(
                 nn.Linear(embedding_dim, embedding_dim // 2),
                 nn.ReLU(),
-                nn.Linear(embedding_dim // 2, embedding_dim)  # Fine scale
+                nn.Linear(embedding_dim // 2, embedding_dim)  # Project back to common dim
             ),
+            nn.Linear(embedding_dim, embedding_dim),  # Identity scale
             nn.Sequential(
                 nn.Linear(embedding_dim, embedding_dim * 2),
                 nn.ReLU(),
-                nn.Linear(embedding_dim * 2, embedding_dim)  # Coarse scale
+                nn.Linear(embedding_dim * 2, embedding_dim)  # Project back to common dim
             )
         ])
 
@@ -290,7 +291,9 @@ class EnhancedFusionLayer(nn.Module):
             nn.Linear(embedding_dim * self.COMPRESSOR_OUTPUT_MULTIPLIER, embedding_dim * self.INTERACTION_HIDDEN_MULTIPLIER),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(embedding_dim * self.INTERACTION_HIDDEN_MULTIPLIER, embedding_dim)
+            nn.Linear(embedding_dim * self.INTERACTION_HIDDEN_MULTIPLIER, embedding_dim * self.INTERACTION_INTERMEDIATE_MULTIPLIER),
+            nn.ReLU(),
+            nn.Linear(embedding_dim * self.INTERACTION_INTERMEDIATE_MULTIPLIER, embedding_dim)
         )
 
         # Adaptive dropout
@@ -382,8 +385,8 @@ class EnhancedFusionLayer(nn.Module):
 
         # Concatenate multi-scale features (now all have consistent dimensions)
         # Each scale produces embedding_dim features for both kmer and coverage -> embedding_dim * 2 per scale
-        # 2 scales * embedding_dim * 2 = embedding_dim * 4 total
-        multi_scale_concat = torch.cat(scale_features, dim=1)  # [B, embedding_dim * 4]
+        # 3 scales * embedding_dim * 2 = embedding_dim * 6 total
+        multi_scale_concat = torch.cat(scale_features, dim=1)  # [B, embedding_dim * 6]
 
         # Compress multi-scale features before interaction module
         multi_scale_compressed = self.multi_scale_compressor(multi_scale_concat)
