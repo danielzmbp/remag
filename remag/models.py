@@ -435,26 +435,22 @@ class SiameseNetwork(nn.Module):
 
             # Scale hidden dimensions based on number of samples
             # More samples = more complex co-abundance patterns = larger encoder
-            if n_samples_estimate == 1:
-                # 1 sample: 2 features → 8 → 4
-                coverage_hidden1 = 8
-                coverage_hidden2 = 4
-            elif n_samples_estimate == 2:
-                # 2 samples: 4 features → 16 → 8
-                coverage_hidden1 = 16
-                coverage_hidden2 = 8
-            elif n_samples_estimate <= 5:
-                # 3-5 samples: 6-10 features → 32 → 16
+            if n_samples_estimate <= 2:
+                # 1-2 samples: 2-4 features → 32 → 16
                 coverage_hidden1 = 32
                 coverage_hidden2 = 16
-            elif n_samples_estimate <= 10:
-                # 6-10 samples: 12-20 features → 64 → 32
+            elif n_samples_estimate <= 5:
+                # 3-5 samples: 6-10 features → 64 → 32
                 coverage_hidden1 = 64
                 coverage_hidden2 = 32
-            else:
-                # >10 samples: >20 features → 128 → 64
+            elif n_samples_estimate <= 10:
+                # 6-10 samples: 12-20 features → 128 → 64
                 coverage_hidden1 = 128
                 coverage_hidden2 = 64
+            else:
+                # >10 samples: >20 features → 256 → 128
+                coverage_hidden1 = 256
+                coverage_hidden2 = 128
                 
             logger.debug(f"Coverage encoder sized for ~{n_samples_estimate} samples: "
                         f"{n_coverage_features} -> {coverage_hidden1} -> {coverage_hidden2}")
