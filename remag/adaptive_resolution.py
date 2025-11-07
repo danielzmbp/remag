@@ -140,23 +140,11 @@ def test_multiple_resolutions(embeddings_df, gene_mappings_cache, args, test_res
                 'clusters_df': test_clusters_df
             }
 
-    # Pick the resolution that maximizes genome completeness (single-copy genes only)
-    # Priority: 1) Highest max completeness (recover complete, clean genomes)
-    #           2) Highest median completeness (overall bin quality)
-    #           3) Fewest duplications (contamination)
-    # Rationale: Completeness now counts only single-copy genes (non-duplicated),
-    # preventing contaminated bins from being rewarded with high scores. This avoids
-    # bias towards over-consolidation (fewer, larger, contaminated bins).
-    best_resolution = max(results.keys(), key=lambda r: (
-        results[r]['max_bin_completeness'],    # Primary: recover complete genomes
-        results[r]['median_bin_completeness'], # Secondary: overall bin quality
-        -results[r]['total_duplications']      # Tertiary: contamination (negated for max)
-    ))
+    # Pick the resolution with the fewest total duplications
+    best_resolution = min(results.keys(), key=lambda r: results[r]['total_duplications'])
     best_result = results[best_resolution]
 
     logger.info(f"Best resolution: {best_resolution:.2f} with {best_result['n_clusters']} clusters, "
-               f"max completeness={best_result['max_bin_completeness']}, "
-               f"median={best_result['median_bin_completeness']}, "
                f"{best_result['total_duplications']} total duplications")
 
     return best_resolution, results
