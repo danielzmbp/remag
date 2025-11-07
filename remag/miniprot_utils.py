@@ -12,7 +12,7 @@ import subprocess
 from tqdm import tqdm
 from loguru import logger
 
-from .utils import extract_base_contig_name, ContigHeaderMapper, initialize_duplication_columns
+from .utils import ContigHeaderMapper, initialize_duplication_columns
 
 
 def check_miniprot_available():
