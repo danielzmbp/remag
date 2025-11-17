@@ -417,8 +417,8 @@ def refine_contaminated_bins_with_embeddings(
     Returns:
         tuple: (refined_clusters_df, refined_fragments_dict, refinement_summary)
     """
-    # Identify contaminated bins - attempt refinement with even single duplicated genes
-    min_duplications = getattr(args, 'min_duplications_for_refinement', 1)
+    # Identify contaminated bins - use conservative threshold (2+ duplications)
+    min_duplications = getattr(args, 'min_duplications_for_refinement', 2)
     
     # Load duplication results to check counts
     duplication_results = {}
