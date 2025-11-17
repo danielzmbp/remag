@@ -217,11 +217,16 @@ def determine_optimal_resolution(embeddings_df, fragments_dict, args, gene_mappi
         reference_organisms=100  # Reference point: 100 organisms
     )
 
-    # Step 4: Test multiple resolutions around the base estimate
+    # Step 4: Test multiple resolutions as multipliers of the base estimate
+    # Testing a comprehensive range from very conservative (0.25×) to very aggressive (3.0×)
     test_resolutions = [
-        max(base_resolution * 0.7, 0.05),  # Conservative (fewer bins), min 0.05
-        base_resolution,                    # Base estimate
-        base_resolution * 1.4               # Aggressive (more bins)
+        base_resolution * 0.25,
+        base_resolution * 0.5,
+        base_resolution * 0.75,
+        base_resolution * 1.0,
+        base_resolution * 1.5,
+        base_resolution * 2.0,
+        base_resolution * 3.0
     ]
 
     # Remove duplicates and sort

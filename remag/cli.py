@@ -307,7 +307,7 @@ def validate_coverage_options(ctx, param, value):
 @click.option(
     "--min-duplications-for-refinement",
     type=int,
-    default=2,
+    default=1,
     show_default=True,
     help="Minimum number of duplicated core genes required to trigger refinement.",
 )
