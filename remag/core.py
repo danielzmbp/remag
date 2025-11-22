@@ -45,7 +45,6 @@ def main(args):
             args.fasta,
             args.output,
             min_contig_length=args.min_contig_length,
-            cores=args.cores,
             hyenadna_batch_size=hyenadna_batch_size,
         )
     else:
@@ -176,20 +175,15 @@ def main(args):
     final_bins_df = clusters_df[clusters_df["cluster"] != "noise"].copy()
     # Keep only the first two columns: contig and cluster
     final_bins_df = final_bins_df[["contig", "cluster"]]
-    final_bins_df.to_csv(bins_csv_path, index=False)
-    logger.info(f"bins.csv saved with {len(final_bins_df)} contigs from refined clusters")
 
     valid_bins = save_clusters_as_fasta(clusters_df, fragments_dict, args)
     
-    # Filter bins.csv to only include contigs from valid bins (those that meet minimum size)
+    # Filter bins to only include contigs from valid bins (those that meet minimum size)
     logger.info("Filtering bins.csv to match saved bins...")
-    if os.path.exists(bins_csv_path):
-        import pandas as pd
-        bins_df = pd.read_csv(bins_csv_path)
-        filtered_bins_df = bins_df[bins_df["cluster"].isin(valid_bins)]
-        # Ensure only the first two columns are kept
-        filtered_bins_df = filtered_bins_df[["contig", "cluster"]]
-        filtered_bins_df.to_csv(bins_csv_path, index=False)
-        logger.debug(f"bins.csv now contains {len(filtered_bins_df)} contigs from {len(valid_bins)} valid bins")
+    filtered_bins_df = final_bins_df[final_bins_df["cluster"].isin(valid_bins)]
+    filtered_bins_df.to_csv(bins_csv_path, index=False)
+    logger.info(
+        f"bins.csv saved with {len(filtered_bins_df)} contigs from {len(valid_bins)} valid bins"
+    )
 
     logger.info("REMAG analysis completed successfully!")
