@@ -2,6 +2,7 @@
 Neural network models for REMAG
 """
 
+import copy
 import itertools
 import numpy as np
 import os
@@ -38,8 +39,6 @@ class EarlyStoppingManager:
     def check_improvement(self, current_loss, model_state):
         """Check if current loss is an improvement and update state."""
         if current_loss < self.best_loss:
-            import copy
-
             self.best_loss = current_loss
             self.best_model_state = copy.deepcopy(model_state)
             self.epochs_no_improve = 0
@@ -101,6 +100,10 @@ class TrainingManager:
 
     def setup_training(self, model, features_df):
         """Set up training components (dataset, dataloader, optimizer, scheduler)."""
+        # Set random seed for deterministic dataset generation
+        random.seed(42)
+        np.random.seed(42)
+
         dataset = SequenceDataset(
             features_df,
             max_positive_pairs=self.args.max_positive_pairs
@@ -122,7 +125,6 @@ class TrainingManager:
             "shuffle": True,
             "drop_last": not has_enough_data,
             "worker_init_fn": seed_worker,
-            "generator": torch.Generator().manual_seed(42),
         }
         if self.device.type == "cuda":
             dataloader_kwargs["num_workers"] = self.args.cores if self.args.cores > 0 else 4
@@ -554,10 +556,6 @@ class SiameseNetwork(nn.Module):
         output1 = self.forward_one(x1)
         output2 = self.forward_one(x2)
         return output1, output2
-
-
-
-# BarlowTwinsLoss moved to losses.py
 
 
 class SequenceDataset(Dataset):
