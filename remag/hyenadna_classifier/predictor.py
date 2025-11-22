@@ -76,13 +76,14 @@ def estimate_window_count(seq_len: int, window_size: int = 4096, stride: int = 2
     return full_windows + (1 if has_partial else 0)
 
 
-def generate_random_windows(sequence: str, window_size: int, num_windows: int) -> List[str]:
+def generate_random_windows(sequence: str, window_size: int, num_windows: int, seed: int = 42) -> List[str]:
     """Generate random windows from a sequence for additional sampling.
 
     Args:
         sequence: DNA sequence to sample from
         window_size: Size of each window
         num_windows: Number of random windows to generate
+        seed: Random seed for reproducibility (default: 42)
 
     Returns:
         List of random window sequences
@@ -94,8 +95,10 @@ def generate_random_windows(sequence: str, window_size: int, num_windows: int) -
     windows = []
     max_start = seq_len - window_size
 
+    # Use local seeded RNG for deterministic behavior
+    rng = random.Random(seed)
     for _ in range(num_windows):
-        start = random.randint(0, max_start)
+        start = rng.randint(0, max_start)
         window = sequence[start:start + window_size]
         windows.append(window)
 
@@ -225,6 +228,10 @@ class HyenaDNAClassifier:
             use_dual_models: Use both 1024 and 4096 models adaptively (default: True)
             length_threshold: Sequence length threshold for model selection (default: 4096)
         """
+        # Set random seeds for deterministic behavior
+        random.seed(42)
+        np.random.seed(42)
+
         self.batch_size = batch_size
         self.min_contig_length = min_contig_length
         self.use_dual_models = use_dual_models
