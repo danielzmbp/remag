@@ -139,19 +139,29 @@ def _construct_knn_graph(embeddings, k=15, similarity_threshold=0.1, n_jobs=1, a
     # Convert distances to similarities (cosine distance = 1 - cosine similarity)
     similarities = 1 - distances
     
-    # Build edge list efficiently
-    edges = []
-    weights = []
+    # Build edge list using vectorized operations
+    # Skip self-match (column 0)
+    neighbor_indices = indices[:, 1:k+1]
+    neighbor_similarities = similarities[:, 1:k+1]
     
-    for i in range(len(embeddings)):
-        # Skip self (first neighbor) and apply similarity threshold
-        for j in range(1, k+1):  # Skip index 0 (self)
-            neighbor_idx = indices[i, j]
-            similarity = similarities[i, j]
-            
-            if similarity >= similarity_threshold:
-                edges.append((i, neighbor_idx))
-                weights.append(float(similarity))
+    # Create source indices array [0, 0... 1, 1...] matching the shape
+    # Use broadcasting/repeating to align with flattened neighbor arrays
+    source_indices = np.repeat(np.arange(len(embeddings)), neighbor_indices.shape[1])
+    
+    # Flatten arrays
+    flat_sources = source_indices
+    flat_targets = neighbor_indices.flatten()
+    flat_weights = neighbor_similarities.flatten()
+    
+    # Apply threshold mask
+    mask = flat_weights >= similarity_threshold
+    
+    # Create edges and weights
+    # igraph expects list of tuples for edges
+    valid_sources = flat_sources[mask]
+    valid_targets = flat_targets[mask]
+    edges = list(zip(valid_sources, valid_targets))
+    weights = flat_weights[mask].tolist()
     
     logger.info(f"Created {len(edges)} edges with similarity >= {similarity_threshold}")
     
@@ -428,23 +438,32 @@ def _permutation_anova_chimera_test(h1_embeddings, h2_embeddings, n_permutations
     
     # Calculate observed F-statistic
     def calculate_f_statistic(distances, labels):
-        intra_distances = [d for d, l in zip(distances, labels) if l == 'intra']
-        inter_distances = [d for d, l in zip(distances, labels) if l == 'inter']
+        # Vectorized implementation
+        # Ensure labels is a numpy array for boolean indexing
+        labels_arr = np.asarray(labels)
         
-        if not intra_distances or not inter_distances:
+        # Create masks for groups
+        intra_mask = labels_arr == 'intra'
+        inter_mask = labels_arr == 'inter'
+        
+        n_intra = np.sum(intra_mask)
+        n_inter = np.sum(inter_mask)
+        
+        if n_intra == 0 or n_inter == 0:
             return 0.0
             
-        mean_intra = np.mean(intra_distances)
-        mean_inter = np.mean(inter_distances)
+        # Calculate means
+        mean_intra = np.mean(distances[intra_mask])
+        mean_inter = np.mean(distances[inter_mask])
         mean_total = np.mean(distances)
         
         # Between-group sum of squares
-        ss_between = (len(intra_distances) * (mean_intra - mean_total)**2 + 
-                     len(inter_distances) * (mean_inter - mean_total)**2)
+        ss_between = (n_intra * (mean_intra - mean_total)**2 + 
+                     n_inter * (mean_inter - mean_total)**2)
         
         # Within-group sum of squares
-        ss_within = (sum((d - mean_intra)**2 for d in intra_distances) + 
-                    sum((d - mean_inter)**2 for d in inter_distances))
+        ss_within = (np.sum((distances[intra_mask] - mean_intra)**2) + 
+                    np.sum((distances[inter_mask] - mean_inter)**2))
         
         # Degrees of freedom
         df_between = 1  # 2 groups - 1
