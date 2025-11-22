@@ -15,36 +15,6 @@ from .miniprot_utils import estimate_organisms_from_all_contigs, check_core_gene
 from .clustering import _construct_knn_graph, _leiden_clustering_on_graph
 
 
-def estimate_resolution_from_organisms(estimated_organisms, base_resolution=0.1, reference_organisms=100):
-    """
-    Estimate Leiden resolution parameter based on estimated organism count.
-
-    Uses square root scaling to map organism counts to resolution values,
-    with clamping to prevent extreme values.
-
-    Args:
-        estimated_organisms: Estimated number of organisms from core gene analysis
-        base_resolution: Default resolution for reference_organisms (default: 0.1)
-        reference_organisms: Number of organisms for which base_resolution is optimal (default: 100)
-
-    Returns:
-        float: Estimated resolution parameter
-    """
-    if estimated_organisms <= 0:
-        logger.warning("Invalid organism estimate, using base resolution")
-        return base_resolution
-
-    # Square root scaling (empirically reasonable for graph clustering)
-    resolution = base_resolution * (estimated_organisms / reference_organisms) ** 0.5
-
-    # Clamp to reasonable bounds (minimum 0.05 ensures proper separation even for low-diversity samples)
-    resolution = np.clip(resolution, 0.05, 5.0)
-
-    logger.info(f"Estimated {estimated_organisms:.1f} organisms → resolution={resolution:.2f}")
-
-    return resolution
-
-
 def test_multiple_resolutions(embeddings_df, gene_mappings_cache, args, test_resolutions):
     """
     Test multiple resolution values and pick the best based on core gene duplications.
@@ -207,30 +177,8 @@ def determine_optimal_resolution(embeddings_df, fragments_dict, args, gene_mappi
     logger.debug(f"Core gene statistics: median={median_count:.1f}, 90th percentile={percentile_90:.1f}, max={max_count:.1f}")
     logger.info(f"Estimated number of organisms: {estimated_organisms:.1f} (using max gene count)")
 
-    # Step 3: Calculate base resolution
-    # Note: Always use 1.0/100 as the base/reference for the formula, NOT args.leiden_resolution
-    # args.leiden_resolution is only used as a fallback if auto-resolution fails
-    # This scaling gives: 1 organism → 0.05 (min clamp), 25 organisms → 0.5, 100 organisms → 1.0, 1000 organisms → 3.16
-    base_resolution = estimate_resolution_from_organisms(
-        estimated_organisms,
-        base_resolution=1.0,  # Fixed base for formula
-        reference_organisms=100  # Reference point: 100 organisms
-    )
-
-    # Step 4: Test multiple resolutions as multipliers of the base estimate
-    # Testing a comprehensive range from very conservative (0.25×) to very aggressive (3.0×)
-    test_resolutions = [
-        base_resolution * 0.25,
-        base_resolution * 0.5,
-        base_resolution * 0.75,
-        base_resolution * 1.0,
-        base_resolution * 1.5,
-        base_resolution * 2.0,
-        base_resolution * 3.0
-    ]
-
-    # Remove duplicates and sort
-    test_resolutions = sorted(set(test_resolutions))
+    # Step 3: Use a fixed set of candidate resolutions
+    test_resolutions = [0.05, 0.10, 0.20, 0.40, 0.60, 0.80, 1.0, 1.2, 1.5, 2.0]
 
     # Load gene mappings cache for quick duplication checking
     # The cache was created during organism estimation and contains:
@@ -257,10 +205,10 @@ def determine_optimal_resolution(embeddings_df, fragments_dict, args, gene_mappi
 
     if gene_mappings_cache is None:
         logger.warning("No gene mappings cache available - cannot test multiple resolutions")
-        logger.info(f"Using base resolution estimate: {base_resolution:.2f}")
-        return base_resolution
+        logger.info("Falling back to default resolution: 1.0")
+        return 1.0
 
-    # Step 5: Test resolutions and pick the best
+    # Step 4: Test resolutions and pick the best
     best_resolution, results = test_multiple_resolutions(
         embeddings_df, gene_mappings_cache, args, test_resolutions
     )
