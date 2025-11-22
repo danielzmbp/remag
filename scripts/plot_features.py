@@ -11,8 +11,30 @@ Usage:
 
 import argparse
 import os
+import sys
 import numpy as np
 import pandas as pd
+
+# Add parent directory to path to allow importing from remag
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+if parent_dir not in sys.path:
+    sys.path.append(parent_dir)
+
+try:
+    from remag.utils import extract_base_contig_name
+except ImportError:
+    # Fallback implementation if package structure differs
+    def extract_base_contig_name(name):
+        """Extract original contig name from fragment name."""
+        if ".original" in name:
+            return name.split(".original")[0]
+        elif ".h" in name:
+            # Handle .h1.1, .h2.3 etc format
+            parts = name.split(".")
+            if len(parts) >= 3 and parts[-2].startswith("h"):
+                return ".".join(parts[:-2])
+        return name
 try:
     import matplotlib.pyplot as plt
     import matplotlib.cm as cm
@@ -59,18 +81,6 @@ def create_umap_projection(embeddings, n_components=2, random_state=42):
     )
     projection = reducer.fit_transform(embeddings)
     return projection
-
-
-def extract_base_contig_name(name):
-    """Extract original contig name from fragment name."""
-    if ".original" in name:
-        return name.split(".original")[0]
-    elif ".h" in name:
-        # Handle .h1.1, .h2.3 etc format
-        parts = name.split(".")
-        if len(parts) >= 3 and parts[-2].startswith("h"):
-            return ".".join(parts[:-2])
-    return name
 
 
 def plot_umap_embeddings(embeddings, contig_names=None, clusters_df=None, output_dir="."):
