@@ -18,19 +18,16 @@ def save_clusters_as_fasta(clusters_df, fragments_dict, args):
     # Create mapper for efficient contig name to header lookups
     mapper = ContigHeaderMapper(fragments_dict)
 
-    # Group contigs by cluster directly
-    cluster_contig_dict = {}
-    for _, row in clusters_df.iterrows():
-        contig_name = row["contig"]
-        cluster_id = row["cluster"]
-        
-        # Find the corresponding original header in fragments_dict
-        original_header = mapper.get_header(contig_name)
-        
-        if original_header:
-            if cluster_id not in cluster_contig_dict:
-                cluster_contig_dict[cluster_id] = set()
-            cluster_contig_dict[cluster_id].add(original_header)
+    # Group contigs by cluster directly using vectorized operations
+    cluster_contig_dict = (
+        clusters_df.groupby("cluster")["contig"]
+        .apply(lambda contigs: {
+            mapper.get_header(c) 
+            for c in contigs 
+            if mapper.get_header(c)
+        })
+        .to_dict()
+    )
 
     # Filter clusters by size
     filtered_cluster_contigs = {}
