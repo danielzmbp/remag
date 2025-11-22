@@ -96,7 +96,7 @@ def get_features_csv_path(output_dir):
     return os.path.join(output_dir, "features.csv")
 
 
-def filter_bacterial_contigs(fasta_file, output_dir, min_contig_length=1000, cores=8, hyenadna_batch_size=1024, save_filtered_contigs=False):
+def filter_bacterial_contigs(fasta_file, output_dir, min_contig_length=1000, hyenadna_batch_size=1024, save_filtered_contigs=False):
     """
     Filter non-eukaryotic contigs using the HyenaDNA classifier.
     Keeps contigs predicted as eukaryotic with sufficient confidence.
@@ -105,7 +105,6 @@ def filter_bacterial_contigs(fasta_file, output_dir, min_contig_length=1000, cor
         fasta_file: Path to input FASTA file
         output_dir: Output directory for filtered results
         min_contig_length: Minimum contig length threshold
-        cores: Number of CPU cores to use (note: HyenaDNA uses GPU when available)
         hyenadna_batch_size: Batch size for HyenaDNA model inference (default: 1024)
         save_filtered_contigs: If True, save non-eukaryotic contigs to a separate file
 
@@ -526,6 +525,7 @@ def get_features(
         min_contig_length: Minimum contig length
         cores: Number of cores for processing
         num_augmentations: Number of random fragments per contig
+        args: Command line arguments object
 
     Returns:
         Tuple of (features DataFrame, fragments dictionary)
@@ -672,7 +672,6 @@ def get_features(
 
         logger.debug("Applying global scaling to preserve co-abundance patterns across samples")
 
-        from sklearn.preprocessing import MinMaxScaler
         scaler = MinMaxScaler(feature_range=(0, 1))
         df[coverage_columns] = scaler.fit_transform(df[coverage_columns])
         logger.debug(f"Applied MinMaxScaler (0-1 range) to {len(coverage_columns)} coverage features")
@@ -989,18 +988,35 @@ def _calculate_fragment_stats_vectorized(coverage_array, fragment_coords):
             # Extract all fragment data at once using advanced indexing
             all_fragment_data = coverage_array[all_indices]
             
-            # Calculate means and stds using reduceat operations
-            cumulative_indices = np.cumsum([0] + fragment_lengths[:-1])
+            # Prepare arrays for reduceat
+            fragment_lengths_arr = np.array(fragment_lengths)
+            cumulative_indices_arr = np.cumsum([0] + fragment_lengths[:-1])
             
-            for i, (start_idx, length) in enumerate(zip(cumulative_indices, fragment_lengths)):
-                if length > 0:
-                    fragment_data = all_fragment_data[start_idx:start_idx + length]
-                    if len(fragment_data) > 0:
-                        means[i] = np.mean(fragment_data)
-                        stds[i] = np.std(fragment_data) if len(fragment_data) > 1 else 0.0
-                    else:
-                        means[i] = 0.0
-                        stds[i] = 0.0
+            # Only process non-empty fragments
+            valid_mask = fragment_lengths_arr > 0
+            
+            if np.any(valid_mask):
+                valid_indices = cumulative_indices_arr[valid_mask]
+                valid_lengths = fragment_lengths_arr[valid_mask]
+                
+                # Calculate sums using reduceat
+                # reduceat computes sum[indices[i]:indices[i+1]]
+                # For the last segment, it goes to the end of the array, which is exactly what we want
+                # as all_fragment_data is perfectly packed with only valid fragments
+                sums = np.add.reduceat(all_fragment_data, valid_indices)
+                means_valid = sums / valid_lengths
+                
+                # Calculate stds: sqrt(mean(x^2) - mean(x)^2)
+                sums_sq = np.add.reduceat(all_fragment_data**2, valid_indices)
+                vars_valid = (sums_sq / valid_lengths) - (means_valid ** 2)
+                
+                # Handle numerical precision issues
+                vars_valid = np.maximum(vars_valid, 0)
+                stds_valid = np.sqrt(vars_valid)
+                
+                # Map back to full arrays
+                means[valid_mask] = means_valid
+                stds[valid_mask] = stds_valid
         
         return means, stds
         
