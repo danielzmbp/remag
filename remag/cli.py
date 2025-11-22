@@ -84,9 +84,6 @@ click.rich_click.OPTION_GROUPS = {
     ]
 }
 
-# Store full option groups for restoration
-_FULL_OPTION_GROUPS = click.rich_click.OPTION_GROUPS.copy()
-
 
 def custom_help_callback(ctx, param, value):
     """
@@ -222,7 +219,7 @@ def validate_coverage_options(ctx, param, value):
 @click.option(
     "--batch-size",
     type=int,
-    default=2048,
+    default=4096,
     show_default=True,
     help="Batch size for contrastive learning training.",
 )
@@ -272,7 +269,7 @@ def validate_coverage_options(ctx, param, value):
 @click.option(
     "--min-bin-size",
     type=int,
-    default=200000,
+    default=500000,
     show_default=True,
     help="Minimum total bin size in base pairs for output.",
 )
