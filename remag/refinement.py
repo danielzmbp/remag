@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 from loguru import logger
 
+from .clustering import _construct_knn_graph, _leiden_clustering_on_graph
 from .miniprot_utils import (
     check_core_gene_duplications,
     check_core_gene_duplications_from_cache,
@@ -17,7 +18,7 @@ from .miniprot_utils import (
 
 
 def _log_and_return(original_clusters_df, bin_id):
-    logger.info(f"Bin {bin_id} k-means refinement could not improve the split; keeping original bin")
+    logger.info(f"Bin {bin_id} refinement could not improve the split; keeping original bin")
     return original_clusters_df
 
 
@@ -27,8 +28,7 @@ def refine_bin(
     bin_id,
     gene_mappings_cache,
     duplication_results,
-    max_k=6,
-    restarts=3,
+    args,
 ):
     bin_mask = clusters_df["cluster"].isin([bin_id])
     contigs = clusters_df.loc[bin_mask, "contig"].tolist()
@@ -41,7 +41,9 @@ def refine_bin(
         logger.warning(f"Bin {bin_id} lacks embeddings for refinement")
         return None
 
+    # Extract embeddings for this bin
     emb = embeddings_df.loc[available].values.astype(np.float32)
+    # Embeddings should already be normalized from the model/CSV, but re-normalizing is safe
     norm = np.linalg.norm(emb, axis=1, keepdims=True)
     norm[norm == 0] = 1.0
     normalized = emb / norm
@@ -50,82 +52,76 @@ def refine_bin(
     if original_dup == 0:
         return None
 
-    best = None
-    rng_seed = 42
-
-    for k in range(2, min(max_k + 1, len(normalized))):
-        for restart in range(restarts):
-            rng = np.random.default_rng(rng_seed + k * 100 + restart)
-            labels = _run_kmeans(normalized, k, rng)
-            if labels is None:
-                continue
-
-            total_dup, retained_scg = _score_split(labels, available, gene_mappings_cache)
-            logger.debug(
-                f"Bin {bin_id} k-means k={k} restart={restart}: total_dup={total_dup}, retained_scg={retained_scg}"
-            )
-
-            if total_dup < original_dup:
-                score = (total_dup, -retained_scg)
-                if best is None or score < (best[0], best[1]):
-                    best = (total_dup, -retained_scg, labels.copy(), k)
-
-    if best is None:
-        logger.info(f"Bin {bin_id} k-means refinement did not reduce duplicated genes")
+    # Graph-based Refinement (Leiden)
+    # 1. Construct local k-NN graph
+    # Use a slightly smaller k for refinement to detect finer structures, but respect user args
+    default_k = getattr(args, 'leiden_k_neighbors', 15)
+    k = min(default_k, len(available) - 1)
+    
+    if k < 1:
         return None
 
-    _, _, best_labels, best_k = best
+    # We construct the graph once
+    graph = _construct_knn_graph(
+        normalized, 
+        k=k, 
+        similarity_threshold=getattr(args, 'leiden_similarity_threshold', 0.1),
+        n_jobs=1, # Small task, keep single threaded
+        args=None # Don't save intermediate files for sub-tasks
+    )
+
+    best = None
+    
+    # 2. Try increasing resolutions to break up the cluster, using the same set as initial Leiden
+    resolutions = [0.05, 0.10, 0.20, 0.40, 0.60, 0.80, 1.0, 1.2, 1.5, 2.0]
+    
+    for res in resolutions:
+        labels = _leiden_clustering_on_graph(graph, resolution=res, random_state=42)
+        
+        # Skip if it didn't split anything (all one cluster or all noise)
+        unique_labels = np.unique(labels)
+        if len(unique_labels) < 2:
+            continue
+            
+        # Score the split
+        total_dup, retained_scg = _score_split(labels, available, gene_mappings_cache)
+        
+        logger.debug(
+            f"Bin {bin_id} Leiden res={res}: total_dup={total_dup}, retained_scg={retained_scg}, sub_bins={len(unique_labels)}"
+        )
+
+        # We want to reduce duplications
+        # If duplications are equal, we prefer retaining more SCGs
+        if total_dup < original_dup:
+            score = (total_dup, -retained_scg)
+            if best is None or score < (best[0], best[1]):
+                best = (total_dup, -retained_scg, labels.copy(), res)
+
+    if best is None:
+        logger.info(f"Bin {bin_id} refinement did not reduce duplicated genes")
+        return None
+
+    _, _, best_labels, best_res = best
+    
+    # Format new labels
     refined = pd.DataFrame(
         {
             "contig": available,
-            "cluster": [f"{bin_id}_{label}" for label in best_labels],
+            "cluster": [f"{bin_id}_{label}" if label != -1 else f"{bin_id}_noise" for label in best_labels],
         }
     )
-    logger.info(f"Bin {bin_id} k-means refinement succeeded: k={best_k}, sub-bins={len(np.unique(best_labels))}")
+    
+    # Filter out noise from refinement
+    refined = refined[~refined["cluster"].str.endswith("_noise")]
+    
+    logger.info(f"Bin {bin_id} refinement succeeded (Leiden res={best_res}): split into {refined['cluster'].nunique()} sub-bins")
     return refined
-
-
-def _run_kmeans(data, k, rng, max_iter=20):
-    n = len(data)
-    if k >= n:
-        return None
-
-    centers_idx = [rng.integers(n)]
-    centers = [data[centers_idx[0]]]
-    distances = np.full(n, np.inf, dtype=np.float32)
-
-    for _ in range(1, k):
-        distances = np.minimum(distances, np.sum((data - centers[-1]) ** 2, axis=1))
-        total = distances.sum()
-        if total == 0 or not np.isfinite(total):
-            idx = rng.integers(n)
-        else:
-            probs = distances / total
-            idx = rng.choice(n, p=probs)
-        centers.append(data[idx])
-
-    centers = np.stack(centers)
-    labels = np.zeros(n, dtype=int)
-
-    for _ in range(max_iter):
-        dists = np.sum((data[:, None, :] - centers[None, :, :]) ** 2, axis=2)
-        new_labels = dists.argmin(axis=1)
-        if np.array_equal(labels, new_labels):
-            break
-        labels = new_labels
-        for idx in range(k):
-            mask = labels == idx
-            if mask.any():
-                centers[idx] = data[mask].mean(axis=0)
-
-    if len(np.unique(labels)) < 2:
-        return None
-    return labels
 
 
 def _score_split(labels, contig_names, gene_mappings_cache):
     clusters = {}
     for contig, label in zip(contig_names, labels):
+        if label == -1: continue # Skip noise
         clusters.setdefault(label, []).append(contig)
 
     total_dup = 0
@@ -138,6 +134,9 @@ def _score_split(labels, contig_names, gene_mappings_cache):
             scg_count += len(genes)
             for g in genes:
                 gene_counts[g] = gene_counts.get(g, 0) + 1
+        
+        # For this sub-bin, track max SCGs (as a proxy for the main genome quality)
+        # Ideally we want one big clean bin, not 10 tiny clean bins
         scg_retained = max(scg_retained, scg_count)
         total_dup += sum(1 for cnt in gene_counts.values() if cnt > 1)
 
@@ -147,7 +146,7 @@ def _score_split(labels, contig_names, gene_mappings_cache):
 def refine_contaminated_bins(
     clusters_df, fragments_dict, args, refinement_round=1, max_refinement_rounds=1
 ):
-    logger.info("Refining contaminated bins (k-means only)...")
+    logger.info("Refining contaminated bins (Leiden sub-clustering)...")
 
     # Load embeddings once
     embeddings_path = os.path.join(args.output, "embeddings.csv")
@@ -195,6 +194,7 @@ def refine_contaminated_bins(
             bin_id,
             gene_mappings_cache,
             duplication_results,
+            args, # Passed args
         )
         if refined_df is None:
             refinement_summary[bin_id] = {
@@ -208,7 +208,7 @@ def refine_contaminated_bins(
         new_bins_dfs.append(refined_df)
         refinement_summary[bin_id] = {
             "status": "success",
-            "reason": "kmeans_split",
+            "reason": "leiden_split",
             "sub_bins": refined_df["cluster"].nunique(),
         }
 
