@@ -751,9 +751,18 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
 
     # Count and report final results
     final_counts = contig_clusters_df["cluster"].value_counts().to_dict()
-    n_clusters = len([k for k in final_counts.keys() if k != "noise"])
     n_noise = final_counts.get("noise", 0)
-    logger.info(f"Clustering complete: {n_clusters} clusters, {n_noise} noise contigs, sizes: {dict(sorted(final_counts.items()))}")
+
+    # Filter out singleton bins for reporting noise-free sizes
+    singleton_bins = {k: v for k, v in final_counts.items() if k != "noise" and v == 1}
+    filtered_counts = {k: v for k, v in final_counts.items() if k == "noise" or v > 1}
+    n_clusters = len([k for k in filtered_counts.keys() if k != "noise"])
+
+    logger.info(
+        f"Clustering complete: {n_clusters} clusters "
+        f"(excluding {len(singleton_bins)} singletons), {n_noise} noise contigs, "
+        f"sizes: {dict(sorted(filtered_counts.items()))}"
+    )
 
     # Check if only one bin was detected and perform reclustering
     if n_clusters == 1:
