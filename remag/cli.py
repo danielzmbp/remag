@@ -240,9 +240,10 @@ def validate_coverage_options(ctx, param, value):
 @click.option(
     "--barlow-lambda",
     type=float,
-    default=5e-3,
-    show_default=True,
-    help="Lambda parameter for Barlow Twins loss (redundancy reduction term).",
+    default=None,
+    show_default=False,
+    help="Lambda parameter for Barlow Twins loss (redundancy reduction term). "
+         "Default (auto): 0.005 for single/no coverage, 0.02 for multi-sample/coassembly.",
 )
 @click.option(
     "--min-cluster-size",
@@ -480,6 +481,16 @@ def main_cli(
             elif ext in ['tsv', 'txt']:
                 tsv_files.append(file_path)
     
+    # Set default Barlow Twins lambda based on number of samples if not provided
+    coverage_count = len(bam_cram_files) if bam_cram_files else len(tsv_files)
+    if barlow_lambda is None:
+        if coverage_count > 1:
+            barlow_lambda = 0.02
+            click.echo("Auto Barlow lambda: 0.02 (multi-sample/coassembly detected)", err=True)
+        else:
+            barlow_lambda = 0.005
+            click.echo("Auto Barlow lambda: 0.005 (single-sample or no coverage)", err=True)
+
     args = argparse.Namespace(
         fasta=fasta_path,
         bam=bam_cram_files if bam_cram_files else None,
