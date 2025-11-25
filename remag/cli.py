@@ -238,6 +238,13 @@ def validate_coverage_options(ctx, param, value):
     help="Base learning rate for contrastive learning training (scaled by batch size).",
 )
 @click.option(
+    "--barlow-lambda",
+    type=float,
+    default=5e-3,
+    show_default=True,
+    help="Lambda parameter for Barlow Twins loss (redundancy reduction term).",
+)
+@click.option(
     "--min-cluster-size",
     type=int,
     default=2,
@@ -379,6 +386,7 @@ def main_cli(
     batch_size,
     embedding_dim,
     base_learning_rate,
+    barlow_lambda,
     min_cluster_size,
     min_contig_length,
     max_positive_pairs,
@@ -481,6 +489,7 @@ def main_cli(
         batch_size=batch_size,
         embedding_dim=embedding_dim,
         base_learning_rate=base_learning_rate,
+        barlow_lambda=barlow_lambda,
         min_cluster_size=min_cluster_size,
         min_contig_length=min_contig_length,
         max_positive_pairs=max_positive_pairs,

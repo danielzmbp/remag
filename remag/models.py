@@ -139,8 +139,9 @@ class TrainingManager:
         scheduler = LearningRateScheduler.create_warmup_cosine_scheduler(optimizer, self.args)
 
         # Use BarlowTwinsLoss for contrastive learning
-        criterion = BarlowTwinsLoss(lambda_param=5e-3)
-        logger.info("Using BarlowTwinsLoss")
+        lambda_param = getattr(self.args, "barlow_lambda", 5e-3)
+        criterion = BarlowTwinsLoss(lambda_param=lambda_param)
+        logger.info(f"Using BarlowTwinsLoss (lambda={lambda_param})")
 
         return dataloader, optimizer, scheduler, criterion
     
