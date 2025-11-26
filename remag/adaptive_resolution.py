@@ -110,12 +110,34 @@ def test_multiple_resolutions(embeddings_df, gene_mappings_cache, args, test_res
                 'clusters_df': test_clusters_df
             }
 
-    # Pick the resolution with the fewest total duplications
-    best_resolution = min(results.keys(), key=lambda r: results[r]['total_duplications'])
-    best_result = results[best_resolution]
+    # Pick resolution: minimize duplications, then maximize clusters without tanking max completeness
+    min_dup = min(res['total_duplications'] for res in results.values())
+    global_max_completeness = max(res['max_bin_completeness'] for res in results.values())
 
-    logger.info(f"Best resolution: {best_resolution:.2f} with {best_result['n_clusters']} clusters, "
-               f"{best_result['total_duplications']} total duplications")
+    # Candidates with minimal duplications
+    dup_candidates = {
+        r: res for r, res in results.items() if res['total_duplications'] == min_dup
+    }
+
+    # Enforce completeness guardrail (within 90% of the best completeness observed)
+    completeness_floor = 0.9 * global_max_completeness if global_max_completeness > 0 else 0
+    filtered_candidates = {
+        r: res for r, res in dup_candidates.items()
+        if res['max_bin_completeness'] >= completeness_floor
+    }
+
+    if not filtered_candidates:
+        filtered_candidates = dup_candidates  # fallback if all fail the floor
+
+    # Among remaining, pick the one with the most clusters
+    best_resolution = max(filtered_candidates.keys(), key=lambda r: filtered_candidates[r]['n_clusters'])
+    best_result = filtered_candidates[best_resolution]
+
+    logger.info(
+        f"Best resolution: {best_resolution:.2f} with {best_result['n_clusters']} clusters, "
+        f"{best_result['total_duplications']} total duplications, "
+        f"max completeness={best_result['max_bin_completeness']}"
+    )
 
     return best_resolution, results
 
