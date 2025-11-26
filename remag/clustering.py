@@ -290,7 +290,7 @@ def _leiden_clustering(embeddings, k=15, similarity_threshold=0.1, resolution=1.
     # Log cluster sizes
     if n_clusters > 0:
         cluster_sizes = np.bincount(cluster_labels[cluster_labels >= 0])
-        logger.info(f"Cluster sizes: {cluster_sizes.tolist()}")
+        logger.debug(f"Cluster sizes: {cluster_sizes.tolist()}")
     
     return cluster_labels
 
