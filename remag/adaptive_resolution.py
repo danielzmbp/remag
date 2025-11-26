@@ -138,10 +138,10 @@ def test_multiple_resolutions(embeddings_df, gene_mappings_cache, args, test_res
         r: res for r, res in usable_results.items() if res['total_duplications'] == min_dup
     }
 
-    # Among remaining, prioritize higher max completeness, then more clusters
+    # Among remaining, prioritize more clusters (finer partition), then higher max completeness
     best_resolution = max(
         dup_candidates.keys(),
-        key=lambda r: (dup_candidates[r]['max_bin_completeness'], dup_candidates[r]['n_clusters'])
+        key=lambda r: (dup_candidates[r]['n_clusters'], dup_candidates[r]['max_bin_completeness'])
     )
     best_result = dup_candidates[best_resolution]
 
