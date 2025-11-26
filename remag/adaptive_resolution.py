@@ -114,16 +114,20 @@ def test_multiple_resolutions(embeddings_df, gene_mappings_cache, args, test_res
 
         tested_resolutions.append(resolution)
 
-        # Early stop if completeness drops below 75% of the best seen (splitting too aggressively)
+        # Early stop if completeness drops below 75% of the best seen so far (avoid over-splitting)
         current_max_comp = results[resolution]['max_bin_completeness']
-        if peak_completeness > 0 and current_max_comp < 0.75 * peak_completeness:
+        prev_peak = peak_completeness
+        if prev_peak > 0 and current_max_comp < 0.75 * prev_peak:
             logger.info(
                 f"Stopping resolution sweep early: resolution {resolution:.2f} max completeness "
-                f"{current_max_comp} < 75% of peak {peak_completeness}"
+                f"{current_max_comp} < 75% of peak {prev_peak}"
             )
+            # Drop this over-split result from consideration
+            tested_resolutions.pop()
+            results.pop(resolution, None)
             break
 
-        peak_completeness = max(peak_completeness, current_max_comp)
+        peak_completeness = max(prev_peak, current_max_comp)
 
     # Pick resolution: minimize duplications, then maximize clusters without tanking max completeness
     usable_results = {r: results[r] for r in tested_resolutions}
@@ -134,8 +138,11 @@ def test_multiple_resolutions(embeddings_df, gene_mappings_cache, args, test_res
         r: res for r, res in usable_results.items() if res['total_duplications'] == min_dup
     }
 
-    # Among remaining, pick the one with the most clusters (prefer finer partition)
-    best_resolution = max(dup_candidates.keys(), key=lambda r: dup_candidates[r]['n_clusters'])
+    # Among remaining, prioritize higher max completeness, then more clusters
+    best_resolution = max(
+        dup_candidates.keys(),
+        key=lambda r: (dup_candidates[r]['max_bin_completeness'], dup_candidates[r]['n_clusters'])
+    )
     best_result = dup_candidates[best_resolution]
 
     logger.info(
