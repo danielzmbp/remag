@@ -46,6 +46,8 @@ def test_multiple_resolutions(embeddings_df, gene_mappings_cache, args, test_res
     )
 
     results = {}
+    tested_resolutions = []
+    peak_completeness = 0
 
     for resolution in test_resolutions:
         logger.debug(f"Testing resolution={resolution:.2f}...")
@@ -110,28 +112,31 @@ def test_multiple_resolutions(embeddings_df, gene_mappings_cache, args, test_res
                 'clusters_df': test_clusters_df
             }
 
+        tested_resolutions.append(resolution)
+
+        # Early stop if completeness drops below 75% of the best seen (splitting too aggressively)
+        current_max_comp = results[resolution]['max_bin_completeness']
+        if peak_completeness > 0 and current_max_comp < 0.75 * peak_completeness:
+            logger.info(
+                f"Stopping resolution sweep early: resolution {resolution:.2f} max completeness "
+                f"{current_max_comp} < 75% of peak {peak_completeness}"
+            )
+            break
+
+        peak_completeness = max(peak_completeness, current_max_comp)
+
     # Pick resolution: minimize duplications, then maximize clusters without tanking max completeness
-    min_dup = min(res['total_duplications'] for res in results.values())
-    global_max_completeness = max(res['max_bin_completeness'] for res in results.values())
+    usable_results = {r: results[r] for r in tested_resolutions}
+    min_dup = min(res['total_duplications'] for res in usable_results.values())
 
     # Candidates with minimal duplications
     dup_candidates = {
-        r: res for r, res in results.items() if res['total_duplications'] == min_dup
+        r: res for r, res in usable_results.items() if res['total_duplications'] == min_dup
     }
 
-    # Enforce completeness guardrail (within 90% of the best completeness observed)
-    completeness_floor = 0.9 * global_max_completeness if global_max_completeness > 0 else 0
-    filtered_candidates = {
-        r: res for r, res in dup_candidates.items()
-        if res['max_bin_completeness'] >= completeness_floor
-    }
-
-    if not filtered_candidates:
-        filtered_candidates = dup_candidates  # fallback if all fail the floor
-
-    # Among remaining, pick the one with the most clusters
-    best_resolution = max(filtered_candidates.keys(), key=lambda r: filtered_candidates[r]['n_clusters'])
-    best_result = filtered_candidates[best_resolution]
+    # Among remaining, pick the one with the most clusters (prefer finer partition)
+    best_resolution = max(dup_candidates.keys(), key=lambda r: dup_candidates[r]['n_clusters'])
+    best_result = dup_candidates[best_resolution]
 
     logger.info(
         f"Best resolution: {best_resolution:.2f} with {best_result['n_clusters']} clusters, "
