@@ -177,8 +177,11 @@ def determine_optimal_resolution(embeddings_df, fragments_dict, args, gene_mappi
     logger.debug(f"Core gene statistics: median={median_count:.1f}, 90th percentile={percentile_90:.1f}, max={max_count:.1f}")
     logger.info(f"Estimated number of organisms: {estimated_organisms:.1f} (using max gene count)")
 
-    # Step 3: Use a fixed set of candidate resolutions
-    test_resolutions = [0.05, 0.10, 0.20, 0.40, 0.60, 0.80, 1.0, 1.2, 1.5, 2.0]
+    # Step 3: Choose candidate resolutions; only include very high resolution (2.0) for coassemblies
+    coverage_count = (len(args.bam) if getattr(args, "bam", None) else 0) + (len(args.tsv) if getattr(args, "tsv", None) else 0)
+    test_resolutions = [0.05, 0.10, 0.20, 0.40, 0.60, 0.80, 1.0, 1.2, 1.5]
+    if coverage_count > 1:
+        test_resolutions.append(2.0)
 
     # Load gene mappings cache for quick duplication checking
     # The cache was created during organism estimation and contains:
