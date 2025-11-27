@@ -114,13 +114,13 @@ def test_multiple_resolutions(embeddings_df, gene_mappings_cache, args, test_res
 
         tested_resolutions.append(resolution)
 
-        # Early stop if completeness drops below 75% of the best seen so far (avoid over-splitting)
+        # Early stop if completeness drops below 50% of the best seen so far (avoid over-splitting)
         current_max_comp = results[resolution]['max_bin_completeness']
         prev_peak = peak_completeness
-        if prev_peak > 0 and current_max_comp < 0.75 * prev_peak:
+        if prev_peak > 0 and current_max_comp < 0.50 * prev_peak:
             logger.info(
                 f"Stopping resolution sweep early: resolution {resolution:.2f} max completeness "
-                f"{current_max_comp} < 75% of peak {prev_peak}"
+                f"{current_max_comp} < 50% of peak {prev_peak}"
             )
             # Drop this over-split result from consideration
             tested_resolutions.pop()
