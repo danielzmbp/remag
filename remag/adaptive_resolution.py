@@ -216,7 +216,7 @@ def determine_optimal_resolution(embeddings_df, fragments_dict, args, gene_mappi
     test_resolutions = [0.05, 0.10, 0.20, 0.40, 0.60, 0.80, 1.0, 1.2, 1.5]
     if coverage_count > 1:
         # Coassembly: skip very low resolutions and include higher ones
-        test_resolutions = [0.60, 0.80, 1.0, 1.2, 1.5, 2.0, 3.0]
+        test_resolutions = [0.60, 0.80, 1.0, 1.2, 1.5, 2.0]
 
     # Load gene mappings cache for quick duplication checking
     # The cache was created during organism estimation and contains:
