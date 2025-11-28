@@ -20,7 +20,7 @@ def check_miniprot_available():
     return shutil.which("miniprot") is not None
 
 
-def estimate_organisms_from_all_contigs(fragments_dict, args, target_coverage_threshold=0.50, identity_threshold=0.30):
+def estimate_organisms_from_all_contigs(fragments_dict, args, target_coverage_threshold=0.55, identity_threshold=0.35):
     """
     Run miniprot on all contigs to estimate the number of organisms based on core gene duplications.
 
@@ -30,8 +30,8 @@ def estimate_organisms_from_all_contigs(fragments_dict, args, target_coverage_th
     Args:
         fragments_dict: Dictionary mapping headers to sequences
         args: Arguments object containing output directory, cores, etc.
-        target_coverage_threshold: Minimum target coverage for alignments (default: 0.50, lowered for better sensitivity)
-        identity_threshold: Minimum identity for alignments (default: 0.30, lowered for better sensitivity)
+        target_coverage_threshold: Minimum target coverage for alignments (default: 0.55)
+        identity_threshold: Minimum identity for alignments (default: 0.35)
 
     Returns:
         dict: {gene_family: occurrence_count} for all core genes found
@@ -230,7 +230,7 @@ def get_gene_mappings_cache_path(args):
 
 
 def parse_and_cache_paf_files(temp_dir, filtered_clusters, args,
-                            target_coverage_threshold=0.50, identity_threshold=0.30):
+                            target_coverage_threshold=0.55, identity_threshold=0.35):
     """
     Parse PAF files from miniprot output and cache gene-to-contig mappings.
     
@@ -413,8 +413,8 @@ def check_core_gene_duplications_from_cache(clusters_df, gene_mappings_cache, ar
 
 
 def check_core_gene_duplications(clusters_df, fragments_dict, args,
-                                target_coverage_threshold=0.50,
-                                identity_threshold=0.30):
+                                target_coverage_threshold=0.55,
+                                identity_threshold=0.35):
     """
     Check for duplicated core genes using miniprot.
 
@@ -425,8 +425,8 @@ def check_core_gene_duplications(clusters_df, fragments_dict, args,
         clusters_df: DataFrame with cluster assignments
         fragments_dict: Dictionary mapping headers to sequences
         args: Arguments object containing output directory, cores, etc.
-        target_coverage_threshold: Minimum target coverage (default: 0.50, lowered for better sensitivity)
-        identity_threshold: Minimum identity (default: 0.30, lowered for better sensitivity)
+        target_coverage_threshold: Minimum target coverage (default: 0.55)
+        identity_threshold: Minimum identity (default: 0.35)
 
     Returns:
         DataFrame: Updated clusters_df with duplication information
