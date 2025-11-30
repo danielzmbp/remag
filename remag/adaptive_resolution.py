@@ -224,8 +224,8 @@ def determine_optimal_resolution(embeddings_df, fragments_dict, args, gene_mappi
     coverage_count = (len(args.bam) if getattr(args, "bam", None) else 0) + (len(args.tsv) if getattr(args, "tsv", None) else 0)
 
     if mode == "single-cell":
-        # Single-cell: focus on coarse resolutions, cap at 1.0
-        test_resolutions = [0.01, 0.02, 0.05, 0.10, 0.20, 0.40, 0.60, 0.80, 1.0]
+        # Single-cell: focus on coarse resolutions, cap at 0.5
+        test_resolutions = [0.005, 0.01, 0.02, 0.05, 0.10, 0.20, 0.30, 0.40, 0.50]
     else:
         test_resolutions = [0.05, 0.10, 0.20, 0.40, 0.60, 0.80, 1.0, 1.2, 1.5]
         if coverage_count > 1:
