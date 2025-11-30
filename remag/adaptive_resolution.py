@@ -138,11 +138,19 @@ def test_multiple_resolutions(embeddings_df, gene_mappings_cache, args, test_res
         r: res for r, res in usable_results.items() if res['total_duplications'] == min_dup
     }
 
-    # Among remaining, prioritize more clusters (finer partition), then higher max completeness
-    best_resolution = max(
-        dup_candidates.keys(),
-        key=lambda r: (dup_candidates[r]['n_clusters'], dup_candidates[r]['max_bin_completeness'])
-    )
+    mode = getattr(args, "mode", "metagenomics").lower()
+    if mode == "single-cell":
+        # Prefer fewer clusters (coarser) while still minimizing duplications
+        best_resolution = min(
+            dup_candidates.keys(),
+            key=lambda r: (dup_candidates[r]['n_clusters'], -dup_candidates[r]['max_bin_completeness'])
+        )
+    else:
+        # Default: prefer more clusters (finer) after minimizing duplications
+        best_resolution = max(
+            dup_candidates.keys(),
+            key=lambda r: (dup_candidates[r]['n_clusters'], dup_candidates[r]['max_bin_completeness'])
+        )
     best_result = dup_candidates[best_resolution]
 
     logger.info(
