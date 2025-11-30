@@ -513,7 +513,7 @@ def main_cli(
     # Mode-specific defaults
     effective_k = leiden_k_neighbors
     if effective_k is None:
-        effective_k = 25 if mode.lower() == "single-cell" else 15
+        effective_k = 40 if mode.lower() == "single-cell" else 15
     skip_refinement_mode = skip_refinement or mode.lower() == "single-cell"
     if mode.lower() == "single-cell" and not skip_refinement:
         click.echo("Single-cell mode: skipping refinement and using larger k-NN graph.", err=True)
