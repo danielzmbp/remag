@@ -246,6 +246,15 @@ def validate_coverage_options(ctx, param, value):
          "Default (auto): 0.003 for single/no coverage, 0.02 for multi-sample/coassembly.",
 )
 @click.option(
+    "-m",
+    "--mode",
+    type=click.Choice(["metagenomics", "single-cell"], case_sensitive=False),
+    default="metagenomics",
+    show_default=True,
+    help="Preset mode adjusting clustering defaults. 'metagenomics' (default) maximizes clusters; "
+         "'single-cell' uses larger k-NN and minimizes clusters, and skips refinement.",
+)
+@click.option(
     "--random-seed",
     type=int,
     default=42,
@@ -353,9 +362,10 @@ def validate_coverage_options(ctx, param, value):
 @click.option(
     "--leiden-k-neighbors",
     type=int,
-    default=15,
-    show_default=True,
-    help="Number of nearest neighbors for k-NN graph construction in Leiden clustering.",
+    default=None,
+    show_default=False,
+    help="Number of nearest neighbors for k-NN graph construction in Leiden clustering. "
+         "If not set, defaults to 15 (metagenomics) or 25 (single-cell mode).",
 )
 @click.option(
     "--leiden-similarity-threshold",
@@ -395,6 +405,7 @@ def main_cli(
     embedding_dim,
     base_learning_rate,
     barlow_lambda,
+    mode,
     random_seed,
     min_cluster_size,
     min_contig_length,
@@ -499,6 +510,14 @@ def main_cli(
             barlow_lambda = 0.003
             click.echo("Auto Barlow lambda: 0.003 (single-sample or no coverage)", err=True)
 
+    # Mode-specific defaults
+    effective_k = leiden_k_neighbors
+    if effective_k is None:
+        effective_k = 25 if mode.lower() == "single-cell" else 15
+    skip_refinement_mode = skip_refinement or mode.lower() == "single-cell"
+    if mode.lower() == "single-cell" and not skip_refinement:
+        click.echo("Single-cell mode: skipping refinement and using larger k-NN graph.", err=True)
+
     args = argparse.Namespace(
         fasta=fasta_path,
         bam=bam_cram_files if bam_cram_files else None,
@@ -509,6 +528,7 @@ def main_cli(
         embedding_dim=embedding_dim,
         base_learning_rate=base_learning_rate,
         barlow_lambda=barlow_lambda,
+        mode=mode.lower(),
         random_seed=random_seed,
         min_cluster_size=min_cluster_size,
         min_contig_length=min_contig_length,
@@ -518,7 +538,7 @@ def main_cli(
         verbose=verbose,
         skip_bacterial_filter=skip_bacterial_filter,
         save_filtered_contigs=save_filtered_contigs,
-        skip_refinement=skip_refinement,
+        skip_refinement=skip_refinement_mode,
         save_bins_before_refinement=save_bins_before_refinement,
         max_refinement_rounds=max_refinement_rounds,
         min_duplications_for_refinement=min_duplications_for_refinement,
@@ -526,7 +546,7 @@ def main_cli(
         skip_chimera_detection=skip_chimera_detection,
         auto_resolution=auto_resolution,
         leiden_resolution=leiden_resolution,
-        leiden_k_neighbors=leiden_k_neighbors,
+        leiden_k_neighbors=effective_k,
         leiden_similarity_threshold=leiden_similarity_threshold,
         keep_intermediate=keep_intermediate,
         coverage_batch_size=coverage_batch_size,
