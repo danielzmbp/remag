@@ -233,7 +233,7 @@ def validate_coverage_options(ctx, param, value):
 @click.option(
     "--base-learning-rate",
     type=float,
-    default=8e-3,
+    default=5e-3,
     show_default=True,
     help="Base learning rate for contrastive learning training (scaled by batch size).",
 )
@@ -243,7 +243,14 @@ def validate_coverage_options(ctx, param, value):
     default=None,
     show_default=False,
     help="Lambda parameter for Barlow Twins loss (redundancy reduction term). "
-         "Default (auto): 0.005 for single/no coverage, 0.02 for multi-sample/coassembly.",
+         "Default (auto): 0.003 for single/no coverage, 0.02 for multi-sample/coassembly.",
+)
+@click.option(
+    "--random-seed",
+    type=int,
+    default=42,
+    show_default=True,
+    help="Random seed for reproducible training. Same seed produces identical models with same data.",
 )
 @click.option(
     "--min-cluster-size",
@@ -388,6 +395,7 @@ def main_cli(
     embedding_dim,
     base_learning_rate,
     barlow_lambda,
+    random_seed,
     min_cluster_size,
     min_contig_length,
     max_positive_pairs,
@@ -488,8 +496,8 @@ def main_cli(
             barlow_lambda = 0.02
             click.echo("Auto Barlow lambda: 0.02 (multi-sample/coassembly detected)", err=True)
         else:
-            barlow_lambda = 0.005
-            click.echo("Auto Barlow lambda: 0.005 (single-sample or no coverage)", err=True)
+            barlow_lambda = 0.003
+            click.echo("Auto Barlow lambda: 0.003 (single-sample or no coverage)", err=True)
 
     args = argparse.Namespace(
         fasta=fasta_path,
@@ -501,6 +509,7 @@ def main_cli(
         embedding_dim=embedding_dim,
         base_learning_rate=base_learning_rate,
         barlow_lambda=barlow_lambda,
+        random_seed=random_seed,
         min_cluster_size=min_cluster_size,
         min_contig_length=min_contig_length,
         max_positive_pairs=max_positive_pairs,
