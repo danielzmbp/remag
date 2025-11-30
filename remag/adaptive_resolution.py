@@ -220,11 +220,17 @@ def determine_optimal_resolution(embeddings_df, fragments_dict, args, gene_mappi
     logger.info(f"Estimated number of organisms: {estimated_organisms:.1f} (using max gene count)")
 
     # Step 3: Choose candidate resolutions
+    mode = getattr(args, "mode", "metagenomics").lower()
     coverage_count = (len(args.bam) if getattr(args, "bam", None) else 0) + (len(args.tsv) if getattr(args, "tsv", None) else 0)
-    test_resolutions = [0.05, 0.10, 0.20, 0.40, 0.60, 0.80, 1.0, 1.2, 1.5]
-    if coverage_count > 1:
-        # Coassembly: skip very low resolutions and include higher ones
-        test_resolutions = [0.60, 0.80, 1.0, 1.2, 1.5, 2.0]
+
+    if mode == "single-cell":
+        # Single-cell: focus on coarse resolutions, cap at 1.0
+        test_resolutions = [0.01, 0.02, 0.05, 0.10, 0.20, 0.40, 0.60, 0.80, 1.0]
+    else:
+        test_resolutions = [0.05, 0.10, 0.20, 0.40, 0.60, 0.80, 1.0, 1.2, 1.5]
+        if coverage_count > 1:
+            # Coassembly: skip very low resolutions and include higher ones
+            test_resolutions = [0.60, 0.80, 1.0, 1.2, 1.5, 2.0]
 
     # Load gene mappings cache for quick duplication checking
     # The cache was created during organism estimation and contains:
