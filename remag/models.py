@@ -27,6 +27,35 @@ def seed_worker(worker_id):
     random.seed(worker_seed)
 
 
+def set_random_seeds(seed=42):
+    """
+    Set random seeds for reproducible training.
+
+    Sets seeds for:
+    - Python random module
+    - NumPy
+    - PyTorch CPU operations
+    - PyTorch CUDA operations
+    - CUDNN backend (for deterministic convolutions/pooling)
+
+    Args:
+        seed: Random seed value (default: 42)
+    """
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)  # For multi-GPU setups
+
+        # Make CUDNN deterministic (may have small performance impact)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+
+    logger.debug(f"Set random seed to {seed} for reproducible training")
+
+
 class EarlyStoppingManager:
     """Manages early stopping logic during training."""
     
@@ -658,6 +687,10 @@ def train_siamese_network(features_df, args):
         features_df: DataFrame with k-mer and coverage features
         args: Arguments object with training parameters
     """
+    # Set random seeds for reproducible training
+    seed = getattr(args, 'random_seed', 42)
+    set_random_seeds(seed)
+
     model_path = get_model_path(args)
 
     # Feature dimensions: k-mer features are always 136, coverage is 2 per sample
