@@ -520,8 +520,13 @@ def main_cli(
     if effective_k is None:
         effective_k = 30 if mode.lower() == "single-cell" else 15
     skip_refinement_mode = skip_refinement or mode.lower() == "single-cell"
-    if mode.lower() == "single-cell" and not skip_refinement:
-        click.echo("Single-cell mode: skipping refinement and using larger k-NN graph.", err=True)
+    skip_bacterial_filter_mode = skip_bacterial_filter or mode.lower() == "single-cell"
+
+    if mode.lower() == "single-cell":
+        if not skip_refinement:
+            click.echo("Single-cell mode: skipping refinement and using larger k-NN graph.", err=True)
+        if not skip_bacterial_filter:
+            click.echo("Single-cell mode: skipping euk filter (keeping all contigs).", err=True)
 
     args = argparse.Namespace(
         fasta=fasta_path,
@@ -541,7 +546,7 @@ def main_cli(
         cores=threads,
         min_bin_size=min_bin_size,
         verbose=verbose,
-        skip_bacterial_filter=skip_bacterial_filter,
+        skip_bacterial_filter=skip_bacterial_filter_mode,
         save_filtered_contigs=save_filtered_contigs,
         skip_refinement=skip_refinement_mode,
         save_bins_before_refinement=save_bins_before_refinement,
