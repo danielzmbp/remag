@@ -510,6 +510,11 @@ def main_cli(
             barlow_lambda = 0.003
             click.echo("Auto Barlow lambda: 0.003 (single-sample or no coverage)", err=True)
 
+    # Bump default min contig length for coassemblies (keep user override if set)
+    if coverage_count > 1 and min_contig_length == 1000:
+        min_contig_length = 4000
+        click.echo("Coassembly detected: using min contig length 4000 bp (was 1000)", err=True)
+
     # Mode-specific defaults
     effective_k = leiden_k_neighbors
     if effective_k is None:
