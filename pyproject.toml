@@ -75,8 +75,7 @@ Documentation = "https://github.com/danielzmbp/remag"
 [project.scripts]
 remag = "remag.cli:main"
 
-[project.license-files]
-paths = ["LICENSE"]
+license-files = ["LICENSE"]
 
 [tool.setuptools]
 
