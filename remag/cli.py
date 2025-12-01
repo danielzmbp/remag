@@ -512,8 +512,8 @@ def main_cli(
 
     # Bump default min contig length for coassemblies (keep user override if set)
     if coverage_count > 1 and min_contig_length == 1000:
-        min_contig_length = 4000
-        click.echo("Coassembly detected: using min contig length 4000 bp (was 1000)", err=True)
+        min_contig_length = 4096
+        click.echo("Coassembly detected: using min contig length 4096 bp (was 1000)", err=True)
 
     # Mode-specific defaults
     effective_k = leiden_k_neighbors
