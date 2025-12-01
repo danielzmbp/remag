@@ -81,7 +81,6 @@ def setup_logging(output_dir=None, verbose=False):
     )
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
-        path_manager = PathManager(output_dir)
         logger.add(
             os.path.join(output_dir, "remag.log"),
             level="DEBUG",
@@ -108,18 +107,18 @@ def fasta_iter(fasta_file):
     """Iterate over sequences in a FASTA file."""
     with open_file(fasta_file, "r") as f:
         header = ""
-        seq = ""
+        seq_lines = []
         for line in f:
             line = line.strip()
             if line.startswith(">"):
                 if header:
-                    yield header, seq
+                    yield header, "".join(seq_lines)
                 header = line.lstrip(">")  # Remove the ">" character from the header
-                seq = ""
+                seq_lines = []
             else:
-                seq += line
+                seq_lines.append(line)
         if header:
-            yield header, seq
+            yield header, "".join(seq_lines)
 
 
 import re

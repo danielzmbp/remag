@@ -96,7 +96,7 @@ def get_features_csv_path(output_dir):
     return os.path.join(output_dir, "features.csv")
 
 
-def filter_bacterial_contigs(fasta_file, output_dir, min_contig_length=1000, cores=8, hyenadna_batch_size=1024, save_filtered_contigs=False):
+def filter_bacterial_contigs(fasta_file, output_dir, min_contig_length=1000, hyenadna_batch_size=1024, save_filtered_contigs=False):
     """
     Filter non-eukaryotic contigs using the HyenaDNA classifier.
     Keeps contigs predicted as eukaryotic with sufficient confidence.
@@ -105,7 +105,6 @@ def filter_bacterial_contigs(fasta_file, output_dir, min_contig_length=1000, cor
         fasta_file: Path to input FASTA file
         output_dir: Output directory for filtered results
         min_contig_length: Minimum contig length threshold
-        cores: Number of CPU cores to use (note: HyenaDNA uses GPU when available)
         hyenadna_batch_size: Batch size for HyenaDNA model inference (default: 1024)
         save_filtered_contigs: If True, save non-eukaryotic contigs to a separate file
 
@@ -526,6 +525,7 @@ def get_features(
         min_contig_length: Minimum contig length
         cores: Number of cores for processing
         num_augmentations: Number of random fragments per contig
+        args: Command line arguments object
 
     Returns:
         Tuple of (features DataFrame, fragments dictionary)
@@ -643,7 +643,7 @@ def get_features(
     elif tsv_files:
         logger.debug("Calculating coverage from TSV files...")
         coverage_calculator = TSVCoverageCalculator(tsv_files, cores)
-
+    
     if coverage_calculator:
         coverage_df = coverage_calculator.calculate_coverage(fragments_dict)
         df = pd.concat([df, coverage_df.reindex(df.index).fillna(0.0)], axis=1)
@@ -664,16 +664,17 @@ def get_features(
         col for col in df.columns if isinstance(col, str) and "coverage" in col.lower()
     ]
     if coverage_columns:
-        # Coverage features are already log-transformed during calculation
-        # Now apply global MinMax scaling across all samples
-        logger.debug("Applying global MinMax scaling across all coverage features")
+        # Apply log transformation to coverage features
+        df[coverage_columns] = df[coverage_columns].map(lambda x: np.log1p(x))
+        logger.debug(
+            f"Applied log transformation to {len(coverage_columns)} coverage features"
+        )
 
-        # Apply global MinMax scaling across all coverage columns
-        from sklearn.preprocessing import MinMaxScaler
+        logger.debug("Applying global scaling to preserve co-abundance patterns across samples")
 
         scaler = MinMaxScaler(feature_range=(0, 1))
         df[coverage_columns] = scaler.fit_transform(df[coverage_columns])
-        logger.debug(f"Applied global MinMax scaling (0-1 range) to {len(coverage_columns)} coverage features")
+        logger.debug(f"Applied MinMaxScaler (0-1 range) to {len(coverage_columns)} coverage features")
         
         # Log sample information for debugging
         sample_names = set()
@@ -733,11 +734,11 @@ class BAMCoverageCalculator(CoverageCalculator):
 
 class TSVCoverageCalculator(CoverageCalculator):
     """Calculate coverage from TSV files."""
-
+    
     def __init__(self, tsv_files: List[str], cores: int = 16):
         super().__init__(cores)
         self.tsv_files = tsv_files
-
+    
     def calculate_coverage(self, fragments_dict: FragmentDict) -> pd.DataFrame:
         """Calculate coverage from TSV files."""
         return calculate_coverage_from_tsv(self.tsv_files, fragments_dict)
@@ -987,18 +988,35 @@ def _calculate_fragment_stats_vectorized(coverage_array, fragment_coords):
             # Extract all fragment data at once using advanced indexing
             all_fragment_data = coverage_array[all_indices]
             
-            # Calculate means and stds using reduceat operations
-            cumulative_indices = np.cumsum([0] + fragment_lengths[:-1])
+            # Prepare arrays for reduceat
+            fragment_lengths_arr = np.array(fragment_lengths)
+            cumulative_indices_arr = np.cumsum([0] + fragment_lengths[:-1])
             
-            for i, (start_idx, length) in enumerate(zip(cumulative_indices, fragment_lengths)):
-                if length > 0:
-                    fragment_data = all_fragment_data[start_idx:start_idx + length]
-                    if len(fragment_data) > 0:
-                        means[i] = np.mean(fragment_data)
-                        stds[i] = np.std(fragment_data) if len(fragment_data) > 1 else 0.0
-                    else:
-                        means[i] = 0.0
-                        stds[i] = 0.0
+            # Only process non-empty fragments
+            valid_mask = fragment_lengths_arr > 0
+            
+            if np.any(valid_mask):
+                valid_indices = cumulative_indices_arr[valid_mask]
+                valid_lengths = fragment_lengths_arr[valid_mask]
+                
+                # Calculate sums using reduceat
+                # reduceat computes sum[indices[i]:indices[i+1]]
+                # For the last segment, it goes to the end of the array, which is exactly what we want
+                # as all_fragment_data is perfectly packed with only valid fragments
+                sums = np.add.reduceat(all_fragment_data, valid_indices)
+                means_valid = sums / valid_lengths
+                
+                # Calculate stds: sqrt(mean(x^2) - mean(x)^2)
+                sums_sq = np.add.reduceat(all_fragment_data**2, valid_indices)
+                vars_valid = (sums_sq / valid_lengths) - (means_valid ** 2)
+                
+                # Handle numerical precision issues
+                vars_valid = np.maximum(vars_valid, 0)
+                stds_valid = np.sqrt(vars_valid)
+                
+                # Map back to full arrays
+                means[valid_mask] = means_valid
+                stds[valid_mask] = stds_valid
         
         return means, stds
         
@@ -1248,11 +1266,6 @@ def calculate_coverage_from_tsv(
     # Ensure all fragments are present and fill missing values with 0
     coverage_features = coverage_features.reindex(all_fragment_headers).fillna(0.0)
 
-    # Apply log transformation to TSV coverage values for consistency with BAM processing
-    # This preserves relative differences and prevents compression of low-abundance organisms
-    logger.debug("Applying log transformation to TSV coverage values")
-    coverage_features = coverage_features.applymap(lambda x: np.log1p(x))
-
     return coverage_features
 
 
@@ -1271,9 +1284,9 @@ def calculate_coverage_from_multiple_bams(
     bam_files: List[str], fragments_dict: FragmentDict, cores: int = 16, coverage_batch_size: int = 100000
 ) -> pd.DataFrame:
     """Calculate coverage from multiple alignment files (BAM/CRAM), creating separate columns for each sample.
-
+    
     Coverage is normalized by total mapped reads per sample to account for different
-    sequencing depths, then log-transformed before global MinMax scaling.
+    sequencing depths, then scaled per-sample to preserve within-sample relationships.
 
     Args:
         bam_files: List of alignment file paths (BAM/CRAM)
@@ -1321,21 +1334,24 @@ def calculate_coverage_from_multiple_bams(
                 normalized_coverage = {fh: 0.0 for fh in all_fragment_headers}
                 normalized_coverage_std = {fh: 0.0 for fh in all_fragment_headers}
             else:
-                # Normalize by total mapped reads to account for sequencing depth differences
-                depth_normalized_coverage = {k: v / total_mapped_reads for k, v in coverage.items()}
-                depth_normalized_std = {k: v / total_mapped_reads for k, v in coverage_std.items()}
-
-                # Apply log transformation to preserve relative differences
-                log_coverage = {k: np.log1p(v) for k, v in depth_normalized_coverage.items()}
-                log_coverage_std = {k: np.log1p(v) for k, v in depth_normalized_std.items()}
-
-                # Use log-transformed values
-                normalized_coverage = log_coverage
-                normalized_coverage_std = log_coverage_std
-
-                logger.debug(
-                    f"Normalized by {total_mapped_reads:,} mapped reads and applied log transformation"
-                )
+                # Normalize by total mapped reads (convert to reads per million, RPM)
+                normalization_factor = total_mapped_reads / 1_000_000
+                if normalization_factor <= 0:
+                    logger.warning(
+                        f"Normalization factor for {os.path.basename(bam_file)} is non-positive ({normalization_factor:.2f}); assigning zero coverage."
+                    )
+                    normalized_coverage = {fh: 0.0 for fh in all_fragment_headers}
+                    normalized_coverage_std = {fh: 0.0 for fh in all_fragment_headers}
+                else:
+                    normalized_coverage = {
+                        k: v / normalization_factor for k, v in coverage.items()
+                    }
+                    normalized_coverage_std = {
+                        k: v / normalization_factor for k, v in coverage_std.items()
+                    }
+                    logger.debug(
+                        f"Normalized coverage by {total_mapped_reads:,} mapped reads (factor: {normalization_factor:.2f})"
+                    )
 
             sample_name = os.path.splitext(os.path.basename(bam_file))[0]
             mean_col_name = f"{sample_name}_coverage"
