@@ -395,6 +395,12 @@ def validate_coverage_options(ctx, param, value):
     show_default=True,
     help="Batch size for HyenaDNA model inference. Higher values speed up GPU inference but use more VRAM. Use 2048-4096 for high-end GPUs.",
 )
+@click.option(
+    "--filter-only",
+    is_flag=True,
+    default=False,
+    help="Only run eukaryotic filtering and write filtered FASTA; skip feature generation, training, and binning.",
+)
 def main_cli(
     fasta_arg,
     fasta,
@@ -428,6 +434,7 @@ def main_cli(
     keep_intermediate,
     coverage_batch_size,
     hyenadna_batch_size,
+    filter_only,
 ):
     """
     **REMAG**: Recovery of Eukaryotic Metagenome-Assembled Genomes
