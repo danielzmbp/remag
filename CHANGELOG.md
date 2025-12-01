@@ -112,11 +112,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Detailed cross-correlation matrix statistics tracking
   - Separate invariance and redundancy loss components
   - Helps identify training issues like collapsed embeddings
-- Development workflow documentation (AGENTS.md)
-  - Project structure and module organization guidelines
-  - Build, test, and code quality commands
-  - Commit message conventions and best practices
-
 ### Removed
 - XGBoost classifier and all related dependencies (xgboost, scikit-learn)
 - Legacy xgbclass module and pre-trained models
