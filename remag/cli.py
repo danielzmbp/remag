@@ -243,7 +243,7 @@ def validate_coverage_options(ctx, param, value):
     default=None,
     show_default=False,
     help="Lambda parameter for Barlow Twins loss (redundancy reduction term). "
-         "Default (auto): 0.003 for single/no coverage, 0.02 for multi-sample/coassembly.",
+         "Default (auto): 0.003 for single/no coverage, 0.005 for multi-sample/coassembly.",
 )
 @click.option(
     "-m",
