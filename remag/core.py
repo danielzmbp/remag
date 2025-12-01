@@ -50,6 +50,11 @@ def main(args):
     else:
         logger.info("Skipping eukaryotic filtering as requested")
 
+    # If user only wants filtering, exit early
+    if getattr(args, "filter_only", False):
+        logger.info("Filter-only mode enabled; skipping feature generation and binning.")
+        return
+
     # Generate all features with full augmentations upfront
     logger.info(
         f"Generating features with {args.num_augmentations} augmentations per contig..."
