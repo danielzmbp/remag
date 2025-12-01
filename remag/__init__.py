@@ -6,7 +6,7 @@ try:
     from ._version import __version__
 except ImportError:
     # Fallback for Bioconda/conda installations without git
-    __version__ = "0.2.5"
+    __version__ = "0.3.4"
 
 __author__ = "Daniel Gómez-Pérez"
 __email__ = "daniel.gomez-perez@earlham.ac.uk"
