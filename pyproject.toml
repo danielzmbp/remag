@@ -8,7 +8,7 @@ version = "0.3.4"
 description = "Recovery of high-quality eukaryotic genomes from complex metagenomes"
 readme = "README.md"
 requires-python = ">=3.9"
-license = {file = "LICENSE"}
+license = "MIT"
 authors = [
     {name = "Daniel Gómez-Pérez", email = "daniel.gomez-perez@earlham.ac.uk"},
 ]
