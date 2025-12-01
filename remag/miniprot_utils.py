@@ -14,17 +14,13 @@ from loguru import logger
 
 from .utils import ContigHeaderMapper, initialize_duplication_columns
 
-# Miniprot alignment quality thresholds
-DEFAULT_TARGET_COVERAGE_THRESHOLD = 0.30
-DEFAULT_IDENTITY_THRESHOLD = 0.50
-
 
 def check_miniprot_available():
     """Check if miniprot is available in PATH."""
     return shutil.which("miniprot") is not None
 
 
-def estimate_organisms_from_all_contigs(fragments_dict, args, target_coverage_threshold=DEFAULT_TARGET_COVERAGE_THRESHOLD, identity_threshold=DEFAULT_IDENTITY_THRESHOLD):
+def estimate_organisms_from_all_contigs(fragments_dict, args, target_coverage_threshold=0.55, identity_threshold=0.35):
     """
     Run miniprot on all contigs to estimate the number of organisms based on core gene duplications.
 
@@ -34,8 +30,8 @@ def estimate_organisms_from_all_contigs(fragments_dict, args, target_coverage_th
     Args:
         fragments_dict: Dictionary mapping headers to sequences
         args: Arguments object containing output directory, cores, etc.
-        target_coverage_threshold: Minimum target coverage for alignments (default: 0.30)
-        identity_threshold: Minimum identity for alignments (default: 0.40)
+        target_coverage_threshold: Minimum target coverage for alignments (default: 0.55)
+        identity_threshold: Minimum identity for alignments (default: 0.35)
 
     Returns:
         dict: {gene_family: occurrence_count} for all core genes found
@@ -223,29 +219,6 @@ def estimate_organisms_from_all_contigs(fragments_dict, args, target_coverage_th
             logger.info(f"Organism estimation files preserved at: {temp_dir}")
 
 
-def extract_gene_counts_from_mappings(gene_mappings):
-    """
-    Extract gene counts from existing gene-to-contig mappings.
-
-    This function counts how many times each gene family appears across all contigs,
-    without needing to run miniprot again.
-
-    Args:
-        gene_mappings: Dict from parse_and_cache_paf_files() or estimate_organisms_from_all_contigs()
-                      Format: {contig_name: {gene_family: {score, coverage, identity}}}
-
-    Returns:
-        dict: {gene_family: occurrence_count} for all core genes found
-    """
-    gene_counts = {}
-
-    for contig_name, genes in gene_mappings.items():
-        for gene_family in genes.keys():
-            gene_counts[gene_family] = gene_counts.get(gene_family, 0) + 1
-
-    return gene_counts
-
-
 def get_core_gene_duplication_results_path(args):
     """Get the path for the core gene duplication results file."""
     return os.path.join(args.output, "core_gene_duplication_results.json")
@@ -257,19 +230,19 @@ def get_gene_mappings_cache_path(args):
 
 
 def parse_and_cache_paf_files(temp_dir, filtered_clusters, args,
-                            target_coverage_threshold=DEFAULT_TARGET_COVERAGE_THRESHOLD, identity_threshold=DEFAULT_IDENTITY_THRESHOLD):
+                            target_coverage_threshold=0.55, identity_threshold=0.35):
     """
     Parse PAF files from miniprot output and cache gene-to-contig mappings.
-
+    
     This function extracts all gene-to-contig mappings from PAF files and stores
     them in a format that can be reused during refinement without re-running miniprot.
-
+    
     Args:
         temp_dir: Directory containing PAF files
         filtered_clusters: Dictionary of cluster_id -> contig_headers
         args: Arguments object
-        target_coverage_threshold: Minimum target coverage for alignments (default: 0.30)
-        identity_threshold: Minimum identity for alignments (default: 0.40)
+        target_coverage_threshold: Minimum target coverage for alignments
+        identity_threshold: Minimum identity for alignments
     
     Returns:
         dict: {contig_name: {gene_family: {score, coverage, identity}}}
@@ -365,15 +338,12 @@ def check_core_gene_duplications_from_cache(clusters_df, gene_mappings_cache, ar
     """
     logger.debug("Checking core gene duplications using cached mappings...")
     
-    # Group contigs by cluster
-    cluster_contig_dict = {}
-    for _, row in clusters_df.iterrows():
-        contig_name = row["contig"]
-        cluster_id = row["cluster"]
-        
-        if cluster_id not in cluster_contig_dict:
-            cluster_contig_dict[cluster_id] = set()
-        cluster_contig_dict[cluster_id].add(contig_name)
+    # Group contigs by cluster efficiently
+    cluster_contig_dict = (
+        clusters_df.groupby("cluster")["contig"]
+        .apply(set)
+        .to_dict()
+    )
     
     duplication_results = {}
     
@@ -426,30 +396,25 @@ def check_core_gene_duplications_from_cache(clusters_df, gene_mappings_cache, ar
         1 for r in duplication_results.values() if r["has_duplications"]
     )
     total_bins_checked = len(duplication_results)
-    logger.debug(
+    logger.info(
         f"Checked {total_bins_checked} bins using cache: {bins_with_duplications} have duplicated core genes"
     )
 
-    # Save results only if keeping intermediate files (consistent with check_core_gene_duplications)
-    if getattr(args, "keep_intermediate", False):
-        results_path = get_core_gene_duplication_results_path(args)
-        try:
-            with open(results_path, "w") as f:
-                json.dump(duplication_results, f, indent=2)
-            logger.debug(f"Saved duplication results to {results_path}")
-        except Exception as e:
-            logger.warning(f"Failed to save duplication results: {e}")
-
-    # Store duplication results in args for refinement (consistent with check_core_gene_duplications)
-    args._duplication_results = duplication_results
+    # Always save duplication results so refinement can load them later
+    results_path = get_core_gene_duplication_results_path(args)
+    try:
+        with open(results_path, "w") as f:
+            json.dump(duplication_results, f, indent=2)
+        logger.debug(f"Saved duplication results to {results_path}")
+    except Exception as e:
+        logger.warning(f"Failed to save duplication results: {e}")
 
     return clusters_df
 
 
 def check_core_gene_duplications(clusters_df, fragments_dict, args,
-                                target_coverage_threshold=DEFAULT_TARGET_COVERAGE_THRESHOLD,
-                                identity_threshold=DEFAULT_IDENTITY_THRESHOLD,
-                                use_header_cache=False):
+                                target_coverage_threshold=0.55,
+                                identity_threshold=0.35):
     """
     Check for duplicated core genes using miniprot.
 
@@ -460,10 +425,9 @@ def check_core_gene_duplications(clusters_df, fragments_dict, args,
         clusters_df: DataFrame with cluster assignments
         fragments_dict: Dictionary mapping headers to sequences
         args: Arguments object containing output directory, cores, etc.
-        target_coverage_threshold: Minimum target coverage (default: 0.30)
-        identity_threshold: Minimum identity (default: 0.40)
-        use_header_cache: Whether to use function-level caching for header lookup
-    
+        target_coverage_threshold: Minimum target coverage (default: 0.55)
+        identity_threshold: Minimum identity (default: 0.35)
+
     Returns:
         DataFrame: Updated clusters_df with duplication information
     """
@@ -491,25 +455,17 @@ def check_core_gene_duplications(clusters_df, fragments_dict, args,
 
     # Group contigs by cluster (clusters_df is now contig-level)
     # Use ContigHeaderMapper for efficient lookups
-    if use_header_cache:
-        # Use cached mapper if available
-        if not hasattr(check_core_gene_duplications, '_mapper_cache'):
-            check_core_gene_duplications._mapper_cache = ContigHeaderMapper(fragments_dict)
-        mapper = check_core_gene_duplications._mapper_cache
-    else:
-        # Create new mapper
-        mapper = ContigHeaderMapper(fragments_dict)
+    mapper = ContigHeaderMapper(fragments_dict)
     
-    cluster_contig_dict = {}
-    for _, row in clusters_df.iterrows():
-        contig_name = row["contig"]
-        cluster_id = row["cluster"]
-
-        original_header = mapper.get_header(contig_name)
-        if original_header:
-            if cluster_id not in cluster_contig_dict:
-                cluster_contig_dict[cluster_id] = set()
-            cluster_contig_dict[cluster_id].add(original_header)
+    cluster_contig_dict = (
+        clusters_df.groupby("cluster")["contig"]
+        .apply(lambda contigs: {
+            mapper.get_header(c) 
+            for c in contigs 
+            if mapper.get_header(c)
+        })
+        .to_dict()
+    )
 
     # Filter clusters by size and exclude noise
     filtered_clusters = {}
@@ -735,10 +691,13 @@ def check_core_gene_duplications(clusters_df, fragments_dict, args,
         f"Checked {total_bins_checked} bins: {bins_with_duplications} have duplicated core genes"
     )
 
-    # Save results only if keeping intermediate files
-    if getattr(args, "keep_intermediate", False):
-        results_path = get_core_gene_duplication_results_path(args)
+    # Always save duplication results so later steps (e.g., refinement) can load them
+    results_path = get_core_gene_duplication_results_path(args)
+    try:
         with open(results_path, "w") as f:
             json.dump(duplication_results, f, indent=2)
+        logger.debug(f"Saved duplication results to {results_path}")
+    except Exception as e:
+        logger.warning(f"Failed to save duplication results: {e}")
 
     return clusters_df

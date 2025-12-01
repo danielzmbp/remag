@@ -105,21 +105,21 @@ singularity run docker://danielzmbp/remag:latest \
   contigs.fasta -c alignments.bam
 
 # Build Singularity image from Docker Hub
-singularity build remag_v0.3.2.sif docker://danielzmbp/remag:v0.3.2
+singularity build remag_v0.2.5.sif docker://danielzmbp/remag:v0.2.5
 
 # Or build latest version
 singularity build remag_latest.sif docker://danielzmbp/remag:latest
 
 # Run with Singularity
-singularity run --bind $(pwd):/data remag_v0.3.2.sif \
+singularity run --bind $(pwd):/data remag_v0.2.5.sif \
   /data/contigs.fasta -c /data/alignments.bam
 
 # Or use exec for direct command execution
-singularity exec --bind $(pwd):/data remag_v0.3.2.sif \
+singularity exec --bind $(pwd):/data remag_v0.2.5.sif \
   remag /data/contigs.fasta -c /data/alignments.bam -o /data/output
 
 # For interactive shell
-singularity shell --bind $(pwd):/data remag_v0.3.2.sif
+singularity shell --bind $(pwd):/data remag_v0.2.5.sif
 
 # Build a local Singularity image file (optional)
 singularity build remag.sif docker://danielzmbp/remag:latest
@@ -204,7 +204,7 @@ REMAG uses a sophisticated multi-stage pipeline specifically designed for eukary
 1. **Eukaryotic Filtering**: By default, REMAG automatically filters for eukaryotic contigs using the integrated HyenaDNA LLM-based classifier (can be disabled with `--skip-bacterial-filter`)
 2. **Feature Extraction**: Combines k-mer composition (4-mers) with coverage profiles across multiple samples. Large contigs are split into overlapping fragments for augmentation during training
 3. **Contrastive Learning**: Trains a Siamese neural network using the Barlow Twins self-supervised loss function. This creates embeddings where fragments from the same contig are close together
-4. **Adaptive Resolution**: Automatically determines optimal Leiden clustering resolution by estimating organism count from core gene analysis, then testing multiple resolutions and selecting the one that maximizes bin quality (completeness - 5 × contamination)
+4. **Adaptive Resolution**: Automatically determines optimal Leiden clustering resolution by testing multiple resolutions and selecting the one that maximizes individual bin completeness
 5. **Clustering**: Graph-based Leiden clustering on the learned contig embeddings to form bins
 6. **Quality Assessment**: Uses miniprot to align bins against a database of eukaryotic core genes to detect contamination
 7. **Iterative Refinement**: Automatically splits contaminated bins based on core gene duplications, then tests lower resolutions to find the most conservative solution

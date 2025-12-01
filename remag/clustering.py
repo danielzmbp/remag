@@ -139,21 +139,31 @@ def _construct_knn_graph(embeddings, k=15, similarity_threshold=0.1, n_jobs=1, a
     # Convert distances to similarities (cosine distance = 1 - cosine similarity)
     similarities = 1 - distances
     
-    # Build edge list efficiently
-    edges = []
-    weights = []
+    # Build edge list using vectorized operations
+    # Skip self-match (column 0)
+    neighbor_indices = indices[:, 1:k+1]
+    neighbor_similarities = similarities[:, 1:k+1]
     
-    for i in range(len(embeddings)):
-        # Skip self (first neighbor) and apply similarity threshold
-        for j in range(1, k+1):  # Skip index 0 (self)
-            neighbor_idx = indices[i, j]
-            similarity = similarities[i, j]
-            
-            if similarity >= similarity_threshold:
-                edges.append((i, neighbor_idx))
-                weights.append(float(similarity))
-
-    logger.debug(f"Created {len(edges)} edges with similarity >= {similarity_threshold:.2f}")
+    # Create source indices array [0, 0... 1, 1...] matching the shape
+    # Use broadcasting/repeating to align with flattened neighbor arrays
+    source_indices = np.repeat(np.arange(len(embeddings)), neighbor_indices.shape[1])
+    
+    # Flatten arrays
+    flat_sources = source_indices
+    flat_targets = neighbor_indices.flatten()
+    flat_weights = neighbor_similarities.flatten()
+    
+    # Apply threshold mask
+    mask = flat_weights >= similarity_threshold
+    
+    # Create edges and weights
+    # igraph expects list of tuples for edges
+    valid_sources = flat_sources[mask]
+    valid_targets = flat_targets[mask]
+    edges = list(zip(valid_sources, valid_targets))
+    weights = flat_weights[mask].tolist()
+    
+    logger.info(f"Created {len(edges)} edges with similarity >= {similarity_threshold}")
     
     # Create igraph from edge list
     g = ig.Graph()
@@ -274,14 +284,14 @@ def _leiden_clustering(embeddings, k=15, similarity_threshold=0.1, resolution=1.
     unique_labels = np.unique(cluster_labels)
     n_clusters = len(unique_labels) - (1 if -1 in unique_labels else 0)
     n_noise = np.sum(cluster_labels == -1)
-
-    logger.debug(f"Leiden clustering complete: {n_clusters} clusters, {n_noise} noise points")
-
+    
+    logger.info(f"Leiden clustering complete: {n_clusters} clusters, {n_noise} noise points")
+    
     # Log cluster sizes
     if n_clusters > 0:
         cluster_sizes = np.bincount(cluster_labels[cluster_labels >= 0])
         logger.debug(f"Cluster sizes: {cluster_sizes.tolist()}")
-
+    
     return cluster_labels
 
 
@@ -428,23 +438,32 @@ def _permutation_anova_chimera_test(h1_embeddings, h2_embeddings, n_permutations
     
     # Calculate observed F-statistic
     def calculate_f_statistic(distances, labels):
-        intra_distances = [d for d, l in zip(distances, labels) if l == 'intra']
-        inter_distances = [d for d, l in zip(distances, labels) if l == 'inter']
+        # Vectorized implementation
+        # Ensure labels is a numpy array for boolean indexing
+        labels_arr = np.asarray(labels)
         
-        if not intra_distances or not inter_distances:
+        # Create masks for groups
+        intra_mask = labels_arr == 'intra'
+        inter_mask = labels_arr == 'inter'
+        
+        n_intra = np.sum(intra_mask)
+        n_inter = np.sum(inter_mask)
+        
+        if n_intra == 0 or n_inter == 0:
             return 0.0
             
-        mean_intra = np.mean(intra_distances)
-        mean_inter = np.mean(inter_distances)
+        # Calculate means
+        mean_intra = np.mean(distances[intra_mask])
+        mean_inter = np.mean(distances[inter_mask])
         mean_total = np.mean(distances)
         
         # Between-group sum of squares
-        ss_between = (len(intra_distances) * (mean_intra - mean_total)**2 + 
-                     len(inter_distances) * (mean_inter - mean_total)**2)
+        ss_between = (n_intra * (mean_intra - mean_total)**2 + 
+                     n_inter * (mean_inter - mean_total)**2)
         
         # Within-group sum of squares
-        ss_within = (sum((d - mean_intra)**2 for d in intra_distances) + 
-                    sum((d - mean_inter)**2 for d in inter_distances))
+        ss_within = (np.sum((distances[intra_mask] - mean_intra)**2) + 
+                    np.sum((distances[inter_mask] - mean_inter)**2))
         
         # Degrees of freedom
         df_between = 1  # 2 groups - 1
@@ -732,9 +751,18 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
 
     # Count and report final results
     final_counts = contig_clusters_df["cluster"].value_counts().to_dict()
-    n_clusters = len([k for k in final_counts.keys() if k != "noise"])
     n_noise = final_counts.get("noise", 0)
-    logger.info(f"Clustering complete: {n_clusters} clusters, {n_noise} noise contigs, sizes: {dict(sorted(final_counts.items()))}")
+
+    # Filter out singleton bins for reporting noise-free sizes
+    singleton_bins = {k: v for k, v in final_counts.items() if k != "noise" and v == 1}
+    filtered_counts = {k: v for k, v in final_counts.items() if k == "noise" or v > 1}
+    n_clusters = len([k for k in filtered_counts.keys() if k != "noise"])
+
+    logger.info(
+        f"Clustering complete: {n_clusters} clusters "
+        f"(excluding {len(singleton_bins)} singletons), {n_noise} noise contigs, "
+        f"sizes: {dict(sorted(filtered_counts.items()))}"
+    )
 
     # Check if only one bin was detected and perform reclustering
     if n_clusters == 1:

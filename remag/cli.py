@@ -84,9 +84,6 @@ click.rich_click.OPTION_GROUPS = {
     ]
 }
 
-# Store full option groups for restoration
-_FULL_OPTION_GROUPS = click.rich_click.OPTION_GROUPS.copy()
-
 
 def custom_help_callback(ctx, param, value):
     """
@@ -160,11 +157,11 @@ def validate_coverage_options(ctx, param, value):
             flattened_files.extend(item)
         else:
             flattened_files.append(item)
-
+    
     # Categorize files by extension
     bam_cram_files = []
     tsv_files = []
-
+    
     for file_path in flattened_files:
         ext = file_path.lower().split('.')[-1]
         if ext in ['bam', 'cram']:
@@ -173,11 +170,11 @@ def validate_coverage_options(ctx, param, value):
             tsv_files.append(file_path)
         else:
             raise click.BadParameter(f"Unsupported coverage file format: {file_path}. Supported formats: BAM, CRAM, TSV")
-
+    
     # Don't allow mixing BAM/CRAM with TSV files
     if bam_cram_files and tsv_files:
         raise click.BadParameter("Cannot mix BAM/CRAM files with TSV files. Use either alignment files or pre-computed coverage files, not both.")
-
+    
     return flattened_files
 
 
@@ -222,7 +219,7 @@ def validate_coverage_options(ctx, param, value):
 @click.option(
     "--batch-size",
     type=int,
-    default=4096,
+    default=2048,
     show_default=True,
     help="Batch size for contrastive learning training.",
 )
@@ -236,9 +233,33 @@ def validate_coverage_options(ctx, param, value):
 @click.option(
     "--base-learning-rate",
     type=float,
-    default=0.0025,
+    default=5e-3,
     show_default=True,
     help="Base learning rate for contrastive learning training (scaled by batch size).",
+)
+@click.option(
+    "--barlow-lambda",
+    type=float,
+    default=None,
+    show_default=False,
+    help="Lambda parameter for Barlow Twins loss (redundancy reduction term). "
+         "Default (auto): 0.003 for single/no coverage, 0.02 for multi-sample/coassembly.",
+)
+@click.option(
+    "-m",
+    "--mode",
+    type=click.Choice(["metagenomics", "single-cell"], case_sensitive=False),
+    default="metagenomics",
+    show_default=True,
+    help="Preset mode adjusting clustering defaults. 'metagenomics' (default) maximizes clusters; "
+         "'single-cell' uses larger k-NN and minimizes clusters, and skips refinement.",
+)
+@click.option(
+    "--random-seed",
+    type=int,
+    default=42,
+    show_default=True,
+    help="Random seed for reproducible training. Same seed produces identical models with same data.",
 )
 @click.option(
     "--min-cluster-size",
@@ -250,7 +271,7 @@ def validate_coverage_options(ctx, param, value):
 @click.option(
     "--min-contig-length",
     type=int,
-    default=4096,
+    default=1000,
     show_default=True,
     help="Minimum contig length in base pairs for binning consideration.",
 )
@@ -272,7 +293,7 @@ def validate_coverage_options(ctx, param, value):
 @click.option(
     "--min-bin-size",
     type=int,
-    default=300000,
+    default=500000,
     show_default=True,
     help="Minimum total bin size in base pairs for output.",
 )
@@ -300,7 +321,7 @@ def validate_coverage_options(ctx, param, value):
 @click.option(
     "--max-refinement-rounds",
     type=int,
-    default=16,
+    default=2,
     show_default=True,
     help="Maximum number of iterative bin refinement rounds.",
 )
@@ -314,7 +335,7 @@ def validate_coverage_options(ctx, param, value):
 @click.option(
     "--num-augmentations",
     type=int,
-    default=4,
+    default=8,
     show_default=True,
     help="Number of random fragments per contig for data augmentation.",
 )
@@ -341,9 +362,10 @@ def validate_coverage_options(ctx, param, value):
 @click.option(
     "--leiden-k-neighbors",
     type=int,
-    default=15,
-    show_default=True,
-    help="Number of nearest neighbors for k-NN graph construction in Leiden clustering.",
+    default=None,
+    show_default=False,
+    help="Number of nearest neighbors for k-NN graph construction in Leiden clustering. "
+         "If not set, defaults to 15 (metagenomics) or 25 (single-cell mode).",
 )
 @click.option(
     "--leiden-similarity-threshold",
@@ -373,6 +395,12 @@ def validate_coverage_options(ctx, param, value):
     show_default=True,
     help="Batch size for HyenaDNA model inference. Higher values speed up GPU inference but use more VRAM. Use 2048-4096 for high-end GPUs.",
 )
+@click.option(
+    "--filter-only",
+    is_flag=True,
+    default=False,
+    help="Only run eukaryotic filtering and write filtered FASTA; skip feature generation, training, and binning.",
+)
 def main_cli(
     fasta_arg,
     fasta,
@@ -382,6 +410,9 @@ def main_cli(
     batch_size,
     embedding_dim,
     base_learning_rate,
+    barlow_lambda,
+    mode,
+    random_seed,
     min_cluster_size,
     min_contig_length,
     max_positive_pairs,
@@ -403,6 +434,7 @@ def main_cli(
     keep_intermediate,
     coverage_batch_size,
     hyenadna_batch_size,
+    filter_only,
 ):
     """
     **REMAG**: Recovery of Eukaryotic Metagenome-Assembled Genomes
@@ -466,7 +498,7 @@ def main_cli(
     # Separate coverage files by type
     bam_cram_files = []
     tsv_files = []
-
+    
     if coverage:
         for file_path in coverage:
             ext = file_path.lower().split('.')[-1]
@@ -474,6 +506,34 @@ def main_cli(
                 bam_cram_files.append(file_path)
             elif ext in ['tsv', 'txt']:
                 tsv_files.append(file_path)
+    
+    # Set default Barlow Twins lambda based on number of samples if not provided
+    coverage_count = len(bam_cram_files) if bam_cram_files else len(tsv_files)
+    if barlow_lambda is None:
+        if coverage_count > 1:
+            barlow_lambda = 0.005
+            click.echo("Auto Barlow lambda: 0.005 (multi-sample/coassembly detected)", err=True)
+        else:
+            barlow_lambda = 0.003
+            click.echo("Auto Barlow lambda: 0.003 (single-sample or no coverage)", err=True)
+
+    # Bump default min contig length for coassemblies (keep user override if set)
+    if coverage_count > 1 and min_contig_length == 1000:
+        min_contig_length = 4096
+        click.echo("Coassembly detected: using min contig length 4096 bp (was 1000)", err=True)
+
+    # Mode-specific defaults
+    effective_k = leiden_k_neighbors
+    if effective_k is None:
+        effective_k = 30 if mode.lower() == "single-cell" else 15
+    skip_refinement_mode = skip_refinement or mode.lower() == "single-cell"
+    skip_bacterial_filter_mode = skip_bacterial_filter or mode.lower() == "single-cell"
+
+    if mode.lower() == "single-cell":
+        if not skip_refinement:
+            click.echo("Single-cell mode: skipping refinement and using larger k-NN graph.", err=True)
+        if not skip_bacterial_filter:
+            click.echo("Single-cell mode: skipping euk filter (keeping all contigs).", err=True)
 
     args = argparse.Namespace(
         fasta=fasta_path,
@@ -484,15 +544,18 @@ def main_cli(
         batch_size=batch_size,
         embedding_dim=embedding_dim,
         base_learning_rate=base_learning_rate,
+        barlow_lambda=barlow_lambda,
+        mode=mode.lower(),
+        random_seed=random_seed,
         min_cluster_size=min_cluster_size,
         min_contig_length=min_contig_length,
         max_positive_pairs=max_positive_pairs,
         cores=threads,
         min_bin_size=min_bin_size,
         verbose=verbose,
-        skip_bacterial_filter=skip_bacterial_filter,
+        skip_bacterial_filter=skip_bacterial_filter_mode,
         save_filtered_contigs=save_filtered_contigs,
-        skip_refinement=skip_refinement,
+        skip_refinement=skip_refinement_mode,
         save_bins_before_refinement=save_bins_before_refinement,
         max_refinement_rounds=max_refinement_rounds,
         min_duplications_for_refinement=min_duplications_for_refinement,
@@ -500,7 +563,7 @@ def main_cli(
         skip_chimera_detection=skip_chimera_detection,
         auto_resolution=auto_resolution,
         leiden_resolution=leiden_resolution,
-        leiden_k_neighbors=leiden_k_neighbors,
+        leiden_k_neighbors=effective_k,
         leiden_similarity_threshold=leiden_similarity_threshold,
         keep_intermediate=keep_intermediate,
         coverage_batch_size=coverage_batch_size,

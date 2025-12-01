@@ -20,9 +20,10 @@ import torch.nn.functional as F
 from functools import partial
 from einops import rearrange
 from typing import Optional
-# from torchvision.ops import StochasticDepth  # Not needed - using simple replacement
+
+
 class StochasticDepth(nn.Module):
-    """Simple replacement for torchvision.ops.StochasticDepth"""
+    """Simple StochasticDepth implementation to avoid torchvision dependency"""
     def __init__(self, p=0.0, mode='row'):
         super().__init__()
         self.p = p
@@ -915,12 +916,6 @@ class HyenaDNAModel(nn.Module):
         # Initialize weights and apply final processing
         self.apply(partial(_init_weights, n_layer=n_layer,
                            **(initializer_cfg if initializer_cfg is not None else {})))
-
-        # if self.use_head:
-        #     self.tie_weights()
-
-    # def tie_weights(self):
-    #     self.head.weight = self.backbone.embeddings.word_embeddings.weight
 
     def forward(self, input_ids, position_ids=None, state=None): # state for the repo interface
         hidden_states = self.backbone(input_ids, position_ids=position_ids)

@@ -2,6 +2,7 @@
 Neural network models for REMAG
 """
 
+import copy
 import itertools
 import numpy as np
 import os
@@ -26,6 +27,35 @@ def seed_worker(worker_id):
     random.seed(worker_seed)
 
 
+def set_random_seeds(seed=42):
+    """
+    Set random seeds for reproducible training.
+
+    Sets seeds for:
+    - Python random module
+    - NumPy
+    - PyTorch CPU operations
+    - PyTorch CUDA operations
+    - CUDNN backend (for deterministic convolutions/pooling)
+
+    Args:
+        seed: Random seed value (default: 42)
+    """
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)  # For multi-GPU setups
+
+        # Make CUDNN deterministic (may have small performance impact)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+
+    logger.debug(f"Set random seed to {seed} for reproducible training")
+
+
 class EarlyStoppingManager:
     """Manages early stopping logic during training."""
     
@@ -38,8 +68,6 @@ class EarlyStoppingManager:
     def check_improvement(self, current_loss, model_state):
         """Check if current loss is an improvement and update state."""
         if current_loss < self.best_loss:
-            import copy
-
             self.best_loss = current_loss
             self.best_model_state = copy.deepcopy(model_state)
             self.epochs_no_improve = 0
@@ -101,6 +129,10 @@ class TrainingManager:
 
     def setup_training(self, model, features_df):
         """Set up training components (dataset, dataloader, optimizer, scheduler)."""
+        # Set random seed for deterministic dataset generation
+        random.seed(42)
+        np.random.seed(42)
+
         dataset = SequenceDataset(
             features_df,
             max_positive_pairs=self.args.max_positive_pairs
@@ -122,7 +154,6 @@ class TrainingManager:
             "shuffle": True,
             "drop_last": not has_enough_data,
             "worker_init_fn": seed_worker,
-            "generator": torch.Generator().manual_seed(42),
         }
         if self.device.type == "cuda":
             dataloader_kwargs["num_workers"] = self.args.cores if self.args.cores > 0 else 4
@@ -137,8 +168,9 @@ class TrainingManager:
         scheduler = LearningRateScheduler.create_warmup_cosine_scheduler(optimizer, self.args)
 
         # Use BarlowTwinsLoss for contrastive learning
-        criterion = BarlowTwinsLoss(lambda_param=5e-3)
-        logger.info("Using BarlowTwinsLoss")
+        lambda_param = getattr(self.args, "barlow_lambda", 5e-3)
+        criterion = BarlowTwinsLoss(lambda_param=lambda_param)
+        logger.info(f"Using BarlowTwinsLoss (lambda={lambda_param})")
 
         return dataloader, optimizer, scheduler, criterion
     
@@ -218,11 +250,11 @@ class EnhancedFusionLayer(nn.Module):
     DEFAULT_NUM_HEADS = 4
     DEFAULT_DROPOUT = 0.1
     GATE_INPUT_MULTIPLIER = 2  # For concatenated features in gates
-    MULTI_SCALE_CONCAT_MULTIPLIER = 4  # 2 scales * 2 (kmer+coverage) features each
-    COMPRESSOR_HIDDEN_MULTIPLIER = 2
-    COMPRESSOR_OUTPUT_MULTIPLIER = 1
-    INTERACTION_HIDDEN_MULTIPLIER = 2
-    INTERACTION_INTERMEDIATE_MULTIPLIER = 1
+    MULTI_SCALE_CONCAT_MULTIPLIER = 6  # 3 scales * 2 (kmer+coverage) features each
+    COMPRESSOR_HIDDEN_MULTIPLIER = 4
+    COMPRESSOR_OUTPUT_MULTIPLIER = 2
+    INTERACTION_HIDDEN_MULTIPLIER = 3
+    INTERACTION_INTERMEDIATE_MULTIPLIER = 2
     FINAL_FUSION_INPUT_MULTIPLIER = 4  # gated_kmer + gated_coverage + interaction + alignment
     FINAL_FUSION_HIDDEN_MULTIPLIER = 2
     RESIDUAL_WEIGHT_INIT = 0.5
@@ -262,12 +294,13 @@ class EnhancedFusionLayer(nn.Module):
             nn.Sequential(
                 nn.Linear(embedding_dim, embedding_dim // 2),
                 nn.ReLU(),
-                nn.Linear(embedding_dim // 2, embedding_dim)  # Fine scale
+                nn.Linear(embedding_dim // 2, embedding_dim)  # Project back to common dim
             ),
+            nn.Linear(embedding_dim, embedding_dim),  # Identity scale
             nn.Sequential(
                 nn.Linear(embedding_dim, embedding_dim * 2),
                 nn.ReLU(),
-                nn.Linear(embedding_dim * 2, embedding_dim)  # Coarse scale
+                nn.Linear(embedding_dim * 2, embedding_dim)  # Project back to common dim
             )
         ])
 
@@ -290,7 +323,9 @@ class EnhancedFusionLayer(nn.Module):
             nn.Linear(embedding_dim * self.COMPRESSOR_OUTPUT_MULTIPLIER, embedding_dim * self.INTERACTION_HIDDEN_MULTIPLIER),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(embedding_dim * self.INTERACTION_HIDDEN_MULTIPLIER, embedding_dim)
+            nn.Linear(embedding_dim * self.INTERACTION_HIDDEN_MULTIPLIER, embedding_dim * self.INTERACTION_INTERMEDIATE_MULTIPLIER),
+            nn.ReLU(),
+            nn.Linear(embedding_dim * self.INTERACTION_INTERMEDIATE_MULTIPLIER, embedding_dim)
         )
 
         # Adaptive dropout
@@ -382,8 +417,8 @@ class EnhancedFusionLayer(nn.Module):
 
         # Concatenate multi-scale features (now all have consistent dimensions)
         # Each scale produces embedding_dim features for both kmer and coverage -> embedding_dim * 2 per scale
-        # 2 scales * embedding_dim * 2 = embedding_dim * 4 total
-        multi_scale_concat = torch.cat(scale_features, dim=1)  # [B, embedding_dim * 4]
+        # 3 scales * embedding_dim * 2 = embedding_dim * 6 total
+        multi_scale_concat = torch.cat(scale_features, dim=1)  # [B, embedding_dim * 6]
 
         # Compress multi-scale features before interaction module
         multi_scale_compressed = self.multi_scale_compressor(multi_scale_concat)
@@ -435,12 +470,8 @@ class SiameseNetwork(nn.Module):
 
             # Scale hidden dimensions based on number of samples
             # More samples = more complex co-abundance patterns = larger encoder
-            if n_samples_estimate == 1:
-                # 1 sample: 2 features → 16 → 8
-                coverage_hidden1 = 16
-                coverage_hidden2 = 8
-            elif n_samples_estimate == 2:
-                # 2 samples: 4 features → 32 → 16
+            if n_samples_estimate <= 2:
+                # 1-2 samples: 2-4 features → 32 → 16
                 coverage_hidden1 = 32
                 coverage_hidden2 = 16
             elif n_samples_estimate <= 5:
@@ -557,10 +588,6 @@ class SiameseNetwork(nn.Module):
         return output1, output2
 
 
-
-# BarlowTwinsLoss moved to losses.py
-
-
 class SequenceDataset(Dataset):
     def __init__(self, features_df, max_positive_pairs=500000):
         """Initialize contrastive learning dataset with positive pairs from same contigs.
@@ -660,6 +687,10 @@ def train_siamese_network(features_df, args):
         features_df: DataFrame with k-mer and coverage features
         args: Arguments object with training parameters
     """
+    # Set random seeds for reproducible training
+    seed = getattr(args, 'random_seed', 42)
+    set_random_seeds(seed)
+
     model_path = get_model_path(args)
 
     # Feature dimensions: k-mer features are always 136, coverage is 2 per sample
@@ -706,8 +737,12 @@ def train_siamese_network(features_df, args):
     logger.info(f"Starting training for {args.epochs} epochs...")
 
     # Training loop
-    epoch_progress = tqdm(range(args.epochs), desc="Training Progress")
-    
+    # Only show progress bar in verbose mode
+    if getattr(args, 'verbose', False):
+        epoch_progress = tqdm(range(args.epochs), desc="Training Progress")
+    else:
+        epoch_progress = range(args.epochs)
+
     for epoch in epoch_progress:
         avg_loss, matrix_stats = trainer.train_epoch(model, dataloader, optimizer, criterion)
         scheduler.step()
@@ -733,12 +768,13 @@ def train_siamese_network(features_df, args):
             logger.info(f"Early stopping after {epoch+1} epochs (patience: {trainer.early_stopping.patience})")
             break
 
-        # Update progress bar
-        epoch_progress.set_postfix({
-            "Loss": f"{avg_loss:.4f}",
-            "LR": f"{current_lr:.2e}",
-            "Best": f"{trainer.early_stopping.best_loss:.4f}"
-        })
+        # Update progress bar (only if verbose mode enabled)
+        if getattr(args, 'verbose', False):
+            epoch_progress.set_postfix({
+                "Loss": f"{avg_loss:.4f}",
+                "LR": f"{current_lr:.2e}",
+                "Best": f"{trainer.early_stopping.best_loss:.4f}"
+            })
 
         # Print to screen every 20 epochs or on the last epoch
         if (epoch + 1) % 20 == 0 or epoch == args.epochs - 1:
