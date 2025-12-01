@@ -9,6 +9,7 @@ description = "Recovery of high-quality eukaryotic genomes from complex metageno
 readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     {name = "Daniel Gómez-Pérez", email = "daniel.gomez-perez@earlham.ac.uk"},
 ]
@@ -74,8 +75,6 @@ Documentation = "https://github.com/danielzmbp/remag"
 
 [project.scripts]
 remag = "remag.cli:main"
-
-license-files = ["LICENSE"]
 
 [tool.setuptools]
 
