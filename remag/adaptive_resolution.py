@@ -15,7 +15,7 @@ from .miniprot_utils import estimate_organisms_from_all_contigs, check_core_gene
 from .clustering import _construct_knn_graph, _leiden_clustering_on_graph
 
 
-def test_multiple_resolutions(embeddings_df, gene_mappings_cache, args, test_resolutions):
+def test_multiple_resolutions(embeddings_df, gene_mappings_cache, args, test_resolutions, is_coassembly=False):
     """
     Test multiple resolution values and pick the best based on core gene duplications.
 
@@ -24,6 +24,7 @@ def test_multiple_resolutions(embeddings_df, gene_mappings_cache, args, test_res
         gene_mappings_cache: Cached gene-to-contig mappings from miniprot
         args: Arguments object
         test_resolutions: List of resolution values to test
+        is_coassembly: Whether this run is a coassembly (multi-sample coverage)
 
     Returns:
         tuple: (best_resolution, results_dict)
@@ -129,7 +130,7 @@ def test_multiple_resolutions(embeddings_df, gene_mappings_cache, args, test_res
 
         peak_completeness = max(prev_peak, current_max_comp)
 
-    # Pick resolution: minimize duplications, then maximize clusters without tanking max completeness
+    # Pick resolution: minimize duplications, then choose cluster granularity based on mode/assembly type
     usable_results = {r: results[r] for r in tested_resolutions}
     min_dup = min(res['total_duplications'] for res in usable_results.values())
 
@@ -139,7 +140,9 @@ def test_multiple_resolutions(embeddings_df, gene_mappings_cache, args, test_res
     }
 
     mode = getattr(args, "mode", "metagenomics").lower()
-    if mode == "single-cell":
+    prefer_min_clusters = mode == "single-cell" or is_coassembly
+
+    if prefer_min_clusters:
         # Prefer fewer clusters (coarser) while still minimizing duplications
         best_resolution = min(
             dup_candidates.keys(),
@@ -223,14 +226,18 @@ def determine_optimal_resolution(embeddings_df, fragments_dict, args, gene_mappi
     mode = getattr(args, "mode", "metagenomics").lower()
     coverage_count = (len(args.bam) if getattr(args, "bam", None) else 0) + (len(args.tsv) if getattr(args, "tsv", None) else 0)
 
+    is_coassembly = coverage_count > 1
+    single_sample_resolutions = [0.05, 0.10, 0.20, 0.40, 0.60, 0.80, 1.0, 1.2, 1.5]
+    coassembly_resolutions = sorted(set(single_sample_resolutions + [2.0]))
+
     if mode == "single-cell":
         # Single-cell: skip sweep, use fixed coarse resolution
         test_resolutions = [0.01]
     else:
-        test_resolutions = [0.05, 0.10, 0.20, 0.40, 0.60, 0.80, 1.0, 1.2, 1.5]
-        if coverage_count > 1:
-            # Coassembly: skip very low resolutions and include higher ones
-            test_resolutions = [0.60, 0.80, 1.0, 1.2, 1.5, 2.0]
+        test_resolutions = single_sample_resolutions
+        if is_coassembly:
+            # Coassembly: sweep the full single-sample range and include higher resolution
+            test_resolutions = coassembly_resolutions
 
     # Load gene mappings cache for quick duplication checking
     # The cache was created during organism estimation and contains:
@@ -262,7 +269,11 @@ def determine_optimal_resolution(embeddings_df, fragments_dict, args, gene_mappi
 
     # Step 4: Test resolutions and pick the best
     best_resolution, results = test_multiple_resolutions(
-        embeddings_df, gene_mappings_cache, args, test_resolutions
+        embeddings_df,
+        gene_mappings_cache,
+        args,
+        test_resolutions,
+        is_coassembly=is_coassembly,
     )
 
     # Save resolution testing results if keeping intermediate files
