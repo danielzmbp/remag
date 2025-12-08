@@ -511,11 +511,17 @@ def main_cli(
     coverage_count = len(bam_cram_files) if bam_cram_files else len(tsv_files)
     if barlow_lambda is None:
         if coverage_count > 1:
-            barlow_lambda = 0.005
-            click.echo("Auto Barlow lambda: 0.005 (multi-sample/coassembly detected)", err=True)
+            barlow_lambda = 0.02
+            click.echo("Auto Barlow lambda: 0.02 (multi-sample/coassembly detected)", err=True)
         else:
             barlow_lambda = 0.003
             click.echo("Auto Barlow lambda: 0.003 (single-sample or no coverage)", err=True)
+
+    # Set default base learning rate based on number of samples if not provided
+    # Only apply if user did not explicitly set it via --base-learning-rate
+    if coverage_count > 1 and base_learning_rate == 5e-3: # Check if it's the default value
+        base_learning_rate = 0.0005
+        click.echo("Coassembly detected: Auto base learning rate set to 0.0005.", err=True)
 
     # Bump default min contig length for coassemblies (keep user override if set)
     if coverage_count > 1 and min_contig_length == 1000:
