@@ -46,29 +46,27 @@ class TestClusteringIntegration:
         # Import the main clustering function
         from remag.clustering import cluster_contigs
         
-        # Mock the eukaryotic scores loading to avoid file dependencies
-        with patch.object(ClusteringManager, 'load_eukaryotic_scores', return_value={}):
-            # Run the clustering pipeline
-            try:
-                clusters_df = cluster_contigs(sample_embeddings_df, sample_fragments_dict, mock_args)
-                
-                # Verify output structure
-                assert isinstance(clusters_df, pd.DataFrame)
-                assert 'contig' in clusters_df.columns
-                assert 'cluster' in clusters_df.columns
-                
-                # Should not have more clusters than contigs
-                assert len(clusters_df) <= len(sample_embeddings_df)
-                
-                # All contigs should be assigned to some cluster
-                assert clusters_df['cluster'].notna().all()
-                
-                # Cluster IDs should be reasonable (string format)
-                assert all(isinstance(cluster_id, str) for cluster_id in clusters_df['cluster'])
-                
-            except Exception as e:
-                # If the test fails, provide useful debugging info
-                pytest.fail(f"Clustering pipeline failed: {e}")
+        # Run the clustering pipeline
+        try:
+            clusters_df = cluster_contigs(sample_embeddings_df, sample_fragments_dict, mock_args)
+            
+            # Verify output structure
+            assert isinstance(clusters_df, pd.DataFrame)
+            assert 'contig' in clusters_df.columns
+            assert 'cluster' in clusters_df.columns
+            
+            # Should not have more clusters than contigs
+            assert len(clusters_df) <= len(sample_embeddings_df)
+            
+            # All contigs should be assigned to some cluster
+            assert clusters_df['cluster'].notna().all()
+            
+            # Cluster IDs should be reasonable (string format)
+            assert all(isinstance(cluster_id, str) for cluster_id in clusters_df['cluster'])
+            
+        except Exception as e:
+            # If the test fails, provide useful debugging info
+            pytest.fail(f"Clustering pipeline failed: {e}")
     
     def test_clustering_with_empty_input(self, mock_args):
         """Test clustering handles empty input gracefully."""
@@ -77,11 +75,10 @@ class TestClusteringIntegration:
         
         from remag.clustering import cluster_contigs
         
-        with patch.object(ClusteringManager, 'load_eukaryotic_scores', return_value={}):
-            # Should handle empty input gracefully
-            result = cluster_contigs(empty_embeddings, empty_fragments, mock_args)
-            assert isinstance(result, pd.DataFrame)
-            assert len(result) == 0  # Empty result for empty input
+        # Should handle empty input gracefully
+        result = cluster_contigs(empty_embeddings, empty_fragments, mock_args)
+        assert isinstance(result, pd.DataFrame)
+        assert len(result) == 0  # Empty result for empty input
     
     def test_clustering_with_single_contig(self, mock_args):
         """Test clustering with single contig."""
@@ -98,12 +95,11 @@ class TestClusteringIntegration:
         
         from remag.clustering import cluster_contigs
         
-        with patch.object(ClusteringManager, 'load_eukaryotic_scores', return_value={}):
-            clusters_df = cluster_contigs(single_embedding_df, single_fragments, mock_args)
-            
-            assert len(clusters_df) == 1
-            assert clusters_df.iloc[0]['contig'] == 'single_contig'
-            assert isinstance(clusters_df.iloc[0]['cluster'], str)
+        clusters_df = cluster_contigs(single_embedding_df, single_fragments, mock_args)
+        
+        assert len(clusters_df) == 1
+        assert clusters_df.iloc[0]['contig'] == 'single_contig'
+        assert isinstance(clusters_df.iloc[0]['cluster'], str)
 
 
 class TestGraphCaching:
@@ -171,15 +167,14 @@ class TestErrorRecovery:
         
         from remag.clustering import cluster_contigs
         
-        with patch.object(ClusteringManager, 'load_eukaryotic_scores', return_value={}):
-            # Should either handle NaN gracefully or raise clear error
-            try:
-                result = cluster_contigs(invalid_embeddings, fragments, mock_args)
-                # If it succeeds, should return valid result
-                assert isinstance(result, pd.DataFrame)
-            except (ValueError, RuntimeError) as e:
-                # Or should raise a clear, informative error
-                assert 'nan' in str(e).lower() or 'invalid' in str(e).lower()
+        # Should either handle NaN gracefully or raise clear error
+        try:
+            result = cluster_contigs(invalid_embeddings, fragments, mock_args)
+            # If it succeeds, should return valid result
+            assert isinstance(result, pd.DataFrame)
+        except (ValueError, RuntimeError) as e:
+            # Or should raise a clear, informative error
+            assert 'nan' in str(e).lower() or 'invalid' in str(e).lower()
     
     def test_clustering_handles_mismatched_data(self, sample_embeddings_df, mock_args):
         """Test clustering when embeddings and fragments don't match."""
@@ -191,15 +186,14 @@ class TestErrorRecovery:
         
         from remag.clustering import cluster_contigs
         
-        with patch.object(ClusteringManager, 'load_eukaryotic_scores', return_value={}):
-            # Should handle mismatch gracefully
-            try:
-                result = cluster_contigs(sample_embeddings_df, mismatched_fragments, mock_args)
-                assert isinstance(result, pd.DataFrame)
-                # Should still produce some clustering result
-            except (KeyError, ValueError) as e:
-                # Or should provide clear error about mismatch
-                assert 'mismatch' in str(e).lower() or 'not found' in str(e).lower()
+        # Should handle mismatch gracefully
+        try:
+            result = cluster_contigs(sample_embeddings_df, mismatched_fragments, mock_args)
+            assert isinstance(result, pd.DataFrame)
+            # Should still produce some clustering result
+        except (KeyError, ValueError) as e:
+            # Or should provide clear error about mismatch
+            assert 'mismatch' in str(e).lower() or 'not found' in str(e).lower()
 
 
 class TestPerformanceBaseline:
@@ -231,14 +225,13 @@ class TestPerformanceBaseline:
         from remag.clustering import cluster_contigs
         import time
         
-        with patch.object(ClusteringManager, 'load_eukaryotic_scores', return_value={}):
-            start_time = time.time()
-            clusters_df = cluster_contigs(embeddings_df, fragments, mock_args)
-            duration = time.time() - start_time
-            
-            # Should complete within reasonable time (adjust threshold as needed)
-            assert duration < 60.0  # 60 seconds max for 500 contigs
-            
-            # Should produce reasonable clustering
-            assert isinstance(clusters_df, pd.DataFrame)
-            assert len(clusters_df) <= n_contigs
+        start_time = time.time()
+        clusters_df = cluster_contigs(embeddings_df, fragments, mock_args)
+        duration = time.time() - start_time
+        
+        # Should complete within reasonable time (adjust threshold as needed)
+        assert duration < 60.0  # 60 seconds max for 500 contigs
+        
+        # Should produce reasonable clustering
+        assert isinstance(clusters_df, pd.DataFrame)
+        assert len(clusters_df) <= n_contigs

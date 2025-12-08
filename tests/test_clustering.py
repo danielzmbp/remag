@@ -97,44 +97,7 @@ class TestClusteringManager:
         assert manager.args == mock_args
         assert hasattr(manager, 'graph_manager')
     
-    def test_load_eukaryotic_scores_file_not_exists(self, mock_args, temp_dir):
-        """Test loading eukaryotic scores when file doesn't exist."""
-        mock_args.output = temp_dir
-        mock_args.fasta = "test.fasta"
-        
-        manager = ClusteringManager(mock_args)
-        
-        with patch('remag.features.get_classification_results_path') as mock_path:
-            mock_path.return_value = "/nonexistent/path.tsv"
-            scores = manager.load_eukaryotic_scores()
-            
-        assert isinstance(scores, dict)
-        assert len(scores) == 0  # Should return empty dict if file not found
-    
-    def test_load_eukaryotic_scores_file_exists(self, mock_args, temp_dir):
-        """Test loading eukaryotic scores when file exists."""
-        # Create a mock classification results file
-        classification_file = os.path.join(temp_dir, "classification.tsv")
-        classification_data = pd.DataFrame({
-            'header': ['contig1', 'contig2', 'contig3'],
-            'eukar_score': [0.8, 0.2, 0.9]
-        })
-        classification_data.to_csv(classification_file, sep='\t', index=False)
-        
-        mock_args.output = temp_dir
-        mock_args.fasta = "test.fasta"
-        
-        manager = ClusteringManager(mock_args)
-        
-        with patch('remag.features.get_classification_results_path') as mock_path:
-            mock_path.return_value = classification_file
-            scores = manager.load_eukaryotic_scores()
-        
-        assert isinstance(scores, dict)
-        assert len(scores) == 3
-        assert scores['contig1'] == 0.8
-        assert scores['contig2'] == 0.2
-        assert scores['contig3'] == 0.9
+
 
 
 class TestChimeraDetection:

@@ -133,14 +133,14 @@ class TestMiniprot_SecurityFix:
                 mock_args.verbose = False
                 mock_args.min_bin_size = 1000
                 
-                with patch('tempfile.mkdtemp', return_value='/tmp/test'):
-                    # This should not crash even with timeout
+                with tempfile.TemporaryDirectory() as tmp_path:
+                    mock_args.output = tmp_path
                     try:
                         result = check_core_gene_duplications(
-                            clusters_df, fragments_dict, '/fake/db', mock_args
+                            clusters_df, fragments_dict, mock_args, '/fake/db'
                         )
                         # Should return empty results on timeout, not crash
-                        assert isinstance(result, dict)
+                        assert isinstance(result, pd.DataFrame)
                     except subprocess.TimeoutExpired:
                         # Or handle timeout exception gracefully
                         pass
@@ -177,17 +177,17 @@ class TestErrorHandling:
                 mock_args = Mock()
                 mock_args.cores = 4
                 mock_args.min_bin_size = 1000
-                mock_args.output = '/tmp/test_output'
                 
-                with patch('tempfile.mkdtemp', return_value='/tmp/test'), \
-                     patch('os.path.exists', return_value=True):
-                    try:
-                        result = check_core_gene_duplications(
-                            clusters_df, fragments_dict, mock_args
-                        )
-                        # Should return a DataFrame, not crash
-                        assert isinstance(result, pd.DataFrame)
-                        assert 'has_duplicated_core_genes' in result.columns
-                    except PermissionError:
-                        # Or handle the error appropriately
-                        pass
+                with tempfile.TemporaryDirectory() as tmp_path:
+                    mock_args.output = tmp_path
+                    with patch('os.path.exists', return_value=True):
+                        try:
+                            result = check_core_gene_duplications(
+                                clusters_df, fragments_dict, mock_args
+                            )
+                            # Should return a DataFrame, not crash
+                            assert isinstance(result, pd.DataFrame)
+                            assert 'has_duplicated_core_genes' in result.columns
+                        except PermissionError:
+                            # Or handle the error appropriately
+                            pass
