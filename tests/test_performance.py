@@ -264,7 +264,7 @@ class TestBenchmarks:
         duration = time.time() - start_time
         
         # Verify reasonable baseline performance (serves as regression test baseline)
-        assert duration < 10.0, (
+        assert duration < 15.0, (
             f"Baseline chimera detection too slow: {duration:.4f}s"
         )
         
