@@ -14,6 +14,7 @@ from .models import train_siamese_network, generate_embeddings
 from .clustering import cluster_contigs
 from .miniprot_utils import check_core_gene_duplications, check_core_gene_duplications_from_cache, get_gene_mappings_cache_path
 from .refinement import refine_contaminated_bins
+from .rescue import rescue_fragmented_bins # Import the new rescue function
 from .output import save_clusters_as_fasta
 
 
@@ -168,6 +169,21 @@ def main(args):
     else:
         logger.info("Skipping refinement")
         refinement_summary = {}
+
+    # --- NEW: Run rescue step ---
+    if not getattr(args, "skip_rescue", False):
+        logger.info("Applying bin rescue strategy...")
+        clusters_df = rescue_fragmented_bins(
+            clusters_df,
+            embeddings_df,
+            fragments_dict,
+            args,
+            similarity_threshold=0.70, # Based on our proof of concept
+            max_duplication_increase=5.0
+        )
+    else:
+        logger.info("Skipping rescue step")
+
 
     if refinement_summary and getattr(args, "keep_intermediate", False):
         refinement_summary_path = os.path.join(args.output, "refinement_summary.json")

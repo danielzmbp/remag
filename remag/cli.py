@@ -79,7 +79,7 @@ click.rich_click.OPTION_GROUPS = {
         },
         {
             "name": "Filtering & Processing",
-            "options": ["--min-contig-length", "--min-bin-size", "--coverage-batch-size", "--hyenadna-batch-size", "--skip-bacterial-filter", "--save-filtered-contigs", "--skip-refinement", "--save-bins-before-refinement", "--max-refinement-rounds", "--min-duplications-for-refinement", "--skip-chimera-detection"],
+            "options": ["--min-contig-length", "--min-bin-size", "--coverage-batch-size", "--hyenadna-batch-size", "--skip-bacterial-filter", "--save-filtered-contigs", "--skip-refinement", "--skip-rescue", "--save-bins-before-refinement", "--max-refinement-rounds", "--min-duplications-for-refinement", "--skip-chimera-detection"],
         },
     ]
 }
@@ -271,9 +271,11 @@ def validate_coverage_options(ctx, param, value):
 @click.option(
     "--min-contig-length",
     type=int,
-    default=1000,
-    show_default=True,
-    help="Minimum contig length in base pairs for binning consideration.",
+    default=None,
+    show_default=False,
+    help="Minimum contig length in base pairs for binning consideration. "
+         "Default: 1000 for single-sample, 4096 for multi-sample/coassembly. "
+         "User-specified values override auto-detection."
 )
 @click.option(
     "--max-positive-pairs",
@@ -312,6 +314,11 @@ def validate_coverage_options(ctx, param, value):
     "--skip-refinement",
     is_flag=True,
     help="Skip post-clustering bin refinement and optimization.",
+)
+@click.option(
+    "--skip-rescue",
+    is_flag=True,
+    help="Skip post-refinement bin rescue strategy (merging fragmented bins).",
 )
 @click.option(
     "--save-bins-before-refinement",
@@ -422,6 +429,7 @@ def main_cli(
     skip_bacterial_filter,
     save_filtered_contigs,
     skip_refinement,
+    skip_rescue,
     save_bins_before_refinement,
     max_refinement_rounds,
     min_duplications_for_refinement,
@@ -523,10 +531,14 @@ def main_cli(
         base_learning_rate = 0.0005
         click.echo("Coassembly detected: Auto base learning rate set to 0.0005.", err=True)
 
-    # Bump default min contig length for coassemblies (keep user override if set)
-    if coverage_count > 1 and min_contig_length == 1000:
-        min_contig_length = 4096
-        click.echo("Coassembly detected: using min contig length 4096 bp (was 1000)", err=True)
+    # Set default min contig length if not provided by user
+    if min_contig_length is None:
+        if coverage_count > 1:
+            min_contig_length = 4096
+            click.echo("Coassembly detected: Auto-setting min contig length to 4096 bp.", err=True)
+        else:
+            min_contig_length = 1000
+
 
     # Mode-specific defaults
     effective_k = leiden_k_neighbors
@@ -562,6 +574,7 @@ def main_cli(
         skip_bacterial_filter=skip_bacterial_filter_mode,
         save_filtered_contigs=save_filtered_contigs,
         skip_refinement=skip_refinement_mode,
+        skip_rescue=skip_rescue,
         save_bins_before_refinement=save_bins_before_refinement,
         max_refinement_rounds=max_refinement_rounds,
         min_duplications_for_refinement=min_duplications_for_refinement,
