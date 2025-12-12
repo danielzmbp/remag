@@ -55,3 +55,8 @@ generate_bins.py
 # Large data files - should not be tracked
 standalone/eukaryotes.fasta
 standalone/predictions.tsv
+
+# Local dev
+remag_output/
+venv_remag/
+GEMINI.md
