@@ -22,6 +22,8 @@ def main(args):
     try:
         setup_logging(args.output, verbose=args.verbose)
         os.makedirs(args.output, exist_ok=True)
+        # Log the exact command used
+        logger.info(f"Command: {' '.join(sys.argv)}")
     except Exception as e:
         logger.error(f"Failed to initialize output directory: {e}")
         sys.exit(1)
