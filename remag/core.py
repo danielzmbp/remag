@@ -145,8 +145,7 @@ def main(args):
                 fragments_dict,
                 args,
                 target_coverage_threshold=0.55,
-                identity_threshold=0.35,
-                use_header_cache=False
+                identity_threshold=0.35
             )
     else:
         clusters_df = check_core_gene_duplications(
@@ -154,8 +153,7 @@ def main(args):
             fragments_dict,
             args,
             target_coverage_threshold=0.55,
-            identity_threshold=0.35,
-            use_header_cache=False
+            identity_threshold=0.35
         )
 
     skip_refinement = getattr(args, "skip_refinement", False)
