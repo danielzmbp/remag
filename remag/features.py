@@ -1314,6 +1314,20 @@ def calculate_coverage_from_multiple_bams(
     disable_inner_progress = len(bam_files) > 1
     bam_iterator = tqdm(bam_files, desc="Processing BAM files") if disable_inner_progress else bam_files
 
+    # Pre-calculate unique sample names to avoid collisions
+    sample_names_map = {}
+    base_names = [os.path.splitext(os.path.basename(f))[0] for f in bam_files]
+    if len(set(base_names)) == len(base_names):
+        for f in bam_files:
+            sample_names_map[f] = os.path.splitext(os.path.basename(f))[0]
+    else:
+        # Handle duplicates by including parent directory
+        logger.info("Duplicate alignment filenames detected. Using parent directory to disambiguate sample names.")
+        for f in bam_files:
+            base = os.path.splitext(os.path.basename(f))[0]
+            parent = os.path.basename(os.path.dirname(f))
+            sample_names_map[f] = f"{parent}_{base}"
+
     for i, bam_file in enumerate(bam_iterator):
         logger.debug(
             f"Processing alignment file {i+1}/{len(bam_files)}: {os.path.basename(bam_file)}"
@@ -1353,7 +1367,7 @@ def calculate_coverage_from_multiple_bams(
                         f"Normalized coverage by {total_mapped_reads:,} mapped reads (factor: {normalization_factor:.2f})"
                     )
 
-            sample_name = os.path.splitext(os.path.basename(bam_file))[0]
+            sample_name = sample_names_map[bam_file]
             mean_col_name = f"{sample_name}_coverage"
             std_col_name = f"{sample_name}_coverage_std"
 
@@ -1364,7 +1378,7 @@ def calculate_coverage_from_multiple_bams(
 
         except Exception as e:
             logger.error(f"Error processing alignment file {bam_file}: {e}")
-            sample_name = os.path.splitext(os.path.basename(bam_file))[0]
+            sample_name = sample_names_map[bam_file]
             mean_col_name = f"{sample_name}_coverage"
             std_col_name = f"{sample_name}_coverage_std"
 
