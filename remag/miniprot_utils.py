@@ -20,7 +20,7 @@ def check_miniprot_available():
     return shutil.which("miniprot") is not None
 
 
-def estimate_organisms_from_all_contigs(fragments_dict, args, target_coverage_threshold=0.55, identity_threshold=0.35):
+def estimate_organisms_from_all_contigs(fragments_dict, args, query_coverage_threshold=0.55, identity_threshold=0.35):
     """
     Run miniprot on all contigs to estimate the number of organisms based on core gene duplications.
 
@@ -30,7 +30,7 @@ def estimate_organisms_from_all_contigs(fragments_dict, args, target_coverage_th
     Args:
         fragments_dict: Dictionary mapping headers to sequences
         args: Arguments object containing output directory, cores, etc.
-        target_coverage_threshold: Minimum target coverage for alignments (default: 0.55)
+        query_coverage_threshold: Minimum query coverage for alignments (protein coverage) (default: 0.55)
         identity_threshold: Minimum identity for alignments (default: 0.35)
 
     Returns:
@@ -133,10 +133,10 @@ def estimate_organisms_from_all_contigs(fragments_dict, args, target_coverage_th
                     if len(parts) >= 11:
                         try:
                             query_name = parts[0]  # Protein name
+                            query_length = int(parts[1])
+                            query_start = int(parts[2])
+                            query_end = int(parts[3])
                             target_name = parts[5]  # Contig name
-                            target_length = int(parts[6])
-                            target_start = int(parts[7])
-                            target_end = int(parts[8])
                             matching_bases = int(parts[9])
                             alignment_length = int(parts[10])
 
@@ -146,9 +146,9 @@ def estimate_organisms_from_all_contigs(fragments_dict, args, target_coverage_th
                             gene_family_code = full_gene_id.split("_")[0]
 
                             # Calculate quality metrics
-                            target_coverage = (
-                                (target_end - target_start) / target_length
-                                if target_length > 0 else 0
+                            query_coverage = (
+                                (query_end - query_start) / query_length
+                                if query_length > 0 else 0
                             )
                             identity = (
                                 matching_bases / alignment_length
@@ -156,8 +156,8 @@ def estimate_organisms_from_all_contigs(fragments_dict, args, target_coverage_th
                             )
 
                             # Only consider high-quality alignments
-                            if target_coverage >= target_coverage_threshold and identity >= identity_threshold:
-                                score = target_coverage * identity
+                            if query_coverage >= query_coverage_threshold and identity >= identity_threshold:
+                                score = query_coverage * identity
 
                                 # Initialize contig entry in gene_mappings if needed
                                 if target_name not in gene_mappings:
@@ -168,7 +168,7 @@ def estimate_organisms_from_all_contigs(fragments_dict, args, target_coverage_th
                                     score > gene_mappings[target_name][gene_family_code]["score"]):
                                     gene_mappings[target_name][gene_family_code] = {
                                         "score": score,
-                                        "coverage": target_coverage,
+                                        "coverage": query_coverage,
                                         "identity": identity
                                     }
 
@@ -230,7 +230,7 @@ def get_gene_mappings_cache_path(args):
 
 
 def parse_and_cache_paf_files(temp_dir, filtered_clusters, args,
-                            target_coverage_threshold=0.55, identity_threshold=0.35):
+                            query_coverage_threshold=0.55, identity_threshold=0.35):
     """
     Parse PAF files from miniprot output and cache gene-to-contig mappings.
     
@@ -241,7 +241,7 @@ def parse_and_cache_paf_files(temp_dir, filtered_clusters, args,
         temp_dir: Directory containing PAF files
         filtered_clusters: Dictionary of cluster_id -> contig_headers
         args: Arguments object
-        target_coverage_threshold: Minimum target coverage for alignments
+        query_coverage_threshold: Minimum query coverage for alignments (protein coverage)
         identity_threshold: Minimum identity for alignments
     
     Returns:
@@ -267,10 +267,10 @@ def parse_and_cache_paf_files(temp_dir, filtered_clusters, args,
                 if len(parts) >= 11:
                     try:
                         query_name = parts[0]  # Protein name
+                        query_length = int(parts[1])
+                        query_start = int(parts[2])
+                        query_end = int(parts[3])
                         target_name = parts[5]  # Contig name
-                        target_length = int(parts[6])
-                        target_start = int(parts[7])
-                        target_end = int(parts[8])
                         matching_bases = int(parts[9])
                         alignment_length = int(parts[10])
 
@@ -281,9 +281,9 @@ def parse_and_cache_paf_files(temp_dir, filtered_clusters, args,
                         gene_family_code = full_gene_id.split("_")[0]
 
                         # Calculate quality metrics
-                        target_coverage = (
-                            (target_end - target_start) / target_length
-                            if target_length > 0 else 0
+                        query_coverage = (
+                            (query_end - query_start) / query_length
+                            if query_length > 0 else 0
                         )
                         identity = (
                             matching_bases / alignment_length
@@ -291,8 +291,8 @@ def parse_and_cache_paf_files(temp_dir, filtered_clusters, args,
                         )
 
                         # Only consider high-quality alignments
-                        if target_coverage >= target_coverage_threshold and identity >= identity_threshold:
-                            score = target_coverage * identity
+                        if query_coverage >= query_coverage_threshold and identity >= identity_threshold:
+                            score = query_coverage * identity
                             
                             # Initialize contig entry if needed
                             if target_name not in global_gene_mappings:
@@ -303,7 +303,7 @@ def parse_and_cache_paf_files(temp_dir, filtered_clusters, args,
                                 score > global_gene_mappings[target_name][gene_family_code]["score"]):
                                 global_gene_mappings[target_name][gene_family_code] = {
                                     "score": score,
-                                    "coverage": target_coverage,
+                                    "coverage": query_coverage,
                                     "identity": identity,
                                 }
 
@@ -413,7 +413,7 @@ def check_core_gene_duplications_from_cache(clusters_df, gene_mappings_cache, ar
 
 
 def check_core_gene_duplications(clusters_df, fragments_dict, args,
-                                target_coverage_threshold=0.55,
+                                query_coverage_threshold=0.55,
                                 identity_threshold=0.35):
     """
     Check for duplicated core genes using miniprot.
@@ -425,7 +425,7 @@ def check_core_gene_duplications(clusters_df, fragments_dict, args,
         clusters_df: DataFrame with cluster assignments
         fragments_dict: Dictionary mapping headers to sequences
         args: Arguments object containing output directory, cores, etc.
-        target_coverage_threshold: Minimum target coverage (default: 0.55)
+        query_coverage_threshold: Minimum query coverage (protein coverage) (default: 0.55)
         identity_threshold: Minimum identity (default: 0.35)
 
     Returns:
@@ -545,10 +545,10 @@ def check_core_gene_duplications(clusters_df, fragments_dict, args,
                                 if len(parts) >= 11:
                                     try:
                                         query_name = parts[0]  # Protein name
+                                        query_length = int(parts[1])
+                                        query_start = int(parts[2])
+                                        query_end = int(parts[3])
                                         target_name = parts[5]  # Contig name
-                                        target_length = int(parts[6])
-                                        target_start = int(parts[7])
-                                        target_end = int(parts[8])
                                         matching_bases = int(parts[9])
                                         alignment_length = int(parts[10])
 
@@ -559,9 +559,9 @@ def check_core_gene_duplications(clusters_df, fragments_dict, args,
                                         gene_family_code = full_gene_id.split("_")[0]
 
                                         # Calculate quality metrics
-                                        target_coverage = (
-                                            (target_end - target_start) / target_length
-                                            if target_length > 0
+                                        query_coverage = (
+                                            (query_end - query_start) / query_length
+                                            if query_length > 0
                                             else 0
                                         )
                                         identity = (
@@ -571,8 +571,8 @@ def check_core_gene_duplications(clusters_df, fragments_dict, args,
                                         )
 
                                         # Only consider high-quality alignments with configurable thresholds
-                                        if target_coverage >= target_coverage_threshold and identity >= identity_threshold:
-                                            score = target_coverage * identity
+                                        if query_coverage >= query_coverage_threshold and identity >= identity_threshold:
+                                            score = query_coverage * identity
                                             key = (
                                                 target_name,
                                                 gene_family_code,
@@ -584,7 +584,7 @@ def check_core_gene_duplications(clusters_df, fragments_dict, args,
                                             ):
                                                 best_alignments[key] = {
                                                     "score": score,
-                                                    "coverage": target_coverage,
+                                                    "coverage": query_coverage,
                                                     "identity": identity,
                                                     "gene_family": gene_family_code,
                                                 }
@@ -651,7 +651,7 @@ def check_core_gene_duplications(clusters_df, fragments_dict, args,
 
         # Parse and cache gene mappings for potential reuse during refinement
         gene_mappings_cache = parse_and_cache_paf_files(
-            temp_dir, filtered_clusters, args, target_coverage_threshold, identity_threshold
+            temp_dir, filtered_clusters, args, query_coverage_threshold, identity_threshold
         )
 
         # Store cache and duplication results in args for immediate use during refinement
