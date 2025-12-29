@@ -140,20 +140,20 @@ def main(args):
         except Exception as e:
             logger.warning(f"Cache-based duplication check failed: {e}")
             logger.warning("Falling back to full miniprot run")
-            clusters_df = check_core_gene_duplications(
-                clusters_df,
-                fragments_dict,
-                args,
-                target_coverage_threshold=0.55,
-                identity_threshold=0.35,
-                use_header_cache=False
-            )
+                clusters_df = check_core_gene_duplications(
+                    clusters_df,
+                    fragments_dict,
+                    args,
+                    query_coverage_threshold=0.55,
+                    identity_threshold=0.35,
+                    use_header_cache=False
+                )
     else:
         clusters_df = check_core_gene_duplications(
             clusters_df,
             fragments_dict,
             args,
-            target_coverage_threshold=0.55,
+            query_coverage_threshold=0.55,
             identity_threshold=0.35,
             use_header_cache=False
         )
