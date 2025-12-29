@@ -144,8 +144,8 @@ def main(args):
                     clusters_df,
                     fragments_dict,
                     args,
-                    query_coverage_threshold=0.55,
-                    identity_threshold=0.35,
+                    query_coverage_threshold=0.4,
+                    identity_threshold=0.5,
                     use_header_cache=False
                 )
     else:
@@ -153,8 +153,8 @@ def main(args):
             clusters_df,
             fragments_dict,
             args,
-            query_coverage_threshold=0.55,
-            identity_threshold=0.35,
+            query_coverage_threshold=0.4,
+            identity_threshold=0.5,
             use_header_cache=False
         )
 
