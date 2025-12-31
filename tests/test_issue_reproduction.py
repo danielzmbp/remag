@@ -42,9 +42,9 @@ def test_force_lower_min_contig_length(mock_run_remag, temp_fasta, multiple_bams
     # This assertion ensures the user's value is respected
     assert args.min_contig_length == 1000
 
-def test_auto_bump_defaults(mock_run_remag, temp_fasta, multiple_bams):
+def test_defaults_stay_1000(mock_run_remag, temp_fasta, multiple_bams):
     """
-    Test that it still defaults to 4096 if user DOES NOT specify length.
+    Test that it defaults to 1000 even if user DOES NOT specify length (no auto-bump to 4096).
     """
     runner = CliRunner()
     
@@ -56,7 +56,7 @@ def test_auto_bump_defaults(mock_run_remag, temp_fasta, multiple_bams):
     assert result.exit_code == 0
     args = mock_run_remag.call_args[0][0]
     
-    assert args.min_contig_length == 4096
+    assert args.min_contig_length == 1000
 
 def test_single_sample_default(mock_run_remag, temp_fasta, multiple_bams):
     """

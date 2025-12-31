@@ -274,8 +274,7 @@ def validate_coverage_options(ctx, param, value):
     default=None,
     show_default=False,
     help="Minimum contig length in base pairs for binning consideration. "
-         "Default: 1000 for single-sample, 4096 for multi-sample/coassembly. "
-         "User-specified values override auto-detection."
+         "Default: 1000."
 )
 @click.option(
     "--max-positive-pairs",
@@ -533,11 +532,7 @@ def main_cli(
 
     # Set default min contig length if not provided by user
     if min_contig_length is None:
-        if coverage_count > 1:
-            min_contig_length = 4096
-            click.echo("Coassembly detected: Auto-setting min contig length to 4096 bp.", err=True)
-        else:
-            min_contig_length = 1000
+        min_contig_length = 1000
 
 
     # Mode-specific defaults
