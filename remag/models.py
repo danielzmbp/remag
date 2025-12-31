@@ -363,8 +363,6 @@ class EnhancedFusionLayer(nn.Module):
             raise ValueError(f"Coverage feature dimension mismatch: expected "
                            f"{self.coverage_proj.in_features}, got {coverage_features.size(1)}")
 
-        logger.debug(f"Fusion input shapes - kmer: {kmer_features.shape}, coverage: {coverage_features.shape}")
-
         batch_size = kmer_features.size(0)
 
         # Project to common dimension
@@ -437,8 +435,6 @@ class EnhancedFusionLayer(nn.Module):
 
         # Final MLP
         output = self.fusion_mlp(final_features)
-
-        logger.debug(f"Fusion output shape: {output.shape}")
 
         return output
 
