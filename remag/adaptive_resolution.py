@@ -115,13 +115,13 @@ def test_multiple_resolutions(embeddings_df, gene_mappings_cache, args, test_res
 
         tested_resolutions.append(resolution)
 
-        # Early stop if completeness drops below 50% of the best seen so far (avoid over-splitting)
+        # Early stop if completeness drops below 25% of the best seen so far (avoid over-splitting)
         current_max_comp = results[resolution]['max_bin_completeness']
         prev_peak = peak_completeness
-        if prev_peak > 0 and current_max_comp < 0.50 * prev_peak:
+        if prev_peak > 0 and current_max_comp < 0.25 * prev_peak:
             logger.info(
                 f"Stopping resolution sweep early: resolution {resolution:.2f} max completeness "
-                f"{current_max_comp} < 50% of peak {prev_peak}"
+                f"{current_max_comp} < 25% of peak {prev_peak}"
             )
             # Drop this over-split result from consideration
             tested_resolutions.pop()
@@ -139,21 +139,12 @@ def test_multiple_resolutions(embeddings_df, gene_mappings_cache, args, test_res
         r: res for r, res in usable_results.items() if res['total_duplications'] == min_dup
     }
 
-    mode = getattr(args, "mode", "metagenomics").lower()
-    prefer_min_clusters = mode == "single-cell" or is_coassembly
-
-    if prefer_min_clusters:
-        # Prefer fewer clusters (coarser) while still minimizing duplications
-        best_resolution = min(
-            dup_candidates.keys(),
-            key=lambda r: (dup_candidates[r]['n_clusters'], -dup_candidates[r]['max_bin_completeness'])
-        )
-    else:
-        # Default: prefer more clusters (finer) after minimizing duplications
-        best_resolution = max(
-            dup_candidates.keys(),
-            key=lambda r: (dup_candidates[r]['n_clusters'], dup_candidates[r]['max_bin_completeness'])
-        )
+    # Always prefer fewer clusters (coarser) while still minimizing duplications
+    # This avoids over-splitting which was an issue in SSA mode previously
+    best_resolution = min(
+        dup_candidates.keys(),
+        key=lambda r: (dup_candidates[r]['n_clusters'], -dup_candidates[r]['max_bin_completeness'])
+    )
     best_result = dup_candidates[best_resolution]
 
     logger.info(
