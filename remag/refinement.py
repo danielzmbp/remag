@@ -41,6 +41,12 @@ def refine_bin(
         logger.warning(f"Bin {bin_id} lacks embeddings for refinement")
         return None
 
+    # Calculate original SCG count (total gene instances) to use as baseline
+    original_scg_count = 0
+    for contig in available:
+        genes = gene_mappings_cache.get(contig, {})
+        original_scg_count += len(genes)
+
     # Extract embeddings for this bin
     emb = embeddings_df.loc[available].values.astype(np.float32)
     # Embeddings should already be normalized from the model/CSV, but re-normalizing is safe
@@ -70,6 +76,12 @@ def refine_bin(
         args=None # Don't save intermediate files for sub-tasks
     )
 
+    try:
+        n_components = len(graph.components())
+        logger.debug(f"Bin {bin_id} refinement graph has {n_components} connected components")
+    except Exception as e:
+        logger.debug(f"Could not count graph components: {e}")
+
     best = None
     
     # 2. Try increasing resolutions to break up the cluster, using the same set as initial Leiden
@@ -85,6 +97,11 @@ def refine_bin(
             
         # Score the split
         total_dup, retained_scg = _score_split(labels, available, gene_mappings_cache)
+
+        # Skip if the best sub-bin has less than 50% of the original SCGs (oversplitting)
+        if original_scg_count > 0 and retained_scg < 0.5 * original_scg_count:
+            logger.debug(f"Bin {bin_id} res={res} skipped: retained SCG {retained_scg} < 50% of original {original_scg_count}")
+            continue
         
         logger.debug(
             f"Bin {bin_id} Leiden res={res}: total_dup={total_dup}, retained_scg={retained_scg}, sub_bins={len(unique_labels)}"
