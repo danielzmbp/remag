@@ -118,7 +118,9 @@ def refine_bin(
         logger.info(f"Bin {bin_id} refinement did not reduce duplicated genes")
         return None
 
-    _, _, best_labels, best_res = best
+    best_dup, _, best_labels, best_res = best
+    
+    logger.debug(f"Bin {bin_id} resolved {original_dup - best_dup} duplications (from {original_dup} to {best_dup})")
     
     # Format new labels
     refined = pd.DataFrame(
