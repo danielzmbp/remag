@@ -178,8 +178,8 @@ def main(args):
             embeddings_df,
             fragments_dict,
             args,
-            similarity_threshold=0.70, # Based on our proof of concept
-            max_duplication_increase=5.0
+            similarity_threshold=0.9, # Based on our proof of concept
+            max_duplication_increase=3.0
         )
     else:
         logger.info("Skipping rescue step")
