@@ -722,18 +722,24 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
                f"(resolution={leiden_resolution:.2f}, k={clustering_manager.graph_manager.k}, "
                f"similarity_threshold={clustering_manager.graph_manager.similarity_threshold})")
     
-    cluster_labels = _leiden_clustering(
-        norm_data,
-        k=clustering_manager.graph_manager.k,
-        similarity_threshold=clustering_manager.graph_manager.similarity_threshold,
+    # Construct graph once
+    graph = clustering_manager.graph_manager.construct_graph(norm_data, args)
+    
+    # Run Leiden on graph
+    cluster_labels = _leiden_clustering_on_graph(
+        graph,
         resolution=leiden_resolution,
-        random_state=42,
-        n_jobs=getattr(args, 'cores', 1),
-        args=args
+        random_state=42
     )
+    
     n_clusters = len(set(cluster_labels)) - (1 if -1 in cluster_labels else 0)
     n_noise = sum(1 for label in cluster_labels if label == -1)
     cluster_sizes = np.bincount(cluster_labels[cluster_labels >= 0]) if n_clusters > 0 else []
+    
+    logger.info(f"Leiden clustering complete: {n_clusters} clusters, {n_noise} noise points")
+    if n_clusters > 0:
+        logger.debug(f"Cluster sizes: {cluster_sizes.tolist()}")
+
     formatted_labels = [
         f"bin_{label}" if label != -1 else "noise" for label in cluster_labels
     ]
@@ -772,15 +778,11 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
         new_resolution = leiden_resolution + 0.5
         logger.info(f"Reclustering with resolution={new_resolution} (original: {leiden_resolution})")
         
-        # Perform Leiden reclustering
-        recluster_labels = _leiden_clustering(
-            norm_data,
-            k=clustering_manager.graph_manager.k,
-            similarity_threshold=clustering_manager.graph_manager.similarity_threshold,
+        # Perform Leiden reclustering using the SAME graph
+        recluster_labels = _leiden_clustering_on_graph(
+            graph,
             resolution=new_resolution,
-            random_state=42,
-            n_jobs=getattr(args, 'cores', 1),
-            args=args
+            random_state=42
         )
         
         n_recluster_clusters = len(set(recluster_labels)) - (1 if -1 in recluster_labels else 0)
