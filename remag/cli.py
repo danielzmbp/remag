@@ -79,7 +79,7 @@ click.rich_click.OPTION_GROUPS = {
         },
         {
             "name": "Filtering & Processing",
-            "options": ["--min-contig-length", "--min-bin-size", "--coverage-batch-size", "--hyenadna-batch-size", "--skip-bacterial-filter", "--save-filtered-contigs", "--skip-refinement", "--skip-rescue", "--save-bins-before-refinement", "--max-refinement-rounds", "--min-duplications-for-refinement", "--skip-chimera-detection"],
+            "options": ["--min-contig-length", "--min-bin-size", "--coverage-batch-size", "--hyenadna-batch-size", "--skip-bacterial-filter", "--save-filtered-contigs", "--skip-refinement", "--skip-rescue", "--rescue-similarity-threshold", "--rescue-max-duplication", "--save-bins-before-refinement", "--max-refinement-rounds", "--min-duplications-for-refinement", "--skip-chimera-detection"],
         },
     ]
 }
@@ -315,6 +315,20 @@ def validate_coverage_options(ctx, param, value):
     help="Skip post-clustering bin refinement and optimization.",
 )
 @click.option(
+    "--rescue-similarity-threshold",
+    type=float,
+    default=None,
+    show_default=False,
+    help="Similarity threshold for bin rescue (0.0-1.0). Default: 0.9 (single) / 0.7 (coassembly).",
+)
+@click.option(
+    "--rescue-max-duplication",
+    type=float,
+    default=None,
+    show_default=False,
+    help="Max allowed increase in duplication (%) for rescue. Default: 3.0 (single) / 5.0 (coassembly).",
+)
+@click.option(
     "--skip-rescue",
     is_flag=True,
     help="Skip post-refinement bin rescue strategy (merging fragmented bins).",
@@ -371,7 +385,7 @@ def validate_coverage_options(ctx, param, value):
     default=None,
     show_default=False,
     help="Number of nearest neighbors for k-NN graph construction in Leiden clustering. "
-         "If not set, defaults to 15 (metagenomics) or 25 (single-cell mode).",
+         "If not set, defaults to 15 (metagenomics) or 30 (single-cell mode).",
 )
 @click.option(
     "--leiden-similarity-threshold",
@@ -442,6 +456,8 @@ def main_cli(
     coverage_batch_size,
     hyenadna_batch_size,
     filter_only,
+    rescue_similarity_threshold,
+    rescue_max_duplication,
 ):
     """
     **REMAG**: Recovery of Eukaryotic Metagenome-Assembled Genomes
@@ -524,6 +540,18 @@ def main_cli(
             barlow_lambda = 0.003
             click.echo("Auto Barlow lambda: 0.003 (single-sample or no coverage)", err=True)
 
+    # Set default rescue parameters based on number of samples if not provided
+    if rescue_similarity_threshold is None:
+        rescue_similarity_threshold = 0.7 if coverage_count > 1 else 0.9
+        
+    if rescue_max_duplication is None:
+        rescue_max_duplication = 5.0 if coverage_count > 1 else 3.0
+    
+    if coverage_count > 1:
+        click.echo(f"Coassembly detected: Using relaxed rescue criteria (Sim > {rescue_similarity_threshold}, Dup < {rescue_max_duplication}%)", err=True)
+    else:
+        click.echo(f"Single sample detected: Using strict rescue criteria (Sim > {rescue_similarity_threshold}, Dup < {rescue_max_duplication}%)", err=True)
+
     # Set default base learning rate based on number of samples if not provided
     # Only apply if user did not explicitly set it via --base-learning-rate
     if coverage_count > 1 and base_learning_rate == 5e-3: # Check if it's the default value
@@ -582,6 +610,8 @@ def main_cli(
         keep_intermediate=keep_intermediate,
         coverage_batch_size=coverage_batch_size,
         hyenadna_batch_size=hyenadna_batch_size,
+        rescue_similarity_threshold=rescue_similarity_threshold,
+        rescue_max_duplication=rescue_max_duplication,
     )
     run_remag(args)
 
