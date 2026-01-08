@@ -218,7 +218,7 @@ def determine_optimal_resolution(embeddings_df, fragments_dict, args, gene_mappi
     coverage_count = (len(args.bam) if getattr(args, "bam", None) else 0) + (len(args.tsv) if getattr(args, "tsv", None) else 0)
 
     is_coassembly = coverage_count > 1
-    single_sample_resolutions = [0.01, 0.05, 0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 1.0, 1.2, 1.5]
+    single_sample_resolutions = [0.01, 0.05, 0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 1.0, 1.2, 1.4, 1.6]
     coassembly_resolutions = sorted(set(single_sample_resolutions + [2.0]))
 
     if mode == "single-cell":
