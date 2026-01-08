@@ -72,6 +72,10 @@ def rescue_fragmented_bins(
     # 3. Calculate Centroids for ALL Bins
     bin_centroids = {}
     bin_sizes = {} # in bp
+    
+    # Store intermediate sums for efficient centroid updates
+    bin_weighted_sums = {}
+    bin_total_weights = {}
 
     logger.debug(f"Calculating centroids for {len(all_bins)} bins...")
 
@@ -88,10 +92,15 @@ def rescue_fragmented_bins(
         # Calculate weighted centroid
         vecs = embeddings_df.loc[valid_members].values
         weights = np.array([contig_lengths.get(c, 1000) for c in valid_members]).reshape(-1, 1)
-        weights = weights / weights.sum()
-        centroid = np.sum(vecs * weights, axis=0)
         
-        bin_centroids[b] = centroid
+        # Store un-normalized weighted sum and total weight for dynamic updates
+        weighted_sum = np.sum(vecs * weights, axis=0)
+        total_weight = weights.sum()
+        
+        bin_weighted_sums[b] = weighted_sum
+        bin_total_weights[b] = total_weight
+        
+        bin_centroids[b] = weighted_sum / total_weight
 
     # Sort bins by size (smallest first) so we merge small into large
     # Filter out bins that had no valid embeddings (not in bin_centroids)
@@ -160,6 +169,11 @@ def rescue_fragmented_bins(
                 # Update size estimate for future iterations? 
                 # Yes, technically the target is now bigger.
                 bin_sizes[best_target] += bin_sizes[source_bin]
+                
+                # Update Target Centroid
+                bin_weighted_sums[best_target] += bin_weighted_sums[source_bin]
+                bin_total_weights[best_target] += bin_total_weights[source_bin]
+                bin_centroids[best_target] = bin_weighted_sums[best_target] / bin_total_weights[best_target]
 
     if merged_count > 0:
         logger.info(f"Rescue complete: Merged {merged_count} bins.")
