@@ -61,14 +61,30 @@ def rescue_fragmented_bins(
     # Calculate contig lengths
     contig_lengths = {k: len(v['sequence']) for k, v in fragments_dict.items()}
     
-    # Filter out noise for initial bin list
-    valid_bins_df = clusters_df[clusters_df['cluster'] != 'noise'].copy()
-    all_bins = valid_bins_df['cluster'].unique()
+    # Identify Core Bins (potential targets) - anything that is NOT noise
+    core_bins = set(clusters_df[clusters_df['cluster'] != 'noise']['cluster'].unique())
     
-    if len(all_bins) < 2:
-        logger.info("Fewer than 2 bins. Skipping rescue.")
+    if len(core_bins) == 0:
+        logger.info("No core bins found. Skipping rescue.")
         return clusters_df
 
+    # Expand noise into temporary singleton bins for rescue attempts
+    # We modify the dataframe in place (it will be returned)
+    
+    # Label noise as 'singleton_idx'
+    noise_mask = clusters_df['cluster'] == 'noise'
+    n_noise_initial = noise_mask.sum()
+    
+    if n_noise_initial > 0:
+        logger.info(f"Preparing {n_noise_initial} noise contigs for potential rescue...")
+        # Assign unique singleton IDs
+        # We use a loop or vectorized assignment
+        new_labels = [f"singleton_{i}" for i in range(n_noise_initial)]
+        clusters_df.loc[noise_mask, 'cluster'] = new_labels
+    
+    # Now all_bins includes Core Bins + Temporary Singletons
+    all_bins = clusters_df['cluster'].unique()
+    
     # 3. Calculate Centroids for ALL Bins
     bin_centroids = {}
     bin_sizes = {} # in bp
@@ -77,10 +93,10 @@ def rescue_fragmented_bins(
     bin_weighted_sums = {}
     bin_total_weights = {}
 
-    logger.debug(f"Calculating centroids for {len(all_bins)} bins...")
+    logger.debug(f"Calculating centroids for {len(all_bins)} bins (including candidates)...")
 
     for b in all_bins:
-        members = valid_bins_df[valid_bins_df['cluster'] == b]['contig'].values
+        members = clusters_df[clusters_df['cluster'] == b]['contig'].values
         valid_members = [c for c in members if c in embeddings_df.index]
         
         if not valid_members: continue
@@ -106,7 +122,7 @@ def rescue_fragmented_bins(
     # Filter out bins that had no valid embeddings (not in bin_centroids)
     sorted_bins = sorted(bin_centroids.keys(), key=lambda b: bin_sizes[b])
 
-    logger.info(f"Attempting merge on {len(sorted_bins)} bins (Threshold > {similarity_threshold})...")
+    logger.info(f"Attempting merge on {len(sorted_bins)} bins/fragments (Threshold > {similarity_threshold})...")
 
     merged_count = 0
     merged_map = {} # source -> target (for tracking chains if needed, though we do single pass)
@@ -114,7 +130,7 @@ def rescue_fragmented_bins(
     
     # Keep track of "active" bin members to calculate cumulative SCG stats correctly
     # Initialize with current members
-    bin_members_map = {b: list(valid_bins_df[valid_bins_df['cluster'] == b]['contig'].values) for b in sorted_bins}
+    bin_members_map = {b: list(clusters_df[clusters_df['cluster'] == b]['contig'].values) for b in sorted_bins}
 
     for source_bin in sorted_bins:
         # If this bin has already been merged into something else, skip it
@@ -131,6 +147,10 @@ def rescue_fragmented_bins(
             if source_bin == target_bin: continue
             if target_bin in merged_map: continue # Don't merge into a bin that's already gone
             
+            # CRITICAL: Only merge into Core Bins (original clusters). 
+            # Do not merge debris into debris (singleton -> singleton).
+            if target_bin not in core_bins: continue
+
             # Only merge into strictly larger bins (or equal, tie-break by name) to maintain stability
             # and ensure flow towards anchors.
             if bin_sizes[target_bin] < bin_sizes[source_bin]: continue
@@ -153,7 +173,9 @@ def rescue_fragmented_bins(
             
             if (new_dup - current_dup) < max_duplication_increase:
                 # MERGE!
-                logger.info(f"Merging {source_bin} ({bin_sizes[source_bin]/1e6:.2f}Mb) -> {best_target} ({bin_sizes[best_target]/1e6:.2f}Mb) | Sim: {best_score:.3f} | Dup: {current_dup:.1f}%->{new_dup:.1f}%")
+                # Don't log every single noise merge, it's too verbose
+                if not source_bin.startswith("singleton_"):
+                    logger.info(f"Merging {source_bin} ({bin_sizes[source_bin]/1e6:.2f}Mb) -> {best_target} ({bin_sizes[best_target]/1e6:.2f}Mb) | Sim: {best_score:.3f} | Dup: {current_dup:.1f}%->{new_dup:.1f}%")
                 
                 # Update final clusters
                 mask = final_clusters == source_bin
@@ -175,10 +197,20 @@ def rescue_fragmented_bins(
                 bin_total_weights[best_target] += bin_total_weights[source_bin]
                 bin_centroids[best_target] = bin_weighted_sums[best_target] / bin_total_weights[best_target]
 
+    # Update dataframe with merged results
+    clusters_df['cluster'] = final_clusters
+
+    # Revert un-merged singletons back to 'noise'
+    # Any cluster label starting with 'singleton_' is a failed rescue
+    # Use string accessors on the Series
+    final_mask = clusters_df['cluster'].astype(str).str.startswith('singleton_')
+    if final_mask.any():
+        clusters_df.loc[final_mask, 'cluster'] = 'noise'
+    
+    rescued_noise = n_noise_initial - final_mask.sum()
+    
     if merged_count > 0:
-        logger.info(f"Rescue complete: Merged {merged_count} bins.")
-        # Update dataframe
-        clusters_df['cluster'] = final_clusters
+        logger.info(f"Rescue complete: Merged {merged_count} total items (including {rescued_noise} noise contigs).")
     else:
         logger.info("Rescue complete: No safe merges found.")
 
