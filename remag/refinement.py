@@ -85,7 +85,7 @@ def refine_bin(
     best = None
     
     # 2. Try increasing resolutions to break up the cluster, using the same set as initial Leiden
-    resolutions = [0.05, 0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 1.0, 1.2, 1.4, 1.6, 2.0]
+    resolutions = [0.05, 0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 1.0, 1.2, 1.5, 2.0]
     
     for res in resolutions:
         labels = _leiden_clustering_on_graph(graph, resolution=res, random_state=42)
