@@ -162,7 +162,7 @@ def determine_optimal_resolution(embeddings_df, fragments_dict, args, gene_mappi
 
     This is the main function that orchestrates the adaptive resolution process:
     1. Use existing gene mappings or run miniprot to gather core gene data
-    2. Test a fixed range of resolution values (0.01 to 0.10)
+    2. Test a fixed range of resolution values (up to 0.30 for single-sample)
     3. Pick the resolution that minimizes core gene duplications
 
     Args:
@@ -204,8 +204,8 @@ def determine_optimal_resolution(embeddings_df, fragments_dict, args, gene_mappi
     coverage_count = (len(args.bam) if getattr(args, "bam", None) else 0) + (len(args.tsv) if getattr(args, "tsv", None) else 0)
 
     is_coassembly = coverage_count > 1
-    single_sample_resolutions = [0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.10]
-    coassembly_resolutions = sorted(set(single_sample_resolutions))
+    single_sample_resolutions = [0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.10, 0.15, 0.20, 0.25, 0.30]
+    coassembly_resolutions = [0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.10]
 
     if mode == "single-cell":
         # Single-cell: skip sweep, use fixed coarse resolution
