@@ -161,10 +161,9 @@ def determine_optimal_resolution(embeddings_df, fragments_dict, args, gene_mappi
     Determine optimal Leiden resolution by analyzing core gene duplications.
 
     This is the main function that orchestrates the adaptive resolution process:
-    1. Use existing gene mappings or run miniprot to estimate organism count
-    2. Calculate base resolution from organism estimate
-    3. Test multiple resolution values (base * [0.7, 1.0, 1.4])
-    4. Pick the resolution with fewest core gene duplications
+    1. Use existing gene mappings or run miniprot to gather core gene data
+    2. Test a fixed range of resolution values (0.01 to 0.10)
+    3. Pick the resolution that minimizes core gene duplications
 
     Args:
         embeddings_df: DataFrame with embeddings for all contigs
@@ -200,26 +199,13 @@ def determine_optimal_resolution(embeddings_df, fragments_dict, args, gene_mappi
         except Exception as e:
             logger.warning(f"Failed to save gene counts: {e}")
 
-    # Step 2: Estimate organism count using max gene occurrence
-    # Since these are single-copy genes, the max count indicates the minimum number of organisms
-    counts_list = list(gene_counts.values())
-    median_count = np.median(counts_list)
-    percentile_90 = np.percentile(counts_list, 90)
-    max_count = np.max(counts_list)
-
-    # Use maximum for estimation (most conservative, ensures we don't underestimate diversity)
-    estimated_organisms = max_count
-
-    logger.debug(f"Core gene statistics: median={median_count:.1f}, 90th percentile={percentile_90:.1f}, max={max_count:.1f}")
-    logger.info(f"Estimated number of organisms: {estimated_organisms:.1f} (using max gene count)")
-
-    # Step 3: Choose candidate resolutions
+    # Step 2: Choose candidate resolutions
     mode = getattr(args, "mode", "metagenomics").lower()
     coverage_count = (len(args.bam) if getattr(args, "bam", None) else 0) + (len(args.tsv) if getattr(args, "tsv", None) else 0)
 
     is_coassembly = coverage_count > 1
-    single_sample_resolutions = [0.01, 0.05, 0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 1.0, 1.2, 1.5]
-    coassembly_resolutions = sorted(set(single_sample_resolutions + [2.0]))
+    single_sample_resolutions = [0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.10]
+    coassembly_resolutions = sorted(set(single_sample_resolutions))
 
     if mode == "single-cell":
         # Single-cell: skip sweep, use fixed coarse resolution
@@ -258,7 +244,7 @@ def determine_optimal_resolution(embeddings_df, fragments_dict, args, gene_mappi
         logger.info("Falling back to default resolution: 1.0")
         return 1.0
 
-    # Step 4: Test resolutions and pick the best
+    # Step 3: Test resolutions and pick the best
     best_resolution, results = test_multiple_resolutions(
         embeddings_df,
         gene_mappings_cache,
@@ -280,10 +266,6 @@ def determine_optimal_resolution(embeddings_df, fragments_dict, args, gene_mappi
                     'total_duplications': data['total_duplications']
                 }
             serializable_results['selected_resolution'] = f"{best_resolution:.4f}"
-            serializable_results['estimated_organisms'] = float(estimated_organisms)
-            serializable_results['median_gene_count'] = float(median_count)
-            serializable_results['percentile_90_gene_count'] = float(percentile_90)
-            serializable_results['max_gene_count'] = float(max_count)
 
             with open(resolution_results_path, "w") as f:
                 json.dump(serializable_results, f, indent=2)
