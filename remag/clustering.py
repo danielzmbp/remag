@@ -772,51 +772,65 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
 
     # Check if only one bin was detected and perform reclustering
     if n_clusters == 1:
-        logger.info("Only one bin detected. Attempting reclustering with increased resolution...")
+        logger.info("Only one bin detected. Attempting reclustering with increasing resolutions...")
         
-        # Increase resolution by 0.5
-        new_resolution = leiden_resolution + 0.5
-        logger.info(f"Reclustering with resolution={new_resolution} (original: {leiden_resolution})")
+        # Define resolution sweep sequence to force splitting
+        # Starts small and increases gradually
+        resolution_sweep = [0.15, 0.20, 0.25, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 1.0, 1.2, 1.5, 2.0, 3.0]
         
-        # Perform Leiden reclustering using the SAME graph
-        recluster_labels = _leiden_clustering_on_graph(
-            graph,
-            resolution=new_resolution,
-            random_state=42
-        )
+        recluster_success = False
         
-        n_recluster_clusters = len(set(recluster_labels)) - (1 if -1 in recluster_labels else 0)
-        n_recluster_noise = sum(1 for label in recluster_labels if label == -1)
-        recluster_sizes = np.bincount(recluster_labels[recluster_labels >= 0]) if n_recluster_clusters > 0 else []
-        logger.info(f"Reclustering result: {n_recluster_clusters} clusters, {n_recluster_noise} noise points, sizes: {recluster_sizes.tolist() if hasattr(recluster_sizes, 'tolist') else list(recluster_sizes)}")
-        
-        # Only use reclustering results if we got more than one cluster
-        if n_recluster_clusters > 1:
-            logger.info(f"Reclustering successful: {n_recluster_clusters} clusters found. Using reclustering results.")
+        for new_resolution in resolution_sweep:
+            # Skip if resolution is not higher than what we already tried
+            # (Use a small epsilon for float comparison)
+            if new_resolution <= leiden_resolution + 0.001:
+                continue
+                
+            logger.info(f"Reclustering attempt with resolution={new_resolution} (original: {leiden_resolution})")
             
-            # Update cluster labels with reclustering results
-            cluster_labels = recluster_labels
-            
-            
-            # Update formatted labels and contig clusters dataframe
-            formatted_labels = [
-                f"bin_{label}" if label != -1 else "noise" for label in cluster_labels
-            ]
-            
-            contig_clusters_df = pd.DataFrame(
-                {"contig": final_original_contig_names, "cluster": formatted_labels}
+            # Perform Leiden reclustering using the SAME graph
+            recluster_labels = _leiden_clustering_on_graph(
+                graph,
+                resolution=new_resolution,
+                random_state=42
             )
             
-            # Update final counts
-            final_counts = contig_clusters_df["cluster"].value_counts().to_dict()
-            n_clusters = len([k for k in final_counts.keys() if k != "noise"])
-            n_noise = final_counts.get("noise", 0)
-            logger.info(f"Final clustering result after reclustering: {n_clusters} clusters, {n_noise} noise contigs, sizes: {dict(sorted(final_counts.items()))}")
+            n_recluster_clusters = len(set(recluster_labels)) - (1 if -1 in recluster_labels else 0)
+            n_recluster_noise = sum(1 for label in recluster_labels if label == -1)
+            recluster_sizes = np.bincount(recluster_labels[recluster_labels >= 0]) if n_recluster_clusters > 0 else []
             
-            # Update clusters_df for consistency
-            clusters_df = contig_clusters_df
-        else:
-            logger.info(f"Reclustering did not improve results ({n_recluster_clusters} clusters). Keeping original single bin.")
+            logger.info(f"Reclustering result: {n_recluster_clusters} clusters, {n_recluster_noise} noise points, sizes: {recluster_sizes.tolist() if hasattr(recluster_sizes, 'tolist') else list(recluster_sizes)}")
+            
+            # If we successfully split into > 1 cluster
+            if n_recluster_clusters > 1:
+                logger.info(f"Reclustering successful: {n_recluster_clusters} clusters found at resolution {new_resolution}. Using these results.")
+                
+                # Update cluster labels with reclustering results
+                cluster_labels = recluster_labels
+                
+                # Update formatted labels and contig clusters dataframe
+                formatted_labels = [
+                    f"bin_{label}" if label != -1 else "noise" for label in cluster_labels
+                ]
+                
+                contig_clusters_df = pd.DataFrame(
+                    {"contig": final_original_contig_names, "cluster": formatted_labels}
+                )
+                
+                # Update final counts
+                final_counts = contig_clusters_df["cluster"].value_counts().to_dict()
+                n_clusters = len([k for k in final_counts.keys() if k != "noise"])
+                n_noise = final_counts.get("noise", 0)
+                logger.info(f"Final clustering result after reclustering: {n_clusters} clusters, {n_noise} noise contigs, sizes: {dict(sorted(final_counts.items()))}")
+                
+                # Update clusters_df for consistency
+                clusters_df = contig_clusters_df
+                
+                recluster_success = True
+                break
+        
+        if not recluster_success:
+            logger.info(f"Reclustering did not result in splitting the bin (tried up to resolution {resolution_sweep[-1]}). Keeping original single bin.")
 
     # Filter out noise contigs for final bins.csv
     final_bins_df = contig_clusters_df[contig_clusters_df["cluster"] != "noise"].copy()
