@@ -319,14 +319,14 @@ def validate_coverage_options(ctx, param, value):
     type=float,
     default=None,
     show_default=False,
-    help="Similarity threshold for bin rescue (0.0-1.0). Default: 0.99 (single) / 0.7 (coassembly).",
+    help="Similarity threshold for bin rescue (0.0-1.0). Default: 0.9 (single) / 0.7 (coassembly).",
 )
 @click.option(
     "--rescue-max-duplication",
     type=float,
     default=None,
     show_default=False,
-    help="Max allowed increase in duplication (%) for rescue. Default: 1.0 (single) / 5.0 (coassembly).",
+    help="Max allowed increase in duplication (%) for rescue. Default: 3.0 (single) / 5.0 (coassembly).",
 )
 @click.option(
     "--skip-rescue",
@@ -541,11 +541,12 @@ def main_cli(
             click.echo("Auto Barlow lambda: 0.003 (single-sample or no coverage)", err=True)
 
     # Set default rescue parameters based on number of samples if not provided
-        if rescue_similarity_threshold is None:
-            rescue_similarity_threshold = 0.7 if coverage_count > 1 else 0.99
+    if rescue_similarity_threshold is None:
+        rescue_similarity_threshold = 0.7 if coverage_count > 1 else 0.9
+        
+    if rescue_max_duplication is None:
+        rescue_max_duplication = 5.0 if coverage_count > 1 else 3.0
     
-        if rescue_max_duplication is None:
-            rescue_max_duplication = 5.0 if coverage_count > 1 else 1.0    
     if coverage_count > 1:
         click.echo(f"Coassembly detected: Using relaxed rescue criteria (Sim > {rescue_similarity_threshold}, Dup < {rescue_max_duplication}%)", err=True)
     else:
