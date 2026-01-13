@@ -98,9 +98,9 @@ def refine_bin(
         # Score the split
         total_dup, retained_scg = _score_split(labels, available, gene_mappings_cache)
 
-        # Skip if the best sub-bin has less than 50% of the original SCGs (oversplitting)
-        if original_scg_count > 0 and retained_scg < 0.5 * original_scg_count:
-            logger.debug(f"Bin {bin_id} res={res} skipped: retained SCG {retained_scg} < 50% of original {original_scg_count}")
+        # Skip if the best sub-bin has less than 75% of the original SCGs (oversplitting)
+        if original_scg_count > 0 and retained_scg < 0.75 * original_scg_count:
+            logger.debug(f"Bin {bin_id} res={res} skipped: retained SCG {retained_scg} < 75% of original {original_scg_count}")
             continue
         
         logger.debug(
