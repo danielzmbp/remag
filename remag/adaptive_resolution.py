@@ -49,6 +49,7 @@ def test_multiple_resolutions(embeddings_df, gene_mappings_cache, args, test_res
     results = {}
     tested_resolutions = []
     peak_completeness = 0
+    consecutive_drops = 0  # Track consecutive completeness drops to avoid stopping on single outliers
 
     for resolution in test_resolutions:
         logger.debug(f"Testing resolution={resolution:.2f}...")
@@ -116,17 +117,27 @@ def test_multiple_resolutions(embeddings_df, gene_mappings_cache, args, test_res
         tested_resolutions.append(resolution)
 
         # Early stop if completeness drops below 25% of the best seen so far (avoid over-splitting)
+        # Require 2 consecutive drops to avoid stopping on single outliers/artifacts
         current_max_comp = results[resolution]['max_bin_completeness']
         prev_peak = peak_completeness
         if prev_peak > 0 and current_max_comp < 0.25 * prev_peak:
-            logger.info(
-                f"Stopping resolution sweep early: resolution {resolution:.2f} max completeness "
-                f"{current_max_comp} < 25% of peak {prev_peak}"
+            consecutive_drops += 1
+            logger.debug(
+                f"Completeness drop detected at resolution {resolution:.2f}: "
+                f"{current_max_comp} < 25% of peak {prev_peak} (consecutive drops: {consecutive_drops})"
             )
-            # Drop this over-split result from consideration
-            tested_resolutions.pop()
-            results.pop(resolution, None)
-            break
+            if consecutive_drops >= 2:
+                logger.info(
+                    f"Stopping resolution sweep early: 2 consecutive completeness drops detected "
+                    f"(resolution {resolution:.2f} max completeness {current_max_comp} < 25% of peak {prev_peak})"
+                )
+                # Drop this over-split result from consideration
+                tested_resolutions.pop()
+                results.pop(resolution, None)
+                break
+        else:
+            # Reset counter if completeness recovers or improves
+            consecutive_drops = 0
 
         peak_completeness = max(prev_peak, current_max_comp)
 
