@@ -313,6 +313,17 @@ def parse_and_cache_paf_files(temp_dir, filtered_clusters, args,
     # Save cache if keeping intermediate files
     if getattr(args, "keep_intermediate", False):
         cache_path = get_gene_mappings_cache_path(args)
+        
+        # Merge with existing cache if it exists (to prevent overwriting bulk data with bin data)
+        if os.path.exists(cache_path):
+            try:
+                with open(cache_path, "r") as f:
+                    existing_cache = json.load(f)
+                existing_cache.update(global_gene_mappings)
+                global_gene_mappings = existing_cache
+            except Exception as e:
+                logger.warning(f"Failed to load existing cache for merging: {e}")
+
         with open(cache_path, "w") as f:
             json.dump(global_gene_mappings, f, indent=2)
         logger.info(f"Gene-to-contig mappings cached to {cache_path}")
