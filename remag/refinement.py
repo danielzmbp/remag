@@ -100,10 +100,10 @@ def refine_bin(
 
         # Determine retention threshold based on bin size
         # For very large bins (>10k contigs), we relax the threshold to allow disentangling 
-        # complex mixtures (e.g. extracting 1 genome from a pool of 3-4, which results in ~25-33% retention)
+        # complex mixtures (e.g. extracting 1 genome from a pool of many, which results in ~10% retention)
         retention_threshold = 0.75
         if len(contigs) > 10000:
-            retention_threshold = 0.25
+            retention_threshold = 0.10
             
         # Skip if the best sub-bin has less than the threshold of the original SCGs (oversplitting)
         if original_scg_count > 0 and retained_scg < retention_threshold * original_scg_count:
