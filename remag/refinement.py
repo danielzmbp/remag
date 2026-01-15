@@ -98,9 +98,16 @@ def refine_bin(
         # Score the split
         total_dup, retained_scg = _score_split(labels, available, gene_mappings_cache)
 
-        # Skip if the best sub-bin has less than 75% of the original SCGs (oversplitting)
-        if original_scg_count > 0 and retained_scg < 0.75 * original_scg_count:
-            logger.debug(f"Bin {bin_id} res={res} skipped: retained SCG {retained_scg} < 75% of original {original_scg_count}")
+        # Determine retention threshold based on bin size
+        # For very large bins (>10k contigs), we relax the threshold to allow disentangling 
+        # complex mixtures (e.g. extracting 1 genome from a pool of 3-4, which results in ~25-33% retention)
+        retention_threshold = 0.75
+        if len(contigs) > 10000:
+            retention_threshold = 0.25
+            
+        # Skip if the best sub-bin has less than the threshold of the original SCGs (oversplitting)
+        if original_scg_count > 0 and retained_scg < retention_threshold * original_scg_count:
+            logger.debug(f"Bin {bin_id} res={res} skipped: retained SCG {retained_scg} < {int(retention_threshold*100)}% of original {original_scg_count}")
             continue
         
         logger.debug(
