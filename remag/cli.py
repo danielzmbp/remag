@@ -326,7 +326,7 @@ def validate_coverage_options(ctx, param, value):
     type=float,
     default=None,
     show_default=False,
-    help="Max allowed increase in duplication (%) for rescue. Default: 3.0 (single) / 5.0 (coassembly).",
+    help="Max allowed increase in duplication (%) for rescue. Default: 3.0.",
 )
 @click.option(
     "--skip-rescue",
@@ -545,7 +545,7 @@ def main_cli(
         rescue_similarity_threshold = 0.7 if coverage_count > 1 else 0.9
         
     if rescue_max_duplication is None:
-        rescue_max_duplication = 5.0 if coverage_count > 1 else 3.0
+        rescue_max_duplication = 3.0
     
     if coverage_count > 1:
         click.echo(f"Coassembly detected: Using relaxed rescue criteria (Sim > {rescue_similarity_threshold}, Dup < {rescue_max_duplication}%)", err=True)
