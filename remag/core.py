@@ -115,10 +115,6 @@ def main(args):
 
     # If auto-resolution was enabled, try to reuse the gene mappings cache
     gene_mappings_cache = None
-    # NOTE: We intentionally disable cache reuse here to force a fresh miniprot run.
-    # The 'bulk' cache from auto-resolution is sometimes less sensitive than the
-    # 'per-bin' check performed by check_core_gene_duplications().
-    # This ensures consistency between manual and auto modes.
 
     # Use cached approach if available, otherwise run miniprot
     if gene_mappings_cache is not None:
