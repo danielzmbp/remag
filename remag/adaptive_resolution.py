@@ -227,6 +227,9 @@ def determine_optimal_resolution(embeddings_df, fragments_dict, args, gene_mappi
             # Coassembly: sweep the full single-sample range and include higher resolution
             test_resolutions = coassembly_resolutions
 
+        if mode == "short-reads":
+            test_resolutions = sorted(list(set(test_resolutions + [0.15, 0.20, 0.30])))
+
     # Load gene mappings cache for quick duplication checking
     # The cache was created during organism estimation and contains:
     # {contig_name: {gene_family: {score, coverage, identity}}}

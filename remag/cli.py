@@ -248,11 +248,11 @@ def validate_coverage_options(ctx, param, value):
 @click.option(
     "-m",
     "--mode",
-    type=click.Choice(["metagenomics", "single-cell"], case_sensitive=False),
+    type=click.Choice(["metagenomics", "single-cell", "short-reads", "sr"], case_sensitive=False),
     default="metagenomics",
     show_default=True,
     help="Preset mode adjusting clustering defaults. 'metagenomics' (default) maximizes clusters; "
-         "'single-cell' uses larger k-NN and minimizes clusters, and skips refinement.",
+         "'single-cell' uses larger k-NN and minimizes clusters, and skips refinement; 'short-reads' (or 'sr') is like metagenomics but tests higher resolutions (up to 0.30).",
 )
 @click.option(
     "--random-seed",
@@ -564,6 +564,9 @@ def main_cli(
 
 
     # Mode-specific defaults
+    if mode.lower() == "sr":
+        mode = "short-reads"
+
     effective_k = leiden_k_neighbors
     if effective_k is None:
         effective_k = 30 if mode.lower() == "single-cell" else 15
