@@ -110,8 +110,9 @@ def refine_bin(
             logger.debug(f"Bin {bin_id} res={res} skipped: retained SCG {retained_scg} < {int(retention_threshold*100)}% of original {original_scg_count}")
             continue
         
+        dup_scg_ratio = (total_dup / retained_scg * 100) if retained_scg > 0 else 0.0
         logger.debug(
-            f"Bin {bin_id} Leiden res={res}: total_dup={total_dup}, retained_scg={retained_scg}, sub_bins={len(unique_labels)}"
+            f"Bin {bin_id} Leiden res={res}: total_dup={total_dup}, retained_scg={retained_scg} ({dup_scg_ratio:.1f}%), sub_bins={len(unique_labels)}"
         )
 
         # We want to reduce duplications
@@ -239,7 +240,8 @@ def refine_contaminated_bins(
         info = duplication_results.get(bin_id, {})
         n_dups = len(info.get("duplicated_genes", {}))
         n_scgs = info.get("single_copy_genes_count", 0)
-        logger.info(f"Refining bin {bin_id}: {n_dups} duplicated genes, {n_scgs} single-copy genes")
+        dup_scg_ratio = (n_dups / n_scgs * 100) if n_scgs > 0 else 0.0
+        logger.info(f"Refining bin {bin_id}: {n_dups} duplicated genes, {n_scgs} single-copy genes ({dup_scg_ratio:.1f}%)")
 
         refined_df = refine_bin(
             clusters_df,
