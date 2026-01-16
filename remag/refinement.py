@@ -123,11 +123,11 @@ def refine_bin(
             "ratio": dup_scg_ratio
         })
 
-    # Selection Logic: Prioritize clean genomes (<= 5% contamination)
+    # Selection Logic: Prioritize clean genomes (<= 10% contamination)
     best = None
     
-    # Priority 1: Find clean candidates (ratio <= 5.0)
-    clean_candidates = [c for c in candidates if c["ratio"] <= 5.0]
+    # Priority 1: Find clean candidates (ratio <= 10.0)
+    clean_candidates = [c for c in candidates if c["ratio"] <= 10.0]
     
     if clean_candidates:
         # Pick the one with the most SCGs (maximize completeness)
@@ -249,19 +249,19 @@ def refine_contaminated_bins(
     for bin_id, info in duplication_results.items():
         dups_count = len(info.get("duplicated_genes", {}))
         
-        # Check minimum duplications threshold
-        if dups_count < getattr(args, "min_duplications_for_refinement", 1):
+        # Check minimum duplications threshold (require > 5 duplications)
+        if dups_count < getattr(args, "min_duplications_for_refinement", 6):
             continue
             
-        # Only refine if duplications are significant relative to SCGs (contam > 5%)
+        # Only refine if duplications are significant relative to SCGs (contam > 10%)
         # This prevents over-refining high-quality bins in all modes
         scg_count = info.get("single_copy_genes_count", 0)
         if scg_count > 0:
             dup_ratio = dups_count / scg_count
-            if dup_ratio < 0.05:
+            if dup_ratio < 0.10:
                 logger.debug(
                     f"Skipping refinement for bin {bin_id}: "
-                    f"{dups_count} dups / {scg_count} SCGs = {dup_ratio:.1%} < 5%"
+                    f"{dups_count} dups / {scg_count} SCGs = {dup_ratio:.1%} < 10%"
                 )
                 continue
         
