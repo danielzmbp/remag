@@ -96,7 +96,7 @@ def refine_bin(
             continue
             
         # Score the split
-        total_dup, retained_scg = _score_split(labels, available, gene_mappings_cache)
+        total_dup, retained_scg, retained_dup = _score_split(labels, available, gene_mappings_cache)
 
         # Determine retention threshold based on bin size
         # For very large bins (>10k contigs), we relax the threshold to allow disentangling 
@@ -110,9 +110,9 @@ def refine_bin(
             logger.debug(f"Bin {bin_id} res={res} skipped: retained SCG {retained_scg} < {int(retention_threshold*100)}% of original {original_scg_count}")
             continue
         
-        dup_scg_ratio = (total_dup / retained_scg * 100) if retained_scg > 0 else 0.0
+        dup_scg_ratio = (retained_dup / retained_scg * 100) if retained_scg > 0 else 0.0
         logger.debug(
-            f"Bin {bin_id} Leiden res={res}: total_dup={total_dup}, retained_scg={retained_scg} ({dup_scg_ratio:.1f}%), sub_bins={len(unique_labels)}"
+            f"Bin {bin_id} Leiden res={res}: total_dup={total_dup}, retained_scg={retained_scg} (retained_dup={retained_dup}, {dup_scg_ratio:.1f}%), sub_bins={len(unique_labels)}"
         )
 
         # We want to reduce duplications
@@ -153,6 +153,7 @@ def _score_split(labels, contig_names, gene_mappings_cache):
 
     total_dup = 0
     scg_retained = 0
+    retained_dup = 0
     for contigs in clusters.values():
         gene_counts = {}
         scg_count = 0
@@ -162,12 +163,21 @@ def _score_split(labels, contig_names, gene_mappings_cache):
             for g in genes:
                 gene_counts[g] = gene_counts.get(g, 0) + 1
         
+        # Calculate duplications in this specific sub-bin
+        current_dups = sum(1 for cnt in gene_counts.values() if cnt > 1)
+        total_dup += current_dups
+
         # For this sub-bin, track max SCGs (as a proxy for the main genome quality)
         # Ideally we want one big clean bin, not 10 tiny clean bins
-        scg_retained = max(scg_retained, scg_count)
-        total_dup += sum(1 for cnt in gene_counts.values() if cnt > 1)
+        if scg_count > scg_retained:
+            scg_retained = scg_count
+            retained_dup = current_dups
+        elif scg_count == scg_retained:
+            # Tie-breaker: prefer fewer duplications
+            if current_dups < retained_dup:
+                retained_dup = current_dups
 
-    return total_dup, scg_retained
+    return total_dup, scg_retained, retained_dup
 
 
 def refine_contaminated_bins(
