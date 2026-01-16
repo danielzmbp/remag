@@ -220,7 +220,7 @@ def determine_optimal_resolution(embeddings_df, fragments_dict, args, gene_mappi
 
     if mode == "single-cell":
         # Single-cell: skip sweep, use fixed coarse resolution
-        test_resolutions = [0.01]
+        test_resolutions = [0.001]
     else:
         test_resolutions = single_sample_resolutions
         if is_coassembly:
