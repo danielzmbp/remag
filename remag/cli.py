@@ -540,14 +540,18 @@ def main_cli(
             barlow_lambda = 0.003
             click.echo("Auto Barlow lambda: 0.003 (single-sample or no coverage)", err=True)
 
-    # Set default rescue parameters based on number of samples if not provided
+    # Set default rescue parameters based on number of samples or single-cell mode if not provided
+    is_single_cell = mode.lower() == "single-cell"
+    
     if rescue_similarity_threshold is None:
-        rescue_similarity_threshold = 0.7 if coverage_count > 1 else 0.9
+        rescue_similarity_threshold = 0.7 if (coverage_count > 1 or is_single_cell) else 0.9
         
     if rescue_max_duplication is None:
         rescue_max_duplication = 3.0
     
-    if coverage_count > 1:
+    if is_single_cell:
+        click.echo(f"Single-cell mode detected: Using relaxed rescue criteria (Sim > {rescue_similarity_threshold}, Dup < {rescue_max_duplication}%)", err=True)
+    elif coverage_count > 1:
         click.echo(f"Coassembly detected: Using relaxed rescue criteria (Sim > {rescue_similarity_threshold}, Dup < {rescue_max_duplication}%)", err=True)
     else:
         click.echo(f"Single sample detected: Using strict rescue criteria (Sim > {rescue_similarity_threshold}, Dup < {rescue_max_duplication}%)", err=True)
