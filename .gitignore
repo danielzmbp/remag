@@ -60,3 +60,4 @@ standalone/predictions.tsv
 remag_output/
 venv_remag/
 GEMINI.md
+AGENTS.md

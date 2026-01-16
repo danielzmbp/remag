@@ -235,6 +235,12 @@ def refine_contaminated_bins(
     processed_bins = set()
 
     for bin_id in contaminated_bins:
+        # Log duplication status before refinement
+        info = duplication_results.get(bin_id, {})
+        n_dups = len(info.get("duplicated_genes", {}))
+        n_scgs = info.get("single_copy_genes_count", 0)
+        logger.info(f"Refining bin {bin_id}: {n_dups} duplicated genes, {n_scgs} single-copy genes")
+
         refined_df = refine_bin(
             clusters_df,
             embeddings_df,
