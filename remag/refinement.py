@@ -180,6 +180,8 @@ def refine_contaminated_bins(
         logger.error(f"Embeddings not found at {embeddings_path}")
         return clusters_df, fragments_dict, {}
     embeddings_df = pd.read_csv(embeddings_path, index_col=0)
+    # Ensure index is string to match clusters_df contig names
+    embeddings_df.index = embeddings_df.index.astype(str)
 
     duplication_results = args._duplication_results if hasattr(args, "_duplication_results") else {}
     gene_mappings_cache = getattr(args, "_gene_mappings_cache", None)

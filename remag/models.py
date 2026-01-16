@@ -797,7 +797,9 @@ def generate_embeddings(model, features_df, args):
     # Check if embeddings file already exists
     if os.path.exists(embeddings_path):
         logger.info(f"Loading existing embeddings from {embeddings_path}")
-        return pd.read_csv(embeddings_path, index_col=0)
+        df = pd.read_csv(embeddings_path, index_col=0)
+        df.index = df.index.astype(str)
+        return df
 
     device = get_torch_device()
     logger.debug(f"Using device: {device}")
