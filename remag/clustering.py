@@ -745,9 +745,11 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
     ]
 
     # Create clusters dataframe with original contig names (without .original suffix)
-    final_original_contig_names = [
-        extract_base_contig_name(name) for name in embeddings_df.index
-    ]
+    # Note: embeddings_df.index already has base names (filtered by generate_embeddings)
+    # We should NOT call extract_base_contig_name again here, as it might strip parts of the name
+    # if the name contains dots (e.g., 'contig.1').
+    final_original_contig_names = list(embeddings_df.index)
+
     contig_clusters_df = pd.DataFrame(
         {"contig": final_original_contig_names, "cluster": formatted_labels}
     )
