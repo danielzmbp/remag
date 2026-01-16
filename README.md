@@ -12,6 +12,8 @@
 conda create -n remag -c bioconda -c conda-forge remag
 conda activate remag
 
+# (Optional) For GPU support: conda install pytorch pytorch-cuda=12.1 -c pytorch -c nvidia
+
 # Run REMAG (output directory optional - defaults to remag_output)
 remag contigs.fasta -c alignments.bam
 ```
@@ -46,7 +48,17 @@ This is the easiest method as conda handles all dependencies automatically:
 # Create a new environment with all dependencies
 conda create -n remag -c bioconda -c conda-forge remag
 conda activate remag
+```
 
+**For GPU Support (Highly Recommended):**
+By default, conda might install the CPU-only version of PyTorch. To enable GPU acceleration (essential for faster training and HyenaDNA classification), install the CUDA-enabled version manually:
+
+```bash
+# Install PyTorch with CUDA support (adjust cuda version as needed, e.g., 11.8 or 12.1)
+conda install pytorch torchvision torchaudio pytorch-cuda=12.1 -c pytorch -c nvidia
+```
+
+```bash
 # Verify installation
 remag --help
 ```
