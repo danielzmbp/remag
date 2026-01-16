@@ -199,11 +199,30 @@ def refine_contaminated_bins(
         logger.warning("No duplication data available; skipping refinement")
         return clusters_df, fragments_dict, {}
 
-    contaminated_bins = [
-        bin_id
-        for bin_id, info in duplication_results.items()
-        if len(info.get("duplicated_genes", {})) >= getattr(args, "min_duplications_for_refinement", 1)
-    ]
+    contaminated_bins = []
+    
+    is_single_cell = getattr(args, "mode", "metagenomics").lower() == "single-cell"
+    
+    for bin_id, info in duplication_results.items():
+        dups_count = len(info.get("duplicated_genes", {}))
+        
+        # Check minimum duplications threshold
+        if dups_count < getattr(args, "min_duplications_for_refinement", 1):
+            continue
+            
+        # For single-cell mode: only refine if duplications are significant relative to SCGs
+        if is_single_cell:
+            scg_count = info.get("single_copy_genes_count", 0)
+            if scg_count > 0:
+                dup_ratio = dups_count / scg_count
+                if dup_ratio < 0.05:
+                    logger.debug(
+                        f"Skipping refinement for bin {bin_id} in single-cell mode: "
+                        f"{dups_count} dups / {scg_count} SCGs = {dup_ratio:.1%} < 5%"
+                    )
+                    continue
+        
+        contaminated_bins.append(bin_id)
 
     if not contaminated_bins:
         logger.info("No contaminated bins found; refinement skipped")
