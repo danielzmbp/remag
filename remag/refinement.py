@@ -41,11 +41,18 @@ def refine_bin(
         logger.warning(f"Bin {bin_id} lacks embeddings for refinement")
         return None
 
-    # Calculate original SCG count (total gene instances) to use as baseline
+    # Calculate original SCG count (single copy gene instances) to use as baseline
     original_scg_count = 0
+    # Also need to calculate gene counts to determine SCGs correctly
+    gene_counts = {}
+    
     for contig in available:
         genes = gene_mappings_cache.get(contig, {})
-        original_scg_count += len(genes)
+        for g in genes:
+            gene_counts[g] = gene_counts.get(g, 0) + 1
+            
+    # Count genes that appear exactly once in this bin
+    original_scg_count = sum(1 for count in gene_counts.values() if count == 1)
 
     # Extract embeddings for this bin
     emb = embeddings_df.loc[available].values.astype(np.float32)
@@ -179,20 +186,23 @@ def _score_split(labels, contig_names, gene_mappings_cache):
         scg_count = 0
         for contig in contigs:
             genes = gene_mappings_cache.get(contig, {})
-            scg_count += len(genes)
+            # Note: We don't just sum len(genes) anymore, we need counts to determine SCGs
             for g in genes:
                 gene_counts[g] = gene_counts.get(g, 0) + 1
         
         # Calculate duplications in this specific sub-bin
         current_dups = sum(1 for cnt in gene_counts.values() if cnt > 1)
         total_dup += current_dups
+        
+        # Calculate true SCGs (genes appearing exactly once) for this sub-bin
+        current_scgs = sum(1 for cnt in gene_counts.values() if cnt == 1)
 
         # For this sub-bin, track max SCGs (as a proxy for the main genome quality)
         # Ideally we want one big clean bin, not 10 tiny clean bins
-        if scg_count > scg_retained:
-            scg_retained = scg_count
+        if current_scgs > scg_retained:
+            scg_retained = current_scgs
             retained_dup = current_dups
-        elif scg_count == scg_retained:
+        elif current_scgs == scg_retained:
             # Tie-breaker: prefer fewer duplications
             if current_dups < retained_dup:
                 retained_dup = current_dups
