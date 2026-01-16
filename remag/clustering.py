@@ -776,14 +776,26 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
         
         # Define resolution sweep sequence to force splitting
         # Starts small and increases gradually
-        resolution_sweep = [0.15, 0.20, 0.25, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 1.0, 1.2, 1.5, 2.0, 3.0]
+        base_sweep = [0.15, 0.20, 0.25, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 1.0, 1.2, 1.5, 2.0, 3.0]
+        
+        resolution_sweep = []
+        
+        # If starting resolution is very low, bridge the gap with geometric progression
+        if leiden_resolution < base_sweep[0]:
+            curr = leiden_resolution
+            while curr < base_sweep[0]:
+                curr *= 2.0
+                if curr < base_sweep[0]:
+                    resolution_sweep.append(curr)
+        
+        resolution_sweep.extend(base_sweep)
         
         recluster_success = False
         
         for new_resolution in resolution_sweep:
             # Skip if resolution is not higher than what we already tried
             # (Use a small epsilon for float comparison)
-            if new_resolution <= leiden_resolution + 0.001:
+            if new_resolution <= leiden_resolution + 1e-6:
                 continue
                 
             logger.info(f"Reclustering attempt with resolution={new_resolution} (original: {leiden_resolution})")
