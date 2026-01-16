@@ -178,8 +178,11 @@ class ContigHeaderMapper:
     def _build_mapping(self):
         """Build the contig name to header mapping."""
         for header in self._fragments_dict.keys():
-            contig_name = extract_base_contig_name(header)
-            # In case of duplicates, keep the first one (consistent with original behavior)
+            # fragments_dict keys are already base contig names (from FASTA)
+            # We should NOT use extract_base_contig_name here as it might incorrectly
+            # strip valid suffixes from base names (e.g., 'contig.1' -> 'contig')
+            contig_name = header
+            
             if contig_name not in self._contig_to_header_map:
                 self._contig_to_header_map[contig_name] = header
     
