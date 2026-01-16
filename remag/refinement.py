@@ -87,6 +87,8 @@ def refine_bin(
     # 2. Try increasing resolutions to break up the cluster, using the same set as initial Leiden
     resolutions = [0.05, 0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 1.0, 1.2, 1.5, 2.0]
     
+    candidates = []
+    
     for res in resolutions:
         labels = _leiden_clustering_on_graph(graph, resolution=res, random_state=42)
         
@@ -97,33 +99,51 @@ def refine_bin(
             
         # Score the split
         total_dup, retained_scg, retained_dup = _score_split(labels, available, gene_mappings_cache)
-
-        # Determine retention threshold based on bin size
-        # For very large bins (>10k contigs), we relax the threshold to allow disentangling 
-        # complex mixtures (e.g. extracting 1 genome from a pool of many, which results in ~10% retention)
-        retention_threshold = 0.75
-        if len(contigs) > 10000:
-            retention_threshold = 0.10
-            
-        # Skip if the best sub-bin has less than the threshold of the original SCGs (oversplitting)
-        if original_scg_count > 0 and retained_scg < retention_threshold * original_scg_count:
-            logger.debug(f"Bin {bin_id} res={res} skipped: retained SCG {retained_scg} < {int(retention_threshold*100)}% of original {original_scg_count}")
-            continue
         
-        dup_scg_ratio = (retained_dup / retained_scg * 100) if retained_scg > 0 else 0.0
+        dup_scg_ratio = (retained_dup / retained_scg * 100) if retained_scg > 0 else 100.0
+        
         logger.debug(
-            f"Bin {bin_id} Leiden res={res}: total_dup={total_dup}, retained_scg={retained_scg} (retained_dup={retained_dup}, {dup_scg_ratio:.1f}%), sub_bins={len(unique_labels)}"
+            f"Bin {bin_id} Leiden res={res}: total_dup={total_dup}, retained_scg={retained_scg} "
+            f"(retained_dup={retained_dup}, {dup_scg_ratio:.1f}%), sub_bins={len(unique_labels)}"
         )
+        
+        candidates.append({
+            "res": res,
+            "labels": labels,
+            "total_dup": total_dup,
+            "retained_scg": retained_scg,
+            "retained_dup": retained_dup,
+            "ratio": dup_scg_ratio
+        })
 
-        # We want to reduce duplications
-        # If duplications are equal, we prefer retaining more SCGs
-        if total_dup < original_dup:
-            score = (total_dup, -retained_scg)
-            if best is None or score < (best[0], best[1]):
-                best = (total_dup, -retained_scg, labels.copy(), res)
+    # Selection Logic: Prioritize clean genomes (<= 5% contamination)
+    best = None
+    
+    # Priority 1: Find clean candidates (ratio <= 5.0)
+    clean_candidates = [c for c in candidates if c["ratio"] <= 5.0]
+    
+    if clean_candidates:
+        # Pick the one with the most SCGs (maximize completeness)
+        best_candidate = max(clean_candidates, key=lambda x: x["retained_scg"])
+        best = (best_candidate["retained_dup"], -best_candidate["retained_scg"], 
+                best_candidate["labels"], best_candidate["res"])
+        logger.info(f"Bin {bin_id}: Found clean genome (ratio={best_candidate['ratio']:.1f}%, SCG={best_candidate['retained_scg']}) at res={best_candidate['res']}")
+    
+    # Priority 2: Fallback to best effort (lowest ratio) if it improves cleanliness
+    elif candidates:
+        # Only consider candidates that are cleaner than the original bin
+        original_ratio = (original_dup / original_scg_count * 100) if original_scg_count > 0 else 100.0
+        valid_candidates = [c for c in candidates if c["ratio"] < original_ratio]
+        
+        if valid_candidates:
+            # Pick the cleanest one available
+            best_candidate = min(valid_candidates, key=lambda x: x["ratio"])
+            best = (best_candidate["retained_dup"], -best_candidate["retained_scg"], 
+                    best_candidate["labels"], best_candidate["res"])
+            logger.info(f"Bin {bin_id}: No clean genome found. Falling back to best effort (ratio={best_candidate['ratio']:.1f}%) at res={best_candidate['res']}")
 
     if best is None:
-        logger.info(f"Bin {bin_id} refinement did not reduce duplicated genes")
+        logger.info(f"Bin {bin_id} refinement did not improve bin quality")
         return None
 
     best_dup, _, best_labels, best_res = best
@@ -223,17 +243,17 @@ def refine_contaminated_bins(
         if dups_count < getattr(args, "min_duplications_for_refinement", 1):
             continue
             
-        # For single-cell mode: only refine if duplications are significant relative to SCGs
-        if is_single_cell:
-            scg_count = info.get("single_copy_genes_count", 0)
-            if scg_count > 0:
-                dup_ratio = dups_count / scg_count
-                if dup_ratio < 0.05:
-                    logger.debug(
-                        f"Skipping refinement for bin {bin_id} in single-cell mode: "
-                        f"{dups_count} dups / {scg_count} SCGs = {dup_ratio:.1%} < 5%"
-                    )
-                    continue
+        # Only refine if duplications are significant relative to SCGs (contam > 5%)
+        # This prevents over-refining high-quality bins in all modes
+        scg_count = info.get("single_copy_genes_count", 0)
+        if scg_count > 0:
+            dup_ratio = dups_count / scg_count
+            if dup_ratio < 0.05:
+                logger.debug(
+                    f"Skipping refinement for bin {bin_id}: "
+                    f"{dups_count} dups / {scg_count} SCGs = {dup_ratio:.1%} < 5%"
+                )
+                continue
         
         contaminated_bins.append(bin_id)
 
