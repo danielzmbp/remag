@@ -574,12 +574,12 @@ def main_cli(
     effective_k = leiden_k_neighbors
     if effective_k is None:
         effective_k = 30 if mode.lower() == "single-cell" else 15
-    skip_refinement_mode = skip_refinement or mode.lower() == "single-cell"
+    skip_refinement_mode = skip_refinement # Allow refinement in single-cell if not explicitly skipped
     skip_bacterial_filter_mode = skip_bacterial_filter or mode.lower() == "single-cell"
 
     if mode.lower() == "single-cell":
         if not skip_refinement:
-            click.echo("Single-cell mode: skipping refinement and using larger k-NN graph.", err=True)
+            click.echo("Single-cell mode: using larger k-NN graph.", err=True)
         if not skip_bacterial_filter:
             click.echo("Single-cell mode: skipping euk filter (keeping all contigs).", err=True)
 
