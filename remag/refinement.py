@@ -79,7 +79,7 @@ def refine_bin(
         normalized, 
         k=k, 
         similarity_threshold=getattr(args, 'leiden_similarity_threshold', 0.1),
-        n_jobs=1, # Small task, keep single threaded
+        n_jobs=getattr(args, 'cores', 1),
         args=None # Don't save intermediate files for sub-tasks
     )
 
