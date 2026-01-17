@@ -13,7 +13,7 @@ import torch
 from loguru import logger
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.neighbors import NearestNeighbors
-from joblib import Parallel, delayed
+from concurrent.futures import ThreadPoolExecutor
 
 from .utils import extract_base_contig_name, get_torch_device, group_contigs_by_cluster
 
@@ -198,14 +198,25 @@ def _greedy_leiden_clustering(embeddings, contig_names, gene_mappings, k=15, sim
         
         # Run resolution checks in parallel using threads (leidenalg releases GIL)
         # Using n_jobs for parallelism. If n_jobs=1, it will run sequentially.
-        # prefer='threads' is efficient here because we share the graph object (read-only)
-        # without expensive pickling.
         
-        candidates = Parallel(n_jobs=n_jobs, prefer="threads")(
-            delayed(_evaluate_resolution_candidate)(
-                current_graph, res, gene_mappings, random_state
-            ) for res in resolutions
-        )
+        candidates = []
+        # Ensure n_jobs is valid (must be > 0). If -1, use None (all cores)
+        max_workers = n_jobs if n_jobs > 0 else None
+        
+        if max_workers == 1:
+             # Sequential execution to avoid overhead
+             candidates = [
+                 _evaluate_resolution_candidate(current_graph, res, gene_mappings, random_state)
+                 for res in resolutions
+             ]
+        else:
+             # Parallel execution
+             with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = [
+                    executor.submit(_evaluate_resolution_candidate, current_graph, res, gene_mappings, random_state)
+                    for res in resolutions
+                ]
+                candidates = [f.result() for f in futures]
         
         # Find best candidate from results
         for candidate in candidates:
