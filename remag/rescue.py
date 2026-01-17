@@ -244,6 +244,7 @@ def rescue_fragmented_bins(
             
             if is_safe:
                 # Assign to bin
+                logger.debug(f"Rescued singleton {contig} -> {best_target} (Sim: {best_score:.3f})")
                 clusters_df.loc[clusters_df['contig'] == contig, 'cluster'] = best_target
                 updated_bin_members[best_target].append(contig) # Update local list for subsequent checks
                 rescued_singletons += 1
