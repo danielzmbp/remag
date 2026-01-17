@@ -51,6 +51,23 @@ class SpaceSeparatedPaths(click.ParamType):
         return sorted(validated_paths)
 
 
+class SpaceSeparatedFloats(click.ParamType):
+    """Custom click type that accepts space-separated floats."""
+    name = "floats"
+
+    def convert(self, value, param, ctx):
+        if value is None:
+            return value
+
+        if isinstance(value, (list, tuple)):
+            return value
+
+        try:
+            return [float(x) for x in value.split()]
+        except ValueError:
+             self.fail(f"Invalid float list: {value}", param, ctx)
+
+
 click.rich_click.USE_RICH_MARKUP = True
 click.rich_click.USE_MARKDOWN = True
 click.rich_click.SHOW_ARGUMENTS = True
@@ -75,7 +92,7 @@ click.rich_click.OPTION_GROUPS = {
         },
         {
             "name": "Clustering",
-            "options": ["--min-cluster-size", "--leiden-resolution", "--auto-resolution", "--leiden-k-neighbors", "--leiden-similarity-threshold"],
+            "options": ["--min-cluster-size", "--greedy-resolutions", "--greedy-min-score", "--leiden-k-neighbors", "--leiden-similarity-threshold"],
         },
         {
             "name": "Filtering & Processing",
@@ -353,18 +370,18 @@ def validate_coverage_options(ctx, param, value):
     help="Skip chimeric contig detection and splitting for large contigs (default: skip).",
 )
 @click.option(
-    "--leiden-resolution",
-    type=float,
-    default=None,
-    show_default=False,
-    help="Resolution parameter for Leiden clustering (higher = more clusters). If not specified, auto-resolution is used to determine optimal value based on core gene duplications.",
+    "--greedy-resolutions",
+    type=SpaceSeparatedFloats(),
+    default="0.5 1.0 2.0 5.0",
+    show_default=True,
+    help="Space-separated list of Leiden resolutions to try in greedy clustering.",
 )
 @click.option(
-    "--auto-resolution",
-    is_flag=True,
-    default=True,
+    "--greedy-min-score",
+    type=float,
+    default=-5.0,
     show_default=True,
-    help="Automatically determine optimal Leiden resolution based on core gene duplications (enabled by default). Disabled if --leiden-resolution is specified.",
+    help="Minimum quality score (SCG - 5*Dups) required to accept a bin in greedy clustering.",
 )
 @click.option(
     "--leiden-k-neighbors",
@@ -435,8 +452,8 @@ def main_cli(
     min_duplications_for_refinement,
     num_augmentations,
     skip_chimera_detection,
-    auto_resolution,
-    leiden_resolution,
+    greedy_resolutions,
+    greedy_min_score,
     leiden_k_neighbors,
     leiden_similarity_threshold,
     keep_intermediate,
@@ -491,17 +508,6 @@ def main_cli(
     if threads > max_cores:
         click.echo(f"Warning: Requested {threads} threads but only {max_cores} available. Using {max_cores}.", err=True)
         threads = max_cores
-
-    # Handle auto-resolution vs manual resolution logic
-    if leiden_resolution is not None:
-        # User explicitly specified resolution, disable auto-resolution
-        auto_resolution = False
-        click.echo(f"Using manual Leiden resolution: {leiden_resolution}", err=True)
-    else:
-        # No manual resolution specified, use auto-resolution (default)
-        leiden_resolution = 1.0  # Fallback if auto-resolution fails
-        if auto_resolution:
-            click.echo("Auto-resolution enabled (default). Use --leiden-resolution to specify manually.", err=True)
 
     # Separate coverage files by type
     bam_cram_files = []
@@ -580,8 +586,8 @@ def main_cli(
         min_duplications_for_refinement=min_duplications_for_refinement,
         num_augmentations=num_augmentations,
         skip_chimera_detection=skip_chimera_detection,
-        auto_resolution=auto_resolution,
-        leiden_resolution=leiden_resolution,
+        greedy_resolutions=greedy_resolutions,
+        greedy_min_score=greedy_min_score,
         leiden_k_neighbors=effective_k,
         leiden_similarity_threshold=leiden_similarity_threshold,
         keep_intermediate=keep_intermediate,

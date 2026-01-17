@@ -89,23 +89,42 @@ def main(args):
         logger.error(f"Failed to train model or generate embeddings: {e}")
         sys.exit(1)
 
-    # Optionally determine optimal resolution automatically
-    auto_resolution_enabled = False
-    if getattr(args, "auto_resolution", False):
-        logger.info("Auto-resolution enabled - determining optimal Leiden resolution...")
-        try:
-            from .adaptive_resolution import determine_optimal_resolution
-            optimal_resolution = determine_optimal_resolution(embeddings_df, fragments_dict, args)
-            # Update args with optimal resolution
-            args.leiden_resolution = optimal_resolution
-            logger.info(f"Using automatically determined resolution: {optimal_resolution:.2f}")
-            auto_resolution_enabled = True
-        except Exception as e:
-            logger.warning(f"Adaptive resolution determination failed: {e}")
-            logger.warning(f"Falling back to manual resolution: {args.leiden_resolution}")
+    # Generate gene mappings for greedy clustering
+    logger.info("Generating gene mappings for greedy clustering...")
+    try:
+        from .miniprot_utils import estimate_organisms_from_all_contigs, get_gene_mappings_cache_path
+        
+        # Check if cache exists
+        cache_path = get_gene_mappings_cache_path(args)
+        gene_mappings = {}
+        
+        if os.path.exists(cache_path):
+            logger.info(f"Loading existing gene mappings from {cache_path}")
+            with open(cache_path, 'r') as f:
+                gene_mappings = json.load(f)
+        else:
+            logger.info("Running miniprot to generate gene mappings...")
+            _ = estimate_organisms_from_all_contigs(fragments_dict, args)
+            
+            # Reload from the newly created file
+            if os.path.exists(cache_path):
+                with open(cache_path, 'r') as f:
+                    gene_mappings = json.load(f)
+            else:
+                logger.warning("Gene mappings cache not found after miniprot run.")
+                
+        logger.info(f"Loaded {len(gene_mappings)} contig gene mappings")
+        
+        # Store in args for later use
+        args._gene_mappings_cache = gene_mappings
+
+    except Exception as e:
+        logger.error(f"Failed to generate gene mappings: {e}")
+        # Initialize empty mappings to allow clustering to proceed (though quality scores will be -100)
+        gene_mappings = {}
 
     try:
-        clusters_df = cluster_contigs(embeddings_df, fragments_dict, args)
+        clusters_df = cluster_contigs(embeddings_df, fragments_dict, gene_mappings, args)
     except Exception as e:
         logger.error(f"Failed to cluster contigs: {e}")
         sys.exit(1)
@@ -113,19 +132,8 @@ def main(args):
     # Check for duplicated core genes using miniprot (using compleasm-style thresholds)
     logger.info("Checking for duplicated core genes...")
 
-    # If auto-resolution was enabled, try to reuse the gene mappings cache
-    gene_mappings_cache = None
-    if auto_resolution_enabled:
-        cache_path = get_gene_mappings_cache_path(args)
-        if os.path.exists(cache_path):
-            try:
-                with open(cache_path, "r") as f:
-                    gene_mappings_cache = json.load(f)
-                logger.info(f"Loaded gene mappings cache from auto-resolution ({len(gene_mappings_cache)} contigs)")
-                logger.info("Using cached gene mappings instead of re-running miniprot")
-            except Exception as e:
-                logger.warning(f"Failed to load gene mappings cache: {e}")
-                gene_mappings_cache = None
+    # Use the gene mappings we already loaded for greedy clustering
+    gene_mappings_cache = args._gene_mappings_cache if hasattr(args, '_gene_mappings_cache') else None
 
     # Use cached approach if available, otherwise run miniprot
     if gene_mappings_cache is not None:

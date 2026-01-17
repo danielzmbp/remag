@@ -44,6 +44,176 @@ class ClusteringManager:
         )
 
 
+def _calculate_bin_quality(contig_names, gene_mappings):
+    """
+    Calculate quality score: SCG - 5 * Dups
+    
+    Args:
+        contig_names: List of contig names in the bin
+        gene_mappings: Dict mapping contig_name -> gene_family -> details
+        
+    Returns:
+        tuple: (score, scg_count, dup_count)
+    """
+    gene_counts = {}
+    for c in contig_names:
+        # Check if contig has gene mappings
+        if c in gene_mappings:
+            for gene in gene_mappings[c]:
+                gene_counts[gene] = gene_counts.get(gene, 0) + 1
+
+    if not gene_counts:
+        # Penalty for empty or no-gene bins
+        return -100.0, 0, 0
+
+    scg = sum(1 for v in gene_counts.values() if v == 1)
+    dups = sum(1 for v in gene_counts.values() if v > 1)
+
+    # Score formula: SCG - 5 * Dups
+    score = float(scg) - (5.0 * float(dups))
+    return score, scg, dups
+
+
+def _greedy_leiden_clustering(embeddings, contig_names, gene_mappings, k=15, similarity_threshold=0.1, 
+                            resolutions=[0.5, 1.0, 2.0, 5.0], min_score=-5.0, 
+                            random_state=42, n_jobs=1, args=None):
+    """
+    Perform greedy Leiden clustering.
+    
+    Iteratively:
+    1. Cluster active graph at multiple resolutions.
+    2. Pick best cluster based on quality score (SCG - 5*Dups).
+    3. Remove best cluster nodes and repeat.
+    
+    Args:
+        embeddings: Numpy array of L2-normalized embeddings
+        contig_names: List of contig names corresponding to embeddings
+        gene_mappings: Dict of gene mappings for quality calculation
+        k: k for KNN graph
+        similarity_threshold: threshold for edges
+        resolutions: list of resolutions to try
+        min_score: minimum score to accept a bin
+        random_state: random seed
+        n_jobs: number of cores
+        args: args object
+        
+    Returns:
+        list: Cluster labels matching embeddings order (-1 for noise/unbinned)
+    """
+    logger.info(f"Starting Greedy Leiden clustering with k={k}, resolutions={resolutions}, min_score={min_score}")
+    
+    # 1. Construct initial graph
+    graph = _construct_knn_graph(embeddings, k=k, similarity_threshold=similarity_threshold, n_jobs=n_jobs, args=args)
+    
+    # Add names to graph vertices for easy retrieval
+    graph.vs["name"] = contig_names
+    
+    # Keep track of original indices to assign final labels correctly
+    n_samples = len(embeddings)
+    graph.vs["original_index"] = range(n_samples)
+    
+    cluster_labels = np.full(n_samples, -1, dtype=int)
+    
+    # Current active indices in the ORIGINAL embeddings array
+    active_indices = list(range(n_samples))
+    
+    bin_counter = 0
+    iteration = 0
+    
+    while len(active_indices) > 0:
+        iteration += 1
+        
+        # Stop if very few nodes left
+        if len(active_indices) < 2:
+            logger.info("Fewer than 2 nodes remaining, stopping greedy loop.")
+            break
+            
+        # Extract subgraph for active nodes
+        if iteration == 1:
+            current_graph = graph
+        else:
+            current_graph = graph.induced_subgraph(active_indices)
+            
+        # If no edges, can't cluster effectively
+        if current_graph.ecount() == 0:
+            logger.info(f"Iter {iteration}: No edges in remaining graph. Stopping.")
+            break
+            
+        best_candidate = None # (score, scg, dups, resolution, node_indices_subgraph)
+        best_score = -float('inf')
+        
+        # Try all resolutions
+        for res in resolutions:
+            partition = leidenalg.find_partition(
+                current_graph,
+                leidenalg.RBConfigurationVertexPartition,
+                resolution_parameter=res,
+                seed=random_state
+            )
+            
+            # Group nodes by cluster membership
+            clusters = {}
+            for i, cluster_id in enumerate(partition.membership):
+                clusters.setdefault(cluster_id, []).append(i)
+                
+            # Evaluate each cluster
+            for cid, node_indices_in_subgraph in clusters.items():
+                # Get contig names
+                c_names = [current_graph.vs[ix]["name"] for ix in node_indices_in_subgraph]
+                
+                # Basic size filter (min 2 contigs)
+                if len(c_names) < 2: 
+                    continue
+                    
+                score, scg, dups = _calculate_bin_quality(c_names, gene_mappings)
+                
+                # Maximize score
+                if score > best_score:
+                    best_score = score
+                    best_candidate = {
+                        "score": score,
+                        "scg": scg,
+                        "dups": dups,
+                        "res": res,
+                        "node_indices_subgraph": node_indices_in_subgraph,
+                        "contigs": c_names
+                    }
+        
+        # Check if best candidate meets criteria
+        if best_candidate and best_candidate["score"] >= min_score:
+            # We found a valid bin
+            bin_id = bin_counter
+            bin_counter += 1
+            
+            subgraph_indices = best_candidate["node_indices_subgraph"]
+            # Map back to original indices
+            original_indices = [current_graph.vs[ix]["original_index"] for ix in subgraph_indices]
+            
+            # Assign label
+            cluster_labels[original_indices] = bin_id
+            
+            logger.debug(f"Iter {iteration}: Picked bin_{bin_id} (res={best_candidate['res']:.1f}, "
+                        f"scg={best_candidate['scg']}, dups={best_candidate['dups']}, "
+                        f"score={best_candidate['score']:.1f}, size={len(original_indices)})")
+            
+            # Update active indices (remove binned nodes)
+            to_remove = set(original_indices)
+            active_indices = [idx for idx in active_indices if idx not in to_remove]
+            
+        else:
+            logger.info(f"Iter {iteration}: No bin meets min_score ({min_score}). Best score was {best_score:.1f}. Stopping.")
+            break
+            
+        # Log progress occasionally
+        if iteration % 10 == 0:
+            logger.info(f"Greedy clustering: {len(active_indices)} contigs remaining...")
+
+    n_clustered = np.sum(cluster_labels >= 0)
+    logger.info(f"Greedy clustering complete. {bin_counter} bins formed, {n_clustered} contigs binned out of {n_samples}.")
+    
+    return cluster_labels
+
+
 def _construct_knn_graph(embeddings, k=15, similarity_threshold=0.1, n_jobs=1, args=None):
     """
     Construct a k-NN graph from multidimensional embeddings using cosine similarity.
@@ -207,158 +377,6 @@ def _construct_knn_graph(embeddings, k=15, similarity_threshold=0.1, n_jobs=1, a
         logger.info(f"Saved k-NN graph statistics to {graph_stats_path}")
     
     return g
-
-
-def _leiden_clustering(embeddings, k=15, similarity_threshold=0.1, resolution=1.0, random_state=42, n_jobs=1, args=None):
-    """
-    Perform Leiden clustering on embeddings by first constructing a k-NN graph.
-    
-    Args:
-        embeddings: Numpy array of L2-normalized embeddings (n_samples x embedding_dim)
-        k: Number of nearest neighbors for graph construction
-        similarity_threshold: Minimum cosine similarity to create an edge
-        resolution: Resolution parameter for Leiden algorithm (higher = more clusters)
-        random_state: Random seed for reproducibility
-        n_jobs: Number of parallel jobs for k-NN graph construction
-        args: Arguments object containing output directory and keep_intermediate flag
-        
-    Returns:
-        numpy.array: Cluster labels (-1 for isolated nodes, 0+ for clusters)
-    """
-    logger.info(f"Starting Leiden clustering with k={k}, resolution={resolution:.2f}, n_jobs={n_jobs}")
-    
-    # Construct k-NN graph with parallelization
-    graph = _construct_knn_graph(embeddings, k=k, similarity_threshold=similarity_threshold, n_jobs=n_jobs, args=args)
-    
-    # Check if graph has edges
-    if graph.ecount() == 0:
-        logger.warning("No edges in graph - all nodes will be noise")
-        return np.full(len(embeddings), -1, dtype=int)
-    
-    # Find connected components
-    components = graph.connected_components()
-    n_components = len(components)
-    logger.info(f"Graph: {graph.vcount()} nodes, {graph.ecount()} edges, {n_components} connected components")
-
-    if n_components == 1:
-        # Run Leiden on the entire graph
-        partition = leidenalg.find_partition(
-            graph, 
-            leidenalg.RBConfigurationVertexPartition,
-            resolution_parameter=resolution,
-            seed=random_state
-        )
-        cluster_labels = np.array(partition.membership)
-        
-    else:
-        # Handle multiple components separately
-        logger.info(f"Multiple components detected - running Leiden on each component")
-        cluster_labels = np.full(graph.vcount(), -1, dtype=int)
-        current_cluster_id = 0
-        
-        for component in components:
-            if len(component) < 2:
-                # Single-node component -> noise
-                continue
-                
-            # Extract subgraph for this component
-            subgraph = graph.induced_subgraph(component)
-            
-            # Run Leiden on subgraph
-            sub_partition = leidenalg.find_partition(
-                subgraph,
-                leidenalg.RBConfigurationVertexPartition,
-                resolution_parameter=resolution,
-                seed=random_state
-            )
-            
-            # Map back to original indices
-            for i, cluster_id in enumerate(sub_partition.membership):
-                original_idx = component[i]
-                cluster_labels[original_idx] = current_cluster_id + cluster_id
-            
-            # Update cluster ID offset for next component
-            current_cluster_id += len(set(sub_partition.membership))
-    
-    # Report clustering results
-    unique_labels = np.unique(cluster_labels)
-    n_clusters = len(unique_labels) - (1 if -1 in unique_labels else 0)
-    n_noise = np.sum(cluster_labels == -1)
-    
-    logger.info(f"Leiden clustering complete: {n_clusters} clusters, {n_noise} noise points")
-    
-    # Log cluster sizes
-    if n_clusters > 0:
-        cluster_sizes = np.bincount(cluster_labels[cluster_labels >= 0])
-        logger.debug(f"Cluster sizes: {cluster_sizes.tolist()}")
-    
-    return cluster_labels
-
-
-def _leiden_clustering_on_graph(graph, resolution=1.0, random_state=42):
-    """
-    Run Leiden clustering on a pre-built graph (no graph construction).
-
-    This is useful for testing multiple resolution values on the same graph,
-    avoiding expensive graph reconstruction.
-
-    Args:
-        graph: Pre-constructed igraph.Graph object
-        resolution: Resolution parameter for Leiden algorithm (higher = more clusters)
-        random_state: Random seed for reproducibility
-
-    Returns:
-        numpy.array: Cluster labels (-1 for isolated nodes, 0+ for clusters)
-    """
-    # Check if graph has edges
-    if graph.ecount() == 0:
-        logger.warning("No edges in graph - all nodes will be noise")
-        return np.full(graph.vcount(), -1, dtype=int)
-
-    # Find connected components
-    components = graph.connected_components()
-    n_components = len(components)
-
-    if n_components == 1:
-        # Run Leiden on the entire graph
-        partition = leidenalg.find_partition(
-            graph,
-            leidenalg.RBConfigurationVertexPartition,
-            resolution_parameter=resolution,
-            seed=random_state
-        )
-        cluster_labels = np.array(partition.membership)
-
-    else:
-        # Handle multiple components separately
-        cluster_labels = np.full(graph.vcount(), -1, dtype=int)
-        current_cluster_id = 0
-
-        for component in components:
-            if len(component) < 2:
-                # Single-node component -> noise
-                continue
-
-            # Extract subgraph for this component
-            subgraph = graph.induced_subgraph(component)
-
-            # Run Leiden on subgraph
-            sub_partition = leidenalg.find_partition(
-                subgraph,
-                leidenalg.RBConfigurationVertexPartition,
-                resolution_parameter=resolution,
-                seed=random_state
-            )
-
-            # Map back to original indices
-            for i, cluster_id in enumerate(sub_partition.membership):
-                original_idx = component[i]
-                cluster_labels[original_idx] = current_cluster_id + cluster_id
-
-            # Update cluster ID offset for next component
-            current_cluster_id += len(set(sub_partition.membership))
-
-    return cluster_labels
 
 
 def _vectorized_pairwise_distances(embeddings1, embeddings2=None):
@@ -691,8 +709,8 @@ def detect_chimeric_contigs(embeddings_df, clusters_df, args):
     return chimera_results
 
 
-def cluster_contigs(embeddings_df, fragments_dict, args):
-    """Main clustering function that orchestrates the clustering process."""
+def cluster_contigs(embeddings_df, fragments_dict, gene_mappings, args):
+    """Main clustering function that orchestrates the clustering process using Greedy Leiden."""
     # Ensure output directory exists for all code paths
     os.makedirs(args.output, exist_ok=True)
     
@@ -709,31 +727,37 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
     # Embeddings are already L2 normalized when saved to CSV
     logger.debug("Using pre-normalized embeddings for clustering...")
     norm_data = embeddings_df.values
+    
+    # Get contig names correctly
     contig_names = list(embeddings_df.index)
 
     # Log essential data properties
     logger.info(f"Clustering {len(contig_names)} contigs with {embeddings_df.shape[1]}D embeddings")
 
-    # Use Leiden clustering directly
-    logger.info("Using Leiden clustering")
-    leiden_resolution = getattr(args, 'leiden_resolution', 1.0)
+    # Use Greedy Leiden clustering
+    logger.info("Using Greedy Leiden clustering strategy")
     
-    logger.info(f"Running Leiden on {len(contig_names)} contigs "
-               f"(resolution={leiden_resolution:.2f}, k={clustering_manager.graph_manager.k}, "
-               f"similarity_threshold={clustering_manager.graph_manager.similarity_threshold})")
+    # Get parameters from args or defaults
+    greedy_resolutions = getattr(args, 'greedy_resolutions', [0.5, 1.0, 2.0, 5.0])
+    greedy_min_score = getattr(args, 'greedy_min_score', -5.0)
     
-    cluster_labels = _leiden_clustering(
+    cluster_labels = _greedy_leiden_clustering(
         norm_data,
+        contig_names=contig_names,
+        gene_mappings=gene_mappings,
         k=clustering_manager.graph_manager.k,
         similarity_threshold=clustering_manager.graph_manager.similarity_threshold,
-        resolution=leiden_resolution,
+        resolutions=greedy_resolutions,
+        min_score=greedy_min_score,
         random_state=42,
         n_jobs=getattr(args, 'cores', 1),
         args=args
     )
+    
     n_clusters = len(set(cluster_labels)) - (1 if -1 in cluster_labels else 0)
     n_noise = sum(1 for label in cluster_labels if label == -1)
     cluster_sizes = np.bincount(cluster_labels[cluster_labels >= 0]) if n_clusters > 0 else []
+    
     formatted_labels = [
         f"bin_{label}" if label != -1 else "noise" for label in cluster_labels
     ]
@@ -763,58 +787,6 @@ def cluster_contigs(embeddings_df, fragments_dict, args):
         f"(excluding {len(singleton_bins)} singletons), {n_noise} noise contigs, "
         f"sizes: {dict(sorted(filtered_counts.items()))}"
     )
-
-    # Check if only one bin was detected and perform reclustering
-    if n_clusters == 1:
-        logger.info("Only one bin detected. Attempting reclustering with increased resolution...")
-        
-        # Increase resolution by 0.5
-        new_resolution = leiden_resolution + 0.5
-        logger.info(f"Reclustering with resolution={new_resolution} (original: {leiden_resolution})")
-        
-        # Perform Leiden reclustering
-        recluster_labels = _leiden_clustering(
-            norm_data,
-            k=clustering_manager.graph_manager.k,
-            similarity_threshold=clustering_manager.graph_manager.similarity_threshold,
-            resolution=new_resolution,
-            random_state=42,
-            n_jobs=getattr(args, 'cores', 1),
-            args=args
-        )
-        
-        n_recluster_clusters = len(set(recluster_labels)) - (1 if -1 in recluster_labels else 0)
-        n_recluster_noise = sum(1 for label in recluster_labels if label == -1)
-        recluster_sizes = np.bincount(recluster_labels[recluster_labels >= 0]) if n_recluster_clusters > 0 else []
-        logger.info(f"Reclustering result: {n_recluster_clusters} clusters, {n_recluster_noise} noise points, sizes: {recluster_sizes.tolist() if hasattr(recluster_sizes, 'tolist') else list(recluster_sizes)}")
-        
-        # Only use reclustering results if we got more than one cluster
-        if n_recluster_clusters > 1:
-            logger.info(f"Reclustering successful: {n_recluster_clusters} clusters found. Using reclustering results.")
-            
-            # Update cluster labels with reclustering results
-            cluster_labels = recluster_labels
-            
-            
-            # Update formatted labels and contig clusters dataframe
-            formatted_labels = [
-                f"bin_{label}" if label != -1 else "noise" for label in cluster_labels
-            ]
-            
-            contig_clusters_df = pd.DataFrame(
-                {"contig": final_original_contig_names, "cluster": formatted_labels}
-            )
-            
-            # Update final counts
-            final_counts = contig_clusters_df["cluster"].value_counts().to_dict()
-            n_clusters = len([k for k in final_counts.keys() if k != "noise"])
-            n_noise = final_counts.get("noise", 0)
-            logger.info(f"Final clustering result after reclustering: {n_clusters} clusters, {n_noise} noise contigs, sizes: {dict(sorted(final_counts.items()))}")
-            
-            # Update clusters_df for consistency
-            clusters_df = contig_clusters_df
-        else:
-            logger.info(f"Reclustering did not improve results ({n_recluster_clusters} clusters). Keeping original single bin.")
 
     # Filter out noise contigs for final bins.csv
     final_bins_df = contig_clusters_df[contig_clusters_df["cluster"] != "noise"].copy()
