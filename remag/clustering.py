@@ -379,6 +379,72 @@ def _construct_knn_graph(embeddings, k=15, similarity_threshold=0.1, n_jobs=1, a
     return g
 
 
+def _leiden_clustering_on_graph(graph, resolution=1.0, random_state=42):
+    """
+    Run Leiden clustering on a pre-built graph (no graph construction).
+
+    This is useful for testing multiple resolution values on the same graph,
+    avoiding expensive graph reconstruction.
+
+    Args:
+        graph: Pre-constructed igraph.Graph object
+        resolution: Resolution parameter for Leiden algorithm (higher = more clusters)
+        random_state: Random seed for reproducibility
+
+    Returns:
+        numpy.array: Cluster labels (-1 for isolated nodes, 0+ for clusters)
+    """
+    # Check if graph has edges
+    if graph.ecount() == 0:
+        logger.warning("No edges in graph - all nodes will be noise")
+        return np.full(graph.vcount(), -1, dtype=int)
+
+    # Find connected components
+    components = graph.connected_components()
+    n_components = len(components)
+
+    if n_components == 1:
+        # Run Leiden on the entire graph
+        partition = leidenalg.find_partition(
+            graph,
+            leidenalg.RBConfigurationVertexPartition,
+            resolution_parameter=resolution,
+            seed=random_state
+        )
+        cluster_labels = np.array(partition.membership)
+
+    else:
+        # Handle multiple components separately
+        cluster_labels = np.full(graph.vcount(), -1, dtype=int)
+        current_cluster_id = 0
+
+        for component in components:
+            if len(component) < 2:
+                # Single-node component -> noise
+                continue
+
+            # Extract subgraph for this component
+            subgraph = graph.induced_subgraph(component)
+
+            # Run Leiden on subgraph
+            sub_partition = leidenalg.find_partition(
+                subgraph,
+                leidenalg.RBConfigurationVertexPartition,
+                resolution_parameter=resolution,
+                seed=random_state
+            )
+
+            # Map back to original indices
+            for i, cluster_id in enumerate(sub_partition.membership):
+                original_idx = component[i]
+                cluster_labels[original_idx] = current_cluster_id + cluster_id
+
+            # Update cluster ID offset for next component
+            current_cluster_id += len(set(sub_partition.membership))
+
+    return cluster_labels
+
+
 def _vectorized_pairwise_distances(embeddings1, embeddings2=None):
     """
     Calculate pairwise cosine distances using vectorized operations.
