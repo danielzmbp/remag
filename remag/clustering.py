@@ -100,7 +100,7 @@ def _greedy_leiden_clustering(embeddings, contig_names, gene_mappings, k=15, sim
     Returns:
         list: Cluster labels matching embeddings order (-1 for noise/unbinned)
     """
-    logger.info(f"Starting Greedy Leiden clustering with k={k}, resolutions={resolutions}, min_score={min_score}, n_jobs={n_jobs}")
+    logger.info(f"Starting Greedy Leiden clustering with k={k}, resolutions={resolutions}, min_score={min_score}")
     
     # 1. Construct initial graph
     graph = _construct_knn_graph(embeddings, k=k, similarity_threshold=similarity_threshold, n_jobs=n_jobs, args=args)
