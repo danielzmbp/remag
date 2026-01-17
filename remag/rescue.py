@@ -37,7 +37,7 @@ def rescue_fragmented_bins(
     fragments_dict, 
     args, 
     similarity_threshold=0.70, 
-    max_duplication_increase=5.0
+    max_duplication_increase=3.0
 ):
     """
     Attempt to merge smaller bins (or split parts of genomes) into larger "Core Bins"
