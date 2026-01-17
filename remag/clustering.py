@@ -46,7 +46,7 @@ class ClusteringManager:
 
 def _calculate_bin_quality(contig_names, gene_mappings):
     """
-    Calculate quality score: SCG - 7 * Dups
+    Calculate quality score: SCG - 10 * Dups
     
     Args:
         contig_names: List of contig names in the bin
@@ -69,20 +69,20 @@ def _calculate_bin_quality(contig_names, gene_mappings):
     scg = sum(1 for v in gene_counts.values() if v == 1)
     dups = sum(1 for v in gene_counts.values() if v > 1)
 
-    # Score formula: SCG - 7 * Dups
-    score = float(scg) - (7.0 * float(dups))
+    # Score formula: SCG - 10 * Dups
+    score = float(scg) - (10.0 * float(dups))
     return score, scg, dups
 
 
 def _greedy_leiden_clustering(embeddings, contig_names, gene_mappings, k=15, similarity_threshold=0.1, 
-                            resolutions=[0.5, 1.0, 2.0, 5.0], min_score=-7.0, 
+                            resolutions=[0.5, 1.0, 2.0, 5.0], min_score=-10.0, 
                             random_state=42, n_jobs=1, args=None):
     """
     Perform greedy Leiden clustering.
     
     Iteratively:
     1. Cluster active graph at multiple resolutions.
-    2. Pick best cluster based on quality score (SCG - 7*Dups).
+    2. Pick best cluster based on quality score (SCG - 10*Dups).
     3. Remove best cluster nodes and repeat.
     
     Args:
@@ -805,7 +805,7 @@ def cluster_contigs(embeddings_df, fragments_dict, gene_mappings, args):
     
     # Get parameters from args or defaults
     greedy_resolutions = getattr(args, 'greedy_resolutions', [0.5, 1.0, 2.0, 5.0])
-    greedy_min_score = getattr(args, 'greedy_min_score', -7.0)
+    greedy_min_score = getattr(args, 'greedy_min_score', -10.0)
     
     cluster_labels = _greedy_leiden_clustering(
         norm_data,
