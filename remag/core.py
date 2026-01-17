@@ -13,7 +13,6 @@ from .features import filter_bacterial_contigs, get_features
 from .models import train_siamese_network, generate_embeddings
 from .clustering import cluster_contigs
 from .miniprot_utils import check_core_gene_duplications, check_core_gene_duplications_from_cache, get_gene_mappings_cache_path
-from .refinement import refine_contaminated_bins
 from .rescue import rescue_fragmented_bins # Import the new rescue function
 from .output import save_clusters_as_fasta
 
@@ -164,19 +163,8 @@ def main(args):
             identity_threshold=0.35
         )
 
-    skip_refinement = getattr(args, "skip_refinement", False)
-    if not skip_refinement:
-        logger.info("Refining contaminated bins...")
-        clusters_df, fragments_dict, refinement_summary = refine_contaminated_bins(
-            clusters_df,
-            fragments_dict,
-            args,
-            refinement_round=1,
-            max_refinement_rounds=args.max_refinement_rounds,
-        )
-    else:
-        logger.info("Skipping refinement")
-        refinement_summary = {}
+    refinement_summary = {}
+    # Refinement step removed for greedy clustering workflow
 
     # --- NEW: Run rescue step ---
     if not getattr(args, "skip_rescue", False):

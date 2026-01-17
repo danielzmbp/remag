@@ -96,7 +96,7 @@ click.rich_click.OPTION_GROUPS = {
         },
         {
             "name": "Filtering & Processing",
-            "options": ["--min-contig-length", "--min-bin-size", "--coverage-batch-size", "--hyenadna-batch-size", "--skip-bacterial-filter", "--save-filtered-contigs", "--skip-refinement", "--skip-rescue", "--save-bins-before-refinement", "--max-refinement-rounds", "--min-duplications-for-refinement", "--skip-chimera-detection"],
+            "options": ["--min-contig-length", "--min-bin-size", "--coverage-batch-size", "--hyenadna-batch-size", "--skip-bacterial-filter", "--save-filtered-contigs", "--skip-rescue", "--skip-chimera-detection"],
         },
     ]
 }
@@ -328,33 +328,9 @@ def validate_coverage_options(ctx, param, value):
     help="Save non-eukaryotic (filtered out) contigs to a separate FASTA file in the output directory.",
 )
 @click.option(
-    "--skip-refinement",
-    is_flag=True,
-    help="Skip post-clustering bin refinement and optimization.",
-)
-@click.option(
     "--skip-rescue",
     is_flag=True,
     help="Skip post-refinement bin rescue strategy (merging fragmented bins).",
-)
-@click.option(
-    "--save-bins-before-refinement",
-    is_flag=True,
-    help="Save bins (bins.csv and FASTA files) before refinement step, with '_before_refinement' suffix.",
-)
-@click.option(
-    "--max-refinement-rounds",
-    type=int,
-    default=2,
-    show_default=True,
-    help="Maximum number of iterative bin refinement rounds.",
-)
-@click.option(
-    "--min-duplications-for-refinement",
-    type=int,
-    default=1,
-    show_default=True,
-    help="Minimum number of duplicated core genes required to trigger refinement.",
 )
 @click.option(
     "--num-augmentations",
@@ -445,11 +421,7 @@ def main_cli(
     verbose,
     skip_bacterial_filter,
     save_filtered_contigs,
-    skip_refinement,
     skip_rescue,
-    save_bins_before_refinement,
-    max_refinement_rounds,
-    min_duplications_for_refinement,
     num_augmentations,
     skip_chimera_detection,
     greedy_resolutions,
@@ -550,12 +522,9 @@ def main_cli(
     effective_k = leiden_k_neighbors
     if effective_k is None:
         effective_k = 30 if mode.lower() == "single-cell" else 15
-    skip_refinement_mode = skip_refinement or mode.lower() == "single-cell"
     skip_bacterial_filter_mode = skip_bacterial_filter or mode.lower() == "single-cell"
 
     if mode.lower() == "single-cell":
-        if not skip_refinement:
-            click.echo("Single-cell mode: skipping refinement and using larger k-NN graph.", err=True)
         if not skip_bacterial_filter:
             click.echo("Single-cell mode: skipping euk filter (keeping all contigs).", err=True)
 
@@ -579,11 +548,7 @@ def main_cli(
         verbose=verbose,
         skip_bacterial_filter=skip_bacterial_filter_mode,
         save_filtered_contigs=save_filtered_contigs,
-        skip_refinement=skip_refinement_mode,
         skip_rescue=skip_rescue,
-        save_bins_before_refinement=save_bins_before_refinement,
-        max_refinement_rounds=max_refinement_rounds,
-        min_duplications_for_refinement=min_duplications_for_refinement,
         num_augmentations=num_augmentations,
         skip_chimera_detection=skip_chimera_detection,
         greedy_resolutions=greedy_resolutions,
