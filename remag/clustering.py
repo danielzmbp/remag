@@ -13,7 +13,6 @@ import torch
 from loguru import logger
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.neighbors import NearestNeighbors
-from concurrent.futures import ThreadPoolExecutor
 
 from .utils import extract_base_contig_name, get_torch_device, group_contigs_by_cluster
 
@@ -73,59 +72,6 @@ def _calculate_bin_quality(contig_names, gene_mappings):
     # Score formula: SCG - 5 * Dups
     score = float(scg) - (5.0 * float(dups))
     return score, scg, dups
-
-
-def _evaluate_resolution_candidate(graph, resolution, gene_mappings, random_state):
-    """
-    Helper function for parallel execution of resolution testing.
-    Finds the best cluster for a given resolution.
-    
-    Returns:
-        dict or None: Best candidate dictionary with score, metrics, and indices
-    """
-    try:
-        partition = leidenalg.find_partition(
-            graph,
-            leidenalg.RBConfigurationVertexPartition,
-            resolution_parameter=resolution,
-            seed=random_state
-        )
-    except Exception as e:
-        logger.warning(f"Leiden clustering failed for resolution {resolution}: {e}")
-        return None
-        
-    # Group nodes by cluster membership
-    clusters = {}
-    for i, cluster_id in enumerate(partition.membership):
-        clusters.setdefault(cluster_id, []).append(i)
-        
-    best_candidate_local = None
-    best_score_local = -float('inf')
-    
-    # Evaluate each cluster
-    for cid, node_indices_in_subgraph in clusters.items():
-        # Get contig names
-        c_names = [graph.vs[ix]["name"] for ix in node_indices_in_subgraph]
-        
-        # Basic size filter (min 2 contigs)
-        if len(c_names) < 2: 
-            continue
-            
-        score, scg, dups = _calculate_bin_quality(c_names, gene_mappings)
-        
-        # Maximize score
-        if score > best_score_local:
-            best_score_local = score
-            best_candidate_local = {
-                "score": score,
-                "scg": scg,
-                "dups": dups,
-                "res": resolution,
-                "node_indices_subgraph": node_indices_in_subgraph,
-                "contigs": c_names
-            }
-            
-    return best_candidate_local
 
 
 def _greedy_leiden_clustering(embeddings, contig_names, gene_mappings, k=15, similarity_threshold=0.1, 
@@ -196,33 +142,42 @@ def _greedy_leiden_clustering(embeddings, contig_names, gene_mappings, k=15, sim
         best_candidate = None # (score, scg, dups, resolution, node_indices_subgraph)
         best_score = -float('inf')
         
-        # Run resolution checks in parallel using threads (leidenalg releases GIL)
-        # Using n_jobs for parallelism. If n_jobs=1, it will run sequentially.
-        
-        candidates = []
-        # Ensure n_jobs is valid (must be > 0). If -1, use None (all cores)
-        max_workers = n_jobs if n_jobs > 0 else None
-        
-        if max_workers == 1:
-             # Sequential execution to avoid overhead
-             candidates = [
-                 _evaluate_resolution_candidate(current_graph, res, gene_mappings, random_state)
-                 for res in resolutions
-             ]
-        else:
-             # Parallel execution
-             with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = [
-                    executor.submit(_evaluate_resolution_candidate, current_graph, res, gene_mappings, random_state)
-                    for res in resolutions
-                ]
-                candidates = [f.result() for f in futures]
-        
-        # Find best candidate from results
-        for candidate in candidates:
-             if candidate and candidate["score"] > best_score:
-                 best_score = candidate["score"]
-                 best_candidate = candidate
+        # Try all resolutions
+        for res in resolutions:
+            partition = leidenalg.find_partition(
+                current_graph,
+                leidenalg.RBConfigurationVertexPartition,
+                resolution_parameter=res,
+                seed=random_state
+            )
+            
+            # Group nodes by cluster membership
+            clusters = {}
+            for i, cluster_id in enumerate(partition.membership):
+                clusters.setdefault(cluster_id, []).append(i)
+                
+            # Evaluate each cluster
+            for cid, node_indices_in_subgraph in clusters.items():
+                # Get contig names
+                c_names = [current_graph.vs[ix]["name"] for ix in node_indices_in_subgraph]
+                
+                # Basic size filter (min 2 contigs)
+                if len(c_names) < 2: 
+                    continue
+                    
+                score, scg, dups = _calculate_bin_quality(c_names, gene_mappings)
+                
+                # Maximize score
+                if score > best_score:
+                    best_score = score
+                    best_candidate = {
+                        "score": score,
+                        "scg": scg,
+                        "dups": dups,
+                        "res": res,
+                        "node_indices_subgraph": node_indices_in_subgraph,
+                        "contigs": c_names
+                    }
         
         # Check if best candidate meets criteria
         if best_candidate and best_candidate["score"] >= min_score:
