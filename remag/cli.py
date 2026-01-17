@@ -348,7 +348,7 @@ def validate_coverage_options(ctx, param, value):
 @click.option(
     "--greedy-resolutions",
     type=SpaceSeparatedFloats(),
-    default="0.5 1.0 2.0 5.0",
+    default="0.1 0.5 1.0 2.0 5.0",
     show_default=True,
     help="Space-separated list of Leiden resolutions to try in greedy clustering.",
 )
