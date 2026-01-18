@@ -46,7 +46,7 @@ class ClusteringManager:
 
 def _calculate_bin_quality(contig_names, gene_mappings):
     """
-    Calculate quality score: SCG - 5 * Dups
+    Calculate quality score: SCG - 10 * Dups
     
     Args:
         contig_names: List of contig names in the bin
@@ -69,8 +69,8 @@ def _calculate_bin_quality(contig_names, gene_mappings):
     scg = sum(1 for v in gene_counts.values() if v == 1)
     dups = sum(1 for v in gene_counts.values() if v > 1)
 
-    # Score formula: SCG - 5 * Dups
-    score = float(scg) - (5.0 * float(dups))
+    # Score formula: SCG - 10 * Dups
+    score = float(scg) - (10.0 * float(dups))
     return score, scg, dups
 
 
@@ -82,7 +82,7 @@ def _greedy_leiden_clustering(embeddings, contig_names, gene_mappings, k=15, sim
     
     Iteratively:
     1. Cluster active graph at multiple resolutions.
-    2. Pick best cluster based on quality score (SCG - 5*Dups).
+    2. Pick best cluster based on quality score (SCG - 10*Dups).
     3. Remove best cluster nodes and repeat.
     
     Args:
