@@ -93,6 +93,8 @@ def estimate_organisms_from_all_contigs(fragments_dict, args, target_coverage_th
             "-I",
             "-t", str(args.cores),
             "--outs=0.95",
+            "-N", "500",
+            "-p", "0.1",
             all_contigs_fasta,
             db_path
         ]
@@ -134,6 +136,9 @@ def estimate_organisms_from_all_contigs(fragments_dict, args, target_coverage_th
                         try:
                             query_name = parts[0]  # Protein name
                             target_name = parts[5]  # Contig name
+                            query_length = int(parts[1])
+                            query_start = int(parts[2])
+                            query_end = int(parts[3])
                             target_length = int(parts[6])
                             target_start = int(parts[7])
                             target_end = int(parts[8])
@@ -146,9 +151,9 @@ def estimate_organisms_from_all_contigs(fragments_dict, args, target_coverage_th
                             gene_family_code = full_gene_id.split("_")[0]
 
                             # Calculate quality metrics
-                            target_coverage = (
-                                (target_end - target_start) / target_length
-                                if target_length > 0 else 0
+                            query_coverage = (
+                                (query_end - query_start) / query_length
+                                if query_length > 0 else 0
                             )
                             identity = (
                                 matching_bases / alignment_length
@@ -156,8 +161,8 @@ def estimate_organisms_from_all_contigs(fragments_dict, args, target_coverage_th
                             )
 
                             # Only consider high-quality alignments
-                            if target_coverage >= target_coverage_threshold and identity >= identity_threshold:
-                                score = target_coverage * identity
+                            if query_coverage >= target_coverage_threshold and identity >= identity_threshold:
+                                score = query_coverage * identity
 
                                 # Initialize contig entry in gene_mappings if needed
                                 if target_name not in gene_mappings:
@@ -168,7 +173,7 @@ def estimate_organisms_from_all_contigs(fragments_dict, args, target_coverage_th
                                     score > gene_mappings[target_name][gene_family_code]["score"]):
                                     gene_mappings[target_name][gene_family_code] = {
                                         "score": score,
-                                        "coverage": target_coverage,
+                                        "coverage": query_coverage,
                                         "identity": identity
                                     }
 
@@ -267,6 +272,9 @@ def parse_and_cache_paf_files(temp_dir, filtered_clusters, args,
                 if len(parts) >= 11:
                     try:
                         query_name = parts[0]  # Protein name
+                        query_length = int(parts[1])
+                        query_start = int(parts[2])
+                        query_end = int(parts[3])
                         target_name = parts[5]  # Contig name
                         target_length = int(parts[6])
                         target_start = int(parts[7])
@@ -281,9 +289,9 @@ def parse_and_cache_paf_files(temp_dir, filtered_clusters, args,
                         gene_family_code = full_gene_id.split("_")[0]
 
                         # Calculate quality metrics
-                        target_coverage = (
-                            (target_end - target_start) / target_length
-                            if target_length > 0 else 0
+                        query_coverage = (
+                            (query_end - query_start) / query_length
+                            if query_length > 0 else 0
                         )
                         identity = (
                             matching_bases / alignment_length
@@ -291,8 +299,8 @@ def parse_and_cache_paf_files(temp_dir, filtered_clusters, args,
                         )
 
                         # Only consider high-quality alignments
-                        if target_coverage >= target_coverage_threshold and identity >= identity_threshold:
-                            score = target_coverage * identity
+                        if query_coverage >= target_coverage_threshold and identity >= identity_threshold:
+                            score = query_coverage * identity
                             
                             # Initialize contig entry if needed
                             if target_name not in global_gene_mappings:
@@ -303,7 +311,7 @@ def parse_and_cache_paf_files(temp_dir, filtered_clusters, args,
                                 score > global_gene_mappings[target_name][gene_family_code]["score"]):
                                 global_gene_mappings[target_name][gene_family_code] = {
                                     "score": score,
-                                    "coverage": target_coverage,
+                                    "coverage": query_coverage,
                                     "identity": identity,
                                 }
 
@@ -545,6 +553,9 @@ def check_core_gene_duplications(clusters_df, fragments_dict, args,
                                 if len(parts) >= 11:
                                     try:
                                         query_name = parts[0]  # Protein name
+                                        query_length = int(parts[1])
+                                        query_start = int(parts[2])
+                                        query_end = int(parts[3])
                                         target_name = parts[5]  # Contig name
                                         target_length = int(parts[6])
                                         target_start = int(parts[7])
@@ -559,9 +570,9 @@ def check_core_gene_duplications(clusters_df, fragments_dict, args,
                                         gene_family_code = full_gene_id.split("_")[0]
 
                                         # Calculate quality metrics
-                                        target_coverage = (
-                                            (target_end - target_start) / target_length
-                                            if target_length > 0
+                                        query_coverage = (
+                                            (query_end - query_start) / query_length
+                                            if query_length > 0
                                             else 0
                                         )
                                         identity = (
@@ -571,8 +582,8 @@ def check_core_gene_duplications(clusters_df, fragments_dict, args,
                                         )
 
                                         # Only consider high-quality alignments with configurable thresholds
-                                        if target_coverage >= target_coverage_threshold and identity >= identity_threshold:
-                                            score = target_coverage * identity
+                                        if query_coverage >= target_coverage_threshold and identity >= identity_threshold:
+                                            score = query_coverage * identity
                                             key = (
                                                 target_name,
                                                 gene_family_code,
@@ -584,7 +595,7 @@ def check_core_gene_duplications(clusters_df, fragments_dict, args,
                                             ):
                                                 best_alignments[key] = {
                                                     "score": score,
-                                                    "coverage": target_coverage,
+                                                    "coverage": query_coverage,
                                                     "identity": identity,
                                                     "gene_family": gene_family_code,
                                                 }
