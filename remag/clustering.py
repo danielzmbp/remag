@@ -46,7 +46,17 @@ class ClusteringManager:
 
 def _calculate_bin_quality(contig_names, gene_mappings):
     """
-    Calculate quality score: SCG - 5 * Dups
+    Calculate quality score using F1-score inspired by SemiBin2.
+    
+    Formulas:
+        completeness = N / 133
+        contamination = (G - N) / G
+        F1-score = (2 * completeness * (1 - contamination)) / (completeness + (1 - contamination))
+        
+    Where:
+        N = Number of nonredundant genes (unique gene families)
+        G = Total genes found (sum of all gene counts)
+        133 = Total number of single-copy genes (user specified)
     
     Args:
         contig_names: List of contig names in the bin
@@ -63,15 +73,34 @@ def _calculate_bin_quality(contig_names, gene_mappings):
                 gene_counts[gene] = gene_counts.get(gene, 0) + 1
 
     if not gene_counts:
-        # Penalty for empty or no-gene bins
-        return -100.0, 0, 0
+        # F1 score is 0.0 for empty bins
+        return 0.0, 0, 0
 
     scg = sum(1 for v in gene_counts.values() if v == 1)
     dups = sum(1 for v in gene_counts.values() if v > 1)
-    total_core_genes = len(gene_counts)
-
-    # Score formula: total_core_genes - 5 * Dups
-    score = float(total_core_genes) - (5.0 * float(dups))
+    
+    # N: nonredundant genes (unique gene families)
+    N = len(gene_counts)
+    
+    # G: total genes found
+    G = sum(gene_counts.values())
+    
+    # Calculate metrics based on provided formulas
+    completeness = float(N) / 133.0
+    
+    if G > 0:
+        contamination = float(G - N) / float(G)
+    else:
+        contamination = 0.0
+    
+    precision_term = 1.0 - contamination
+    
+    # Calculate F1-score (harmonic mean)
+    if (completeness + precision_term) > 0:
+        score = (2.0 * completeness * precision_term) / (completeness + precision_term)
+    else:
+        score = 0.0
+        
     return score, scg, dups
 
 
@@ -83,7 +112,7 @@ def _greedy_leiden_clustering(embeddings, contig_names, gene_mappings, k=15, sim
     
     Iteratively:
     1. Cluster active graph at multiple resolutions.
-    2. Pick best cluster based on quality score (total_core_genes - 5*Dups).
+    2. Pick best cluster based on quality score (F1-score of completion and contamination).
     3. Remove best cluster nodes and repeat.
     
     Args:

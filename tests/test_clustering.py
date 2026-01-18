@@ -287,3 +287,89 @@ class TestDataValidation:
         
         assert graph.vcount() == 0
         assert graph.ecount() == 0
+class TestBinQuality:
+    """Test bin quality calculation."""
+    
+    from remag.clustering import _calculate_bin_quality
+
+    def test_calculate_bin_quality_perfect_bin(self):
+        """Test with a perfect bin: 133 unique genes, no duplicates."""
+        from remag.clustering import _calculate_bin_quality
+        contig_names = ["c1"]
+        # Mock gene mappings: 133 unique gene families
+        gene_mappings = {
+            "c1": {f"gene_{i}": {} for i in range(133)}
+        }
+        
+        score, scg, dups = _calculate_bin_quality(contig_names, gene_mappings)
+        
+        # N=133, G=133
+        # Completeness = 133/133 = 1.0
+        # Contamination = (133-133)/133 = 0.0
+        # Precision = 1.0
+        # F1 = 2 * 1 * 1 / (1 + 1) = 1.0
+        
+        assert scg == 133
+        assert dups == 0
+        assert abs(score - 1.0) < 1e-6
+
+    def test_calculate_bin_quality_half_complete(self):
+        """Test with 66 unique genes, no duplicates."""
+        from remag.clustering import _calculate_bin_quality
+        contig_names = ["c1"]
+        gene_mappings = {
+            "c1": {f"gene_{i}": {} for i in range(66)}
+        }
+        
+        score, scg, dups = _calculate_bin_quality(contig_names, gene_mappings)
+        
+        # N=66, G=66
+        # Completeness = 66/133 ~= 0.4962
+        # Contamination = 0.0
+        # Precision = 1.0
+        # F1 = 2 * 0.4962 * 1 / (0.4962 + 1)
+        
+        expected_completeness = 66.0 / 133.0
+        expected_f1 = (2 * expected_completeness * 1.0) / (expected_completeness + 1.0)
+        
+        assert scg == 66
+        assert dups == 0
+        assert abs(score - expected_f1) < 1e-6
+
+    def test_calculate_bin_quality_empty(self):
+        """Test with empty bin."""
+        from remag.clustering import _calculate_bin_quality
+        contig_names = ["c1"]
+        gene_mappings = {}
+        
+        score, scg, dups = _calculate_bin_quality(contig_names, gene_mappings)
+        
+        assert score == 0.0
+        assert scg == 0
+        assert dups == 0
+
+    def test_calculate_bin_quality_with_duplicates(self):
+        """Test with duplicates (contamination)."""
+        from remag.clustering import _calculate_bin_quality
+        contig_names = ["c1", "c2"]
+        gene_mappings = {
+            "c1": {"gene_A": {}},
+            "c2": {"gene_A": {}}
+        }
+        
+        score, scg, dups = _calculate_bin_quality(contig_names, gene_mappings)
+        
+        # Gene A count = 2
+        # N = 1 (unique family)
+        # G = 2 (total genes)
+        # Completeness = 1/133
+        # Contamination = (2-1)/2 = 0.5
+        # Precision = 1 - 0.5 = 0.5
+        
+        comp = 1.0 / 133.0
+        prec = 0.5
+        expected_f1 = (2 * comp * prec) / (comp + prec)
+        
+        assert scg == 0 # appearing 2 times means it is not a Single Copy Gene (SCG counts genes appearing exactly once)
+        assert dups == 1 # 1 gene family has value > 1
+        assert abs(score - expected_f1) < 1e-6
