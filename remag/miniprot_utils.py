@@ -92,7 +92,7 @@ def estimate_organisms_from_all_contigs(fragments_dict, args, target_coverage_th
             "miniprot",
             "-I",
             "-t", str(args.cores),
-            "--outs=0.85",
+            "--outs=0.95",
             all_contigs_fasta,
             db_path
         ]
@@ -501,7 +501,7 @@ def check_core_gene_duplications(clusters_df, fragments_dict, args,
             "miniprot",
             "-I",
             "-t", str(args.cores),
-            "--outs=0.85",
+            "--outs=0.95",
             bin_fasta,
             db_to_use
 
