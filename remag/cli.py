@@ -357,7 +357,7 @@ def validate_coverage_options(ctx, param, value):
     type=float,
     default=-10.0,
     show_default=True,
-    help="Minimum quality score (SCG - 10*Dups) required to accept a bin in greedy clustering.",
+    help="Minimum quality score (SCG - 5*Dups) required to accept a bin in greedy clustering.",
 )
 @click.option(
     "--leiden-k-neighbors",
