@@ -20,7 +20,7 @@ def check_miniprot_available():
     return shutil.which("miniprot") is not None
 
 
-def estimate_organisms_from_all_contigs(fragments_dict, args, target_coverage_threshold=0.60, identity_threshold=0.40):
+def estimate_organisms_from_all_contigs(fragments_dict, args, target_coverage_threshold=0.55, identity_threshold=0.35):
     """
     Run miniprot on all contigs to estimate the number of organisms based on core gene duplications.
 
@@ -92,7 +92,7 @@ def estimate_organisms_from_all_contigs(fragments_dict, args, target_coverage_th
             "miniprot",
             "-I",
             "-t", str(args.cores),
-            "--outs=0.90",
+            "--outs=0.85",
             all_contigs_fasta,
             db_path
         ]
@@ -230,7 +230,7 @@ def get_gene_mappings_cache_path(args):
 
 
 def parse_and_cache_paf_files(temp_dir, filtered_clusters, args,
-                            target_coverage_threshold=0.60, identity_threshold=0.40):
+                            target_coverage_threshold=0.55, identity_threshold=0.35):
     """
     Parse PAF files from miniprot output and cache gene-to-contig mappings.
     
@@ -413,8 +413,8 @@ def check_core_gene_duplications_from_cache(clusters_df, gene_mappings_cache, ar
 
 
 def check_core_gene_duplications(clusters_df, fragments_dict, args,
-                                target_coverage_threshold=0.60,
-                                identity_threshold=0.40):
+                                target_coverage_threshold=0.55,
+                                identity_threshold=0.35):
     """
     Check for duplicated core genes using miniprot.
 
@@ -501,7 +501,7 @@ def check_core_gene_duplications(clusters_df, fragments_dict, args,
             "miniprot",
             "-I",
             "-t", str(args.cores),
-            "--outs=0.90",
+            "--outs=0.85",
             bin_fasta,
             db_to_use
 
