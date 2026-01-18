@@ -76,7 +76,7 @@ def _calculate_bin_quality(contig_names, gene_mappings):
 
 
 def _greedy_leiden_clustering(embeddings, contig_names, gene_mappings, k=15, similarity_threshold=0.1, 
-                            resolutions=[0.5, 1.0, 2.0, 5.0], min_score=-5.0, 
+                            resolutions=[0.1, 0.5, 1.0, 2.0, 5.0], min_score=-5.0, 
                             random_state=42, n_jobs=1, args=None):
     """
     Perform greedy Leiden clustering.
