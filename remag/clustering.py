@@ -105,7 +105,7 @@ def _calculate_bin_quality(contig_names, gene_mappings):
 
 
 def _greedy_leiden_clustering(embeddings, contig_names, gene_mappings, k=15, similarity_threshold=0.1, 
-                            resolutions=[0.1, 0.5, 1.0, 2.0, 5.0], min_score=-5.0, 
+                            resolutions=[0.1, 0.5, 1.0, 2.0, 5.0], min_score=-5.0, max_contamination=0.10,
                             random_state=42, n_jobs=1, args=None):
     """
     Perform greedy Leiden clustering.
@@ -123,6 +123,7 @@ def _greedy_leiden_clustering(embeddings, contig_names, gene_mappings, k=15, sim
         similarity_threshold: threshold for edges
         resolutions: list of resolutions to try
         min_score: minimum score to accept a bin
+        max_contamination: maximum contamination allowed (dups / 133)
         random_state: random seed
         n_jobs: number of cores
         args: args object
@@ -130,7 +131,7 @@ def _greedy_leiden_clustering(embeddings, contig_names, gene_mappings, k=15, sim
     Returns:
         list: Cluster labels matching embeddings order (-1 for noise/unbinned)
     """
-    logger.info(f"Starting Greedy Leiden clustering with k={k}, resolutions={resolutions}, min_score={min_score}")
+    logger.info(f"Starting Greedy Leiden clustering with k={k}, resolutions={resolutions}, min_score={min_score}, max_contamination={max_contamination}")
     
     # 1. Construct initial graph
     graph = _construct_knn_graph(embeddings, k=k, similarity_threshold=similarity_threshold, n_jobs=n_jobs, args=args)
@@ -197,6 +198,10 @@ def _greedy_leiden_clustering(embeddings, contig_names, gene_mappings, k=15, sim
                     
                 score, scg, dups = _calculate_bin_quality(c_names, gene_mappings)
                 
+                # Check contamination constraint (dups < 10% of 133)
+                if (float(dups) / 133.0) > max_contamination:
+                    continue
+
                 # Maximize score
                 if score > best_score:
                     best_score = score
@@ -836,6 +841,7 @@ def cluster_contigs(embeddings_df, fragments_dict, gene_mappings, args):
     # Get parameters from args or defaults
     greedy_resolutions = getattr(args, 'greedy_resolutions', [0.5, 1.0, 2.0, 5.0])
     greedy_min_score = getattr(args, 'greedy_min_score', -5.0)
+    greedy_max_contamination = getattr(args, 'greedy_max_contamination', 0.10)
     
     cluster_labels = _greedy_leiden_clustering(
         norm_data,
@@ -845,6 +851,7 @@ def cluster_contigs(embeddings_df, fragments_dict, gene_mappings, args):
         similarity_threshold=clustering_manager.graph_manager.similarity_threshold,
         resolutions=greedy_resolutions,
         min_score=greedy_min_score,
+        max_contamination=greedy_max_contamination,
         random_state=42,
         n_jobs=getattr(args, 'cores', 1),
         args=args
