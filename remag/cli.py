@@ -265,11 +265,11 @@ def validate_coverage_options(ctx, param, value):
 @click.option(
     "-m",
     "--mode",
-    type=click.Choice(["metagenomics", "single-cell"], case_sensitive=False),
+    type=click.Choice(["metagenomics", "single-cell", "short-reads", "sr"], case_sensitive=False),
     default="metagenomics",
     show_default=True,
-    help="Preset mode adjusting clustering defaults. 'metagenomics' (default) maximizes clusters; "
-         "'single-cell' uses larger k-NN and minimizes clusters, and skips refinement.",
+    help="Preset mode adjusting defaults. 'metagenomics' (default) maximizes clusters; "
+         "'single-cell' uses larger k-NN and minimizes clusters; 'short-reads'/'sr' enforces 1000bp min length.",
 )
 @click.option(
     "--random-seed",
@@ -511,7 +511,10 @@ def main_cli(
 
     # Set default min contig length if not provided by user
     if min_contig_length is None:
-        if coverage_count > 1:
+        if mode.lower() in ["short-reads", "sr"]:
+            min_contig_length = 1000
+            click.echo("Short-reads mode: Auto-setting min contig length to 1000 bp.", err=True)
+        elif coverage_count > 1:
             min_contig_length = 4096
             click.echo("Coassembly detected: Auto-setting min contig length to 4096 bp.", err=True)
         else:
