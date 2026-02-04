@@ -27,7 +27,9 @@ def get_bin_scg_stats(bin_contigs, gene_mappings_cache):
     if present == 0: return 0.0, 0.0
     
     duplicated = len([g for g, count in bin_genes.items() if count > 1])
-    duplication_rate = (duplicated / present) * 100.0
+    # Calculate duplication rate based on total possible SCGs (133), similar to greedy Leiden contamination check
+    # This prevents penalizing small bins where 'present' count is low
+    duplication_rate = (duplicated / 133.0) * 100.0
     return duplication_rate, present
 
 
@@ -37,7 +39,7 @@ def rescue_fragmented_bins(
     fragments_dict, 
     args, 
     similarity_threshold=0.70, 
-    max_duplication_increase=3.0
+    max_contamination=10.0
 ):
     """
     Attempt to merge smaller bins (or split parts of genomes) into larger "Core Bins"
@@ -133,18 +135,18 @@ def rescue_fragmented_bins(
                 best_score = sim
                 best_target = target_bin
         
-        if best_target and best_score >= similarity_threshold:
-            # Check SCG Safety
-            source_members = bin_members_map[source_bin]
-            target_members = bin_members_map[best_target]
-            
-            current_dup, _ = get_bin_scg_stats(target_members, gene_mappings_cache)
-            # Hypothetical merge
-            new_dup, _ = get_bin_scg_stats(target_members + source_members, gene_mappings_cache)
-            
-            if (new_dup - current_dup) < max_duplication_increase:
-                # MERGE!
-                logger.info(f"Merging {source_bin} ({bin_sizes[source_bin]/1e6:.2f}Mb) -> {best_target} ({bin_sizes[best_target]/1e6:.2f}Mb) | Sim: {best_score:.3f} | Dup: {current_dup:.1f}%->{new_dup:.1f}%")
+            if best_target and best_score >= similarity_threshold:
+                # Check SCG Safety
+                source_members = bin_members_map[source_bin]
+                target_members = bin_members_map[best_target]
+                
+                # Hypothetical merge
+                new_dup, _ = get_bin_scg_stats(target_members + source_members, gene_mappings_cache)
+                
+                if new_dup <= max_contamination:
+                    # MERGE!
+                    current_dup, _ = get_bin_scg_stats(target_members, gene_mappings_cache)
+                    logger.info(f"Merging {source_bin} ({bin_sizes[source_bin]/1e6:.2f}Mb) -> {best_target} ({bin_sizes[best_target]/1e6:.2f}Mb) | Sim: {best_score:.3f} | Dup: {current_dup:.1f}%->{new_dup:.1f}%")
                 
                 # Update final clusters
                 mask = final_clusters == source_bin
@@ -234,10 +236,9 @@ def rescue_fragmented_bins(
                 is_safe = True
             else:
                 # Check for conflicts
-                current_dup, _ = get_bin_scg_stats(target_members, gene_mappings_cache)
                 new_dup, _ = get_bin_scg_stats(target_members + [contig], gene_mappings_cache)
                 
-                if (new_dup - current_dup) < max_duplication_increase:
+                if new_dup <= max_contamination:
                     is_safe = True
                 else:
                     is_safe = False
