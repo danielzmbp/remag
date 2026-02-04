@@ -135,19 +135,19 @@ def rescue_fragmented_bins(
                 best_score = sim
                 best_target = target_bin
         
-            if best_target and best_score >= similarity_threshold:
-                # Check SCG Safety
-                source_members = bin_members_map[source_bin]
-                target_members = bin_members_map[best_target]
-                
-                # Hypothetical merge
-                new_dup, _ = get_bin_scg_stats(target_members + source_members, gene_mappings_cache)
-                
-                if new_dup <= max_contamination:
-                    # MERGE!
-                    current_dup, _ = get_bin_scg_stats(target_members, gene_mappings_cache)
-                    logger.info(f"Merging {source_bin} ({bin_sizes[source_bin]/1e6:.2f}Mb) -> {best_target} ({bin_sizes[best_target]/1e6:.2f}Mb) | Sim: {best_score:.3f} | Dup: {current_dup:.1f}%->{new_dup:.1f}%")
-                
+        if best_target and best_score >= similarity_threshold:
+            # Check SCG Safety
+            source_members = bin_members_map[source_bin]
+            target_members = bin_members_map[best_target]
+            
+            # Hypothetical merge
+            new_dup, _ = get_bin_scg_stats(target_members + source_members, gene_mappings_cache)
+            
+            if new_dup <= max_contamination:
+                # MERGE!
+                current_dup, _ = get_bin_scg_stats(target_members, gene_mappings_cache)
+                logger.info(f"Merging {source_bin} ({bin_sizes[source_bin]/1e6:.2f}Mb) -> {best_target} ({bin_sizes[best_target]/1e6:.2f}Mb) | Sim: {best_score:.3f} | Dup: {current_dup:.1f}%->{new_dup:.1f}%")
+            
                 # Update final clusters
                 mask = final_clusters == source_bin
                 final_clusters[mask] = best_target
