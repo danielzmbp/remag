@@ -174,8 +174,8 @@ def main(args):
             embeddings_df,
             fragments_dict,
             args,
-            similarity_threshold=0.70 if (len(getattr(args, "bam", None) or []) + len(getattr(args, "tsv", None) or [])) > 1 else 0.90,
-            max_contamination=10.0
+            similarity_threshold=0.70, # Based on our proof of concept
+            max_duplication_increase=3.0
         )
     else:
         logger.info("Skipping rescue step")
