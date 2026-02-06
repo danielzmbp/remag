@@ -345,6 +345,9 @@ class EnhancedFusionLayer(nn.Module):
             nn.ReLU(),
         )
 
+        # Counter for debug logging
+        self.debug_counter = 0
+
     def forward(self, kmer_features, coverage_features):
         # Input validation
         if kmer_features.dim() != 2 or coverage_features.dim() != 2:
@@ -393,9 +396,11 @@ class EnhancedFusionLayer(nn.Module):
         kmer_gate_weight = self.kmer_gate(combined_for_gate)
         coverage_gate_weight = self.coverage_gate(combined_for_gate)
 
-        # Debugging: Print gate weights
-        logger.debug(f"DEBUG: K-mer Gate Weight: Mean={kmer_gate_weight.mean().item():.4f}, Std={kmer_gate_weight.std().item():.4f}")
-        logger.debug(f"DEBUG: Coverage Gate Weight: Mean={coverage_gate_weight.mean().item():.4f}, Std={coverage_gate_weight.std().item():.4f}")
+        # Debugging: Print gate weights (rate limited)
+        self.debug_counter += 1
+        if self.debug_counter % 100 == 0:
+            logger.debug(f"DEBUG: K-mer Gate Weight: Mean={kmer_gate_weight.mean().item():.4f}, Std={kmer_gate_weight.std().item():.4f}")
+            logger.debug(f"DEBUG: Coverage Gate Weight: Mean={coverage_gate_weight.mean().item():.4f}, Std={coverage_gate_weight.std().item():.4f}")
 
         # Apply gates
         gated_kmer = kmer_gate_weight * kmer_proj + (1 - kmer_gate_weight) * kmer_attended
