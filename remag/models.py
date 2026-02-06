@@ -393,6 +393,10 @@ class EnhancedFusionLayer(nn.Module):
         kmer_gate_weight = self.kmer_gate(combined_for_gate)
         coverage_gate_weight = self.coverage_gate(combined_for_gate)
 
+        # Debugging: Print gate weights
+        print(f"DEBUG: K-mer Gate Weight: Mean={kmer_gate_weight.mean().item():.4f}, Std={kmer_gate_weight.std().item():.4f}")
+        print(f"DEBUG: Coverage Gate Weight: Mean={coverage_gate_weight.mean().item():.4f}, Std={coverage_gate_weight.std().item():.4f}")
+
         # Apply gates
         gated_kmer = kmer_gate_weight * kmer_proj + (1 - kmer_gate_weight) * kmer_attended
         gated_coverage = coverage_gate_weight * coverage_proj + (1 - coverage_gate_weight) * coverage_attended
