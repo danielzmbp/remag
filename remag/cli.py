@@ -243,7 +243,7 @@ def validate_coverage_options(ctx, param, value):
 @click.option(
     "--embedding-dim",
     type=int,
-    default=256,
+    default=128,
     show_default=True,
     help="Dimensionality of contig embeddings in contrastive learning.",
 )
