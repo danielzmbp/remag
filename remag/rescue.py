@@ -37,7 +37,8 @@ def rescue_fragmented_bins(
     fragments_dict, 
     args, 
     similarity_threshold=0.70, 
-    max_duplication_increase=3.0
+    max_duplication_increase=5.0,
+    max_total_duplication=5.0
 ):
     """
     Attempt to merge smaller bins (or split parts of genomes) into larger "Core Bins"
@@ -142,7 +143,7 @@ def rescue_fragmented_bins(
             # Hypothetical merge
             new_dup, _ = get_bin_scg_stats(target_members + source_members, gene_mappings_cache)
             
-            if (new_dup - current_dup) < max_duplication_increase:
+            if (new_dup - current_dup) < max_duplication_increase and new_dup <= max_total_duplication:
                 # MERGE!
                 logger.info(f"Merging {source_bin} ({bin_sizes[source_bin]/1e6:.2f}Mb) -> {best_target} ({bin_sizes[best_target]/1e6:.2f}Mb) | Sim: {best_score:.3f} | Dup: {current_dup:.1f}%->{new_dup:.1f}%")
                 
@@ -237,7 +238,7 @@ def rescue_fragmented_bins(
                 current_dup, _ = get_bin_scg_stats(target_members, gene_mappings_cache)
                 new_dup, _ = get_bin_scg_stats(target_members + [contig], gene_mappings_cache)
                 
-                if (new_dup - current_dup) < max_duplication_increase:
+                if (new_dup - current_dup) < max_duplication_increase and new_dup <= max_total_duplication:
                     is_safe = True
                 else:
                     is_safe = False

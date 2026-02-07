@@ -96,7 +96,7 @@ click.rich_click.OPTION_GROUPS = {
         },
         {
             "name": "Filtering & Processing",
-            "options": ["--min-contig-length", "--min-bin-size", "--coverage-batch-size", "--hyenadna-batch-size", "--skip-bacterial-filter", "--save-filtered-contigs", "--skip-rescue", "--skip-chimera-detection"],
+            "options": ["--min-contig-length", "--min-bin-size", "--coverage-batch-size", "--hyenadna-batch-size", "--skip-bacterial-filter", "--save-filtered-contigs", "--skip-rescue", "--rescue-max-duplication-increase", "--rescue-max-total-duplication", "--skip-chimera-detection"],
         },
     ]
 }
@@ -333,6 +333,20 @@ def validate_coverage_options(ctx, param, value):
     help="Skip post-refinement bin rescue strategy (merging fragmented bins).",
 )
 @click.option(
+    "--rescue-max-duplication-increase",
+    type=float,
+    default=5.0,
+    show_default=True,
+    help="Maximum allowed increase in duplication percentage when merging bins during rescue (e.g. 5.0 allows 0% -> 5%)."
+)
+@click.option(
+    "--rescue-max-total-duplication",
+    type=float,
+    default=5.0,
+    show_default=True,
+    help="Maximum allowed TOTAL duplication percentage after merging bins during rescue (e.g. 5.0 rejects merges resulting in > 5% duplication)."
+)
+@click.option(
     "--num-augmentations",
     type=int,
     default=8,
@@ -422,6 +436,8 @@ def main_cli(
     skip_bacterial_filter,
     save_filtered_contigs,
     skip_rescue,
+    rescue_max_duplication_increase,
+    rescue_max_total_duplication,
     num_augmentations,
     skip_chimera_detection,
     greedy_resolutions,
@@ -552,6 +568,8 @@ def main_cli(
         skip_bacterial_filter=skip_bacterial_filter_mode,
         save_filtered_contigs=save_filtered_contigs,
         skip_rescue=skip_rescue,
+        rescue_max_duplication_increase=rescue_max_duplication_increase,
+        rescue_max_total_duplication=rescue_max_total_duplication,
         num_augmentations=num_augmentations,
         skip_chimera_detection=skip_chimera_detection,
         greedy_resolutions=greedy_resolutions,

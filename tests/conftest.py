@@ -33,6 +33,15 @@ def mock_args(temp_dir):
     args.leiden_k_neighbors = 15
     args.leiden_similarity_threshold = 0.1
     args.leiden_resolution = 1.0
+    # Add greedy clustering parameters
+    args.greedy_resolutions = [0.1, 0.5, 1.0, 2.0, 5.0]
+    args.greedy_min_score = -5.0
+    args.greedy_max_contamination = 0.1
+    # Add rescue parameters
+    args.rescue_max_duplication_increase = 5.0
+    args.rescue_max_total_duplication = 5.0
+    args.skip_rescue = False
+    
     args.fasta = "test.fasta"
     return args
 
