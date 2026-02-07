@@ -461,57 +461,63 @@ class SiameseNetwork(nn.Module):
         self.n_kmer_features = n_kmer_features
         self.n_coverage_features = n_coverage_features
         self.has_coverage = n_coverage_features > 0
-        self.embedding_dim = embedding_dim
         
-        # 1. K-mer Encoder: Scalable Architecture
-        # Scales with embedding_dim instead of being hardcoded
-        # Typical flow for emb=128: 136 -> 256 -> 128
-        # Typical flow for emb=256: 136 -> 512 -> 256
-        kmer_hidden_dim = embedding_dim * 2
-        
+        # Separate encoders for k-mer and coverage features
+        # Using LeakyReLU in encoders to prevent dead neurons during feature extraction
         self.kmer_encoder = nn.Sequential(
-            nn.Linear(n_kmer_features, kmer_hidden_dim),
-            nn.BatchNorm1d(kmer_hidden_dim),
+            nn.Linear(n_kmer_features, 256),
+            nn.BatchNorm1d(256),
             nn.LeakyReLU(),
             nn.Dropout(0.05),
-            nn.Linear(kmer_hidden_dim, embedding_dim),
-            nn.BatchNorm1d(embedding_dim),
+            nn.Linear(256, 128),
+            nn.BatchNorm1d(128),
             nn.LeakyReLU(),
         )
         
         if self.has_coverage:
-            # 2. Coverage Encoder: Scalable & Balanced
-            # Logic: Input -> (EmbDim/2) -> EmbDim
-            # This ensures coverage features are projected to the same high-dimensional space 
-            # as k-mers, correcting previous imbalance.
-            
-            # Example for single sample (2 features) & emb=128:  2 -> 64 -> 128
-            # Example for single sample (2 features) & emb=256: 2 -> 128 -> 256
-            
-            # Ensure minimum hidden dim of 64 for stability
-            coverage_hidden_dim = max(64, embedding_dim // 2)
-            
-            # If we have many samples (coassembly), scale hidden dim further
-            if n_coverage_features > 20:
-                coverage_hidden_dim = max(coverage_hidden_dim, n_coverage_features * 2)
+            # Adaptively size the coverage encoder based on number of samples
+            # Assume ~2 features per sample (mean + std), so n_samples ≈ n_coverage_features / 2
+            n_samples_estimate = max(1, n_coverage_features // 2)
 
-            logger.debug(f"Coverage encoder architecture: {n_coverage_features} -> {coverage_hidden_dim} -> {embedding_dim}")
+            # Scale hidden dimensions based on number of samples
+            # More samples = more complex co-abundance patterns = larger encoder
+            if n_samples_estimate <= 2:
+                # 1-2 samples: 2-4 features → 32 → 16
+                coverage_hidden1 = 32
+                coverage_hidden2 = 16
+            elif n_samples_estimate <= 5:
+                # 3-5 samples: 6-10 features → 64 → 32
+                coverage_hidden1 = 64
+                coverage_hidden2 = 32
+            elif n_samples_estimate <= 10:
+                # 6-10 samples: 12-20 features → 128 → 64
+                coverage_hidden1 = 128
+                coverage_hidden2 = 64
+            else:
+                # >10 samples: >20 features → 256 → 128
+                coverage_hidden1 = 256
+                coverage_hidden2 = 128
+                
+            logger.debug(f"Coverage encoder sized for ~{n_samples_estimate} samples: "
+                        f"{n_coverage_features} -> {coverage_hidden1} -> {coverage_hidden2}")
             
             self.coverage_encoder = nn.Sequential(
-                nn.Linear(n_coverage_features, coverage_hidden_dim),
-                nn.BatchNorm1d(coverage_hidden_dim),
+                nn.Linear(n_coverage_features, coverage_hidden1),
+                nn.BatchNorm1d(coverage_hidden1),
                 nn.LeakyReLU(),
                 nn.Dropout(0.05),
-                nn.Linear(coverage_hidden_dim, embedding_dim),
-                nn.BatchNorm1d(embedding_dim),
+                nn.Linear(coverage_hidden1, coverage_hidden2),
+                nn.BatchNorm1d(coverage_hidden2),
                 nn.LeakyReLU(),
             )
             
-            # Enhanced fusion layer
-            # Both inputs are now projected to 'embedding_dim' by their encoders
+            # Store final coverage dimension for fusion layer
+            self.coverage_final_dim = coverage_hidden2
+            
+            # Enhanced fusion layer with bidirectional attention and gated fusion
             self.fusion_layer = EnhancedFusionLayer(
-                kmer_dim=embedding_dim,
-                coverage_dim=embedding_dim,
+                kmer_dim=128,
+                coverage_dim=self.coverage_final_dim,
                 embedding_dim=embedding_dim,
                 num_heads=4,
                 dropout=0.1
