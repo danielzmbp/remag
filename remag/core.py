@@ -175,7 +175,8 @@ def main(args):
             fragments_dict,
             args,
             similarity_threshold=0.70, # Based on our proof of concept
-            max_duplication_increase=3.0
+            max_duplication_increase=getattr(args, "rescue_max_duplication_increase", 5.0),
+            max_total_duplication=getattr(args, "rescue_max_total_duplication", 5.0)
         )
     else:
         logger.info("Skipping rescue step")

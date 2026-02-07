@@ -48,7 +48,8 @@ class TestClusteringIntegration:
         
         # Run the clustering pipeline
         try:
-            clusters_df = cluster_contigs(sample_embeddings_df, sample_fragments_dict, mock_args)
+            gene_mappings = {}
+            clusters_df = cluster_contigs(sample_embeddings_df, sample_fragments_dict, gene_mappings, mock_args)
             
             # Verify output structure
             assert isinstance(clusters_df, pd.DataFrame)
@@ -72,11 +73,11 @@ class TestClusteringIntegration:
         """Test clustering handles empty input gracefully."""
         empty_embeddings = pd.DataFrame()
         empty_fragments = {}
-        
+    
         from remag.clustering import cluster_contigs
-        
+    
         # Should handle empty input gracefully
-        result = cluster_contigs(empty_embeddings, empty_fragments, mock_args)
+        result = cluster_contigs(empty_embeddings, empty_fragments, {}, mock_args)
         assert isinstance(result, pd.DataFrame)
         assert len(result) == 0  # Empty result for empty input
     
@@ -94,8 +95,8 @@ class TestClusteringIntegration:
         }
         
         from remag.clustering import cluster_contigs
-        
-        clusters_df = cluster_contigs(single_embedding_df, single_fragments, mock_args)
+
+        clusters_df = cluster_contigs(single_embedding_df, single_fragments, {}, mock_args)
         
         assert len(clusters_df) == 1
         assert clusters_df.iloc[0]['contig'] == 'single_contig'
@@ -169,13 +170,13 @@ class TestErrorRecovery:
         
         # Should either handle NaN gracefully or raise clear error
         try:
-            result = cluster_contigs(invalid_embeddings, fragments, mock_args)
+            result = cluster_contigs(invalid_embeddings, fragments, {}, mock_args)
             # If it succeeds, should return valid result
             assert isinstance(result, pd.DataFrame)
         except (ValueError, RuntimeError) as e:
             # Or should raise a clear, informative error
             assert 'nan' in str(e).lower() or 'invalid' in str(e).lower()
-    
+
     def test_clustering_handles_mismatched_data(self, sample_embeddings_df, mock_args):
         """Test clustering when embeddings and fragments don't match."""
         # Create fragments that don't match embeddings
@@ -183,12 +184,12 @@ class TestErrorRecovery:
             'different_contig_1': {'sequence': 'ATCG', 'length': 4},
             'different_contig_2': {'sequence': 'GCTA', 'length': 4}
         }
-        
+    
         from remag.clustering import cluster_contigs
-        
+    
         # Should handle mismatch gracefully
         try:
-            result = cluster_contigs(sample_embeddings_df, mismatched_fragments, mock_args)
+            result = cluster_contigs(sample_embeddings_df, mismatched_fragments, {}, mock_args)
             assert isinstance(result, pd.DataFrame)
             # Should still produce some clustering result
         except (KeyError, ValueError) as e:
@@ -224,9 +225,9 @@ class TestPerformanceBaseline:
         
         from remag.clustering import cluster_contigs
         import time
-        
+
         start_time = time.time()
-        clusters_df = cluster_contigs(embeddings_df, fragments, mock_args)
+        clusters_df = cluster_contigs(embeddings_df, fragments, {}, mock_args)
         duration = time.time() - start_time
         
         # Should complete within reasonable time (adjust threshold as needed)
