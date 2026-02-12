@@ -6,16 +6,18 @@ import argparse
 import glob
 import os
 import sys
-import rich_click as click
-from .core import main as run_remag
-
 from importlib.metadata import version
+
+import rich_click as click
+
+from .core import main as run_remag
 
 __version__ = version("remag")
 
 
 class SpaceSeparatedPaths(click.ParamType):
     """Custom click type that accepts space-separated file paths."""
+
     name = "paths"
 
     def convert(self, value, param, ctx):
@@ -53,6 +55,7 @@ class SpaceSeparatedPaths(click.ParamType):
 
 class SpaceSeparatedFloats(click.ParamType):
     """Custom click type that accepts space-separated floats."""
+
     name = "floats"
 
     def convert(self, value, param, ctx):
@@ -65,7 +68,7 @@ class SpaceSeparatedFloats(click.ParamType):
         try:
             return [float(x) for x in value.split()]
         except ValueError:
-             self.fail(f"Invalid float list: {value}", param, ctx)
+            self.fail(f"Invalid float list: {value}", param, ctx)
 
 
 click.rich_click.USE_RICH_MARKUP = True
@@ -88,15 +91,39 @@ click.rich_click.OPTION_GROUPS = {
         },
         {
             "name": "Contrastive Learning",
-            "options": ["--epochs", "--batch-size", "--embedding-dim", "--base-learning-rate", "--max-positive-pairs", "--num-augmentations"],
+            "options": [
+                "--epochs",
+                "--batch-size",
+                "--embedding-dim",
+                "--base-learning-rate",
+                "--max-positive-pairs",
+                "--num-augmentations",
+            ],
         },
         {
             "name": "Clustering",
-            "options": ["--min-cluster-size", "--greedy-resolutions", "--greedy-min-score", "--leiden-k-neighbors", "--leiden-similarity-threshold"],
+            "options": [
+                "--min-cluster-size",
+                "--greedy-resolutions",
+                "--greedy-min-score",
+                "--leiden-k-neighbors",
+                "--leiden-similarity-threshold",
+            ],
         },
         {
             "name": "Filtering & Processing",
-            "options": ["--min-contig-length", "--min-bin-size", "--coverage-batch-size", "--hyenadna-batch-size", "--skip-bacterial-filter", "--save-filtered-contigs", "--skip-rescue", "--rescue-max-duplication-increase", "--rescue-max-total-duplication", "--skip-chimera-detection"],
+            "options": [
+                "--min-contig-length",
+                "--min-bin-size",
+                "--coverage-batch-size",
+                "--hyenadna-batch-size",
+                "--skip-bacterial-filter",
+                "--save-filtered-contigs",
+                "--skip-rescue",
+                "--rescue-max-duplication-increase",
+                "--rescue-max-total-duplication",
+                "--skip-chimera-detection",
+            ],
         },
     ]
 }
@@ -113,13 +140,18 @@ def custom_help_callback(ctx, param, value):
         return
 
     # Detect which flag was used
-    show_basic_help = '-h' in sys.argv and '--help' not in sys.argv
+    show_basic_help = "-h" in sys.argv and "--help" not in sys.argv
 
     if show_basic_help:
         # Basic options to show
         basic_option_names = {
-            'fasta', 'fasta_arg', 'coverage', 'output',
-            'threads', 'verbose', 'keep_intermediate'
+            "fasta",
+            "fasta_arg",
+            "coverage",
+            "output",
+            "threads",
+            "verbose",
+            "keep_intermediate",
         }
 
         # Store original docstring and replace with minimal version
@@ -138,7 +170,7 @@ def custom_help_callback(ctx, param, value):
             # Keep all arguments and the help/version options
             if not isinstance(p, click.Option):
                 basic_params.append(p)
-            elif p.name in ['help', 'version']:
+            elif p.name in ["help", "version"]:
                 basic_params.append(p)
             elif p.name in basic_option_names:
                 basic_params.append(p)
@@ -174,29 +206,41 @@ def validate_coverage_options(ctx, param, value):
             flattened_files.extend(item)
         else:
             flattened_files.append(item)
-    
+
     # Categorize files by extension
     bam_cram_files = []
     tsv_files = []
-    
+
     for file_path in flattened_files:
-        ext = file_path.lower().split('.')[-1]
-        if ext in ['bam', 'cram']:
+        ext = file_path.lower().split(".")[-1]
+        if ext in ["bam", "cram"]:
             bam_cram_files.append(file_path)
-        elif ext in ['tsv', 'txt']:
+        elif ext in ["tsv", "txt"]:
             tsv_files.append(file_path)
         else:
-            raise click.BadParameter(f"Unsupported coverage file format: {file_path}. Supported formats: BAM, CRAM, TSV")
-    
+            raise click.BadParameter(
+                f"Unsupported coverage file format: {file_path}. Supported formats: BAM, CRAM, TSV"
+            )
+
     # Don't allow mixing BAM/CRAM with TSV files
     if bam_cram_files and tsv_files:
-        raise click.BadParameter("Cannot mix BAM/CRAM files with TSV files. Use either alignment files or pre-computed coverage files, not both.")
-    
+        raise click.BadParameter(
+            "Cannot mix BAM/CRAM files with TSV files. Use either alignment files or pre-computed coverage files, not both."
+        )
+
     return flattened_files
 
 
 @click.command(name="remag")
-@click.option("--help", "-h", is_flag=True, expose_value=False, is_eager=True, callback=custom_help_callback, help="Show this message and exit.")
+@click.option(
+    "--help",
+    "-h",
+    is_flag=True,
+    expose_value=False,
+    is_eager=True,
+    callback=custom_help_callback,
+    help="Show this message and exit.",
+)
 @click.version_option(version=__version__, prog_name="REMAG")
 @click.argument(
     "fasta_arg",
@@ -260,16 +304,18 @@ def validate_coverage_options(ctx, param, value):
     default=None,
     show_default=False,
     help="Lambda parameter for Barlow Twins loss (redundancy reduction term). "
-         "Default (auto): 0.003 for single/no coverage, 0.005 for multi-sample/coassembly.",
+    "Default (auto): 0.003 for single/no coverage, 0.005 for multi-sample/coassembly.",
 )
 @click.option(
     "-m",
     "--mode",
-    type=click.Choice(["metagenomics", "single-cell", "short-reads", "sr"], case_sensitive=False),
+    type=click.Choice(
+        ["metagenomics", "single-cell", "short-reads", "sr"], case_sensitive=False
+    ),
     default="metagenomics",
     show_default=True,
     help="Preset mode adjusting defaults. 'metagenomics' (default) maximizes clusters; "
-         "'single-cell' uses larger k-NN and minimizes clusters; 'short-reads'/'sr' enforces 1000bp min length.",
+    "'single-cell' uses larger k-NN and minimizes clusters; 'short-reads'/'sr' enforces 1000bp min length.",
 )
 @click.option(
     "--random-seed",
@@ -291,8 +337,8 @@ def validate_coverage_options(ctx, param, value):
     default=None,
     show_default=False,
     help="Minimum contig length in base pairs for binning consideration. "
-         "Default: 1000 for single-sample, 4096 for multi-sample/coassembly. "
-         "User-specified values override auto-detection."
+    "Default: 1000 for single-sample, 4096 for multi-sample/coassembly. "
+    "User-specified values override auto-detection.",
 )
 @click.option(
     "--max-positive-pairs",
@@ -337,14 +383,17 @@ def validate_coverage_options(ctx, param, value):
     type=float,
     default=5.0,
     show_default=True,
-    help="Maximum allowed increase in duplication percentage when merging bins during rescue (e.g. 5.0 allows 0% -> 5%)."
+    help="Maximum allowed increase in duplication percentage when merging bins during rescue (e.g. 5.0 allows 0% -> 5%).",
 )
 @click.option(
     "--rescue-max-total-duplication",
     type=float,
     default=5.0,
     show_default=True,
-    help="Maximum allowed TOTAL duplication percentage after merging bins during rescue (e.g. 5.0 rejects merges resulting in > 5% duplication)."
+    help=(
+        "Maximum allowed TOTAL duplication percentage after merging bins during "
+        "rescue (hard-capped at 10% for bin-to-bin merges)."
+    ),
 )
 @click.option(
     "--num-augmentations",
@@ -379,7 +428,7 @@ def validate_coverage_options(ctx, param, value):
     default=None,
     show_default=False,
     help="Number of nearest neighbors for k-NN graph construction in Leiden clustering. "
-         "If not set, defaults to 15 (metagenomics) or 25 (single-cell mode).",
+    "If not set, defaults to 15 (metagenomics) or 25 (single-cell mode).",
 )
 @click.option(
     "--leiden-similarity-threshold",
@@ -475,7 +524,9 @@ def main_cli(
     """
     # Handle fasta input: accept either positional argument or --fasta flag
     if fasta is None and fasta_arg is None:
-        raise click.UsageError("Missing input FASTA file. Provide it as a positional argument or use -f/--fasta")
+        raise click.UsageError(
+            "Missing input FASTA file. Provide it as a positional argument or use -f/--fasta"
+        )
 
     # Prefer --fasta flag if both are provided
     if fasta is not None:
@@ -494,48 +545,63 @@ def main_cli(
 
     max_cores = multiprocessing.cpu_count()
     if threads > max_cores:
-        click.echo(f"Warning: Requested {threads} threads but only {max_cores} available. Using {max_cores}.", err=True)
+        click.echo(
+            f"Warning: Requested {threads} threads but only {max_cores} available. Using {max_cores}.",
+            err=True,
+        )
         threads = max_cores
 
     # Separate coverage files by type
     bam_cram_files = []
     tsv_files = []
-    
+
     if coverage:
         for file_path in coverage:
-            ext = file_path.lower().split('.')[-1]
-            if ext in ['bam', 'cram']:
+            ext = file_path.lower().split(".")[-1]
+            if ext in ["bam", "cram"]:
                 bam_cram_files.append(file_path)
-            elif ext in ['tsv', 'txt']:
+            elif ext in ["tsv", "txt"]:
                 tsv_files.append(file_path)
-    
+
     # Set default Barlow Twins lambda based on number of samples if not provided
     coverage_count = len(bam_cram_files) if bam_cram_files else len(tsv_files)
     if barlow_lambda is None:
         if coverage_count > 1:
             barlow_lambda = 0.02
-            click.echo("Auto Barlow lambda: 0.02 (multi-sample/coassembly detected)", err=True)
+            click.echo(
+                "Auto Barlow lambda: 0.02 (multi-sample/coassembly detected)", err=True
+            )
         else:
             barlow_lambda = 0.003
-            click.echo("Auto Barlow lambda: 0.003 (single-sample or no coverage)", err=True)
+            click.echo(
+                "Auto Barlow lambda: 0.003 (single-sample or no coverage)", err=True
+            )
 
     # Set default base learning rate based on number of samples if not provided
     # Only apply if user did not explicitly set it via --base-learning-rate
-    if coverage_count > 1 and base_learning_rate == 5e-3: # Check if it's the default value
+    if (
+        coverage_count > 1 and base_learning_rate == 5e-3
+    ):  # Check if it's the default value
         base_learning_rate = 0.0005
-        click.echo("Coassembly detected: Auto base learning rate set to 0.0005.", err=True)
+        click.echo(
+            "Coassembly detected: Auto base learning rate set to 0.0005.", err=True
+        )
 
     # Set default min contig length if not provided by user
     if min_contig_length is None:
         if mode.lower() in ["short-reads", "sr"]:
             min_contig_length = 1000
-            click.echo("Short-reads mode: Auto-setting min contig length to 1000 bp.", err=True)
+            click.echo(
+                "Short-reads mode: Auto-setting min contig length to 1000 bp.", err=True
+            )
         elif coverage_count > 1:
             min_contig_length = 4096
-            click.echo("Coassembly detected: Auto-setting min contig length to 4096 bp.", err=True)
+            click.echo(
+                "Coassembly detected: Auto-setting min contig length to 4096 bp.",
+                err=True,
+            )
         else:
             min_contig_length = 1000
-
 
     # Mode-specific defaults
     effective_k = leiden_k_neighbors
@@ -545,7 +611,9 @@ def main_cli(
 
     if mode.lower() == "single-cell":
         if not skip_bacterial_filter:
-            click.echo("Single-cell mode: skipping euk filter (keeping all contigs).", err=True)
+            click.echo(
+                "Single-cell mode: skipping euk filter (keeping all contigs).", err=True
+            )
 
     args = argparse.Namespace(
         fasta=fasta_path,
