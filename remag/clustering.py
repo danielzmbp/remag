@@ -14,7 +14,7 @@ from loguru import logger
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.neighbors import NearestNeighbors
 
-from .utils import extract_base_contig_name, get_torch_device, group_contigs_by_cluster
+from .utils import extract_base_contig_name, get_torch_device
 
 
 class GraphManager:
@@ -876,12 +876,6 @@ def cluster_contigs(embeddings_df, fragments_dict, gene_mappings, args):
         args=args,
     )
 
-    n_clusters = len(set(cluster_labels)) - (1 if -1 in cluster_labels else 0)
-    n_noise = sum(1 for label in cluster_labels if label == -1)
-    cluster_sizes = (
-        np.bincount(cluster_labels[cluster_labels >= 0]) if n_clusters > 0 else []
-    )
-
     formatted_labels = [
         f"bin_{label}" if label != -1 else "noise" for label in cluster_labels
     ]
@@ -919,10 +913,6 @@ def cluster_contigs(embeddings_df, fragments_dict, gene_mappings, args):
     final_bins_df = final_bins_df[["contig", "cluster"]]
     final_bins_df.to_csv(bins_path, index=False)
 
-    # Count contigs per cluster using utility function
-    logger.debug("Counting contigs per cluster...")
-    cluster_contig_counts = group_contigs_by_cluster(contig_clusters_df)
-
     # Note about visualization (embeddings.csv is always saved)
     logger.info(
         "Embeddings saved to embeddings.csv. Use scripts/plot_features.py for UMAP visualization with plotting dependencies."
@@ -931,7 +921,7 @@ def cluster_contigs(embeddings_df, fragments_dict, gene_mappings, args):
     # Perform chimera detection for large contigs
     if not getattr(args, "skip_chimera_detection", False):
         logger.info("Running chimera detection on large contigs...")
-        chimera_results = detect_chimeric_contigs(embeddings_df, clusters_df, args)
+        detect_chimeric_contigs(embeddings_df, clusters_df, args)
 
     logger.info(f"Saved contig-level clusters to {bins_path}")
 
