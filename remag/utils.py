@@ -5,58 +5,10 @@ Utility functions for REMAG
 import gzip
 import os
 import sys
-from loguru import logger
 from typing import Dict, List, Union
+
 import torch
-
-
-class PathManager:
-    """Centralized path management for REMAG output files."""
-    
-    def __init__(self, output_dir):
-        self.output_dir = output_dir
-    
-    def get_params_path(self):
-        return os.path.join(self.output_dir, "params.json")
-    
-    def get_model_path(self):
-        return os.path.join(self.output_dir, "siamese_model.pt")
-    
-    def get_embeddings_path(self):
-        return os.path.join(self.output_dir, "embeddings.csv")
-    
-    def get_features_path(self):
-        return os.path.join(self.output_dir, "features.csv")
-    
-    def get_bins_path(self):
-        return os.path.join(self.output_dir, "bins.csv")
-    
-    def get_bins_dir(self):
-        return os.path.join(self.output_dir, "bins")
-    
-    def get_knn_graph_edges_path(self):
-        return os.path.join(self.output_dir, "knn_graph_edges.csv")
-    
-    def get_knn_graph_stats_path(self):
-        return os.path.join(self.output_dir, "knn_graph_stats.json")
-    
-    def get_chimera_results_path(self):
-        return os.path.join(self.output_dir, "chimera_detection_results.json")
-    
-    def get_refinement_summary_path(self):
-        return os.path.join(self.output_dir, "refinement_summary.json")
-    
-    def get_core_gene_results_path(self):
-        return os.path.join(self.output_dir, "core_gene_duplication_results.json")
-    
-    def get_gene_mapping_path(self):
-        return os.path.join(self.output_dir, "gene_contig_mappings.json")
-    
-    def get_temp_miniprot_dir(self):
-        return os.path.join(self.output_dir, "temp_miniprot")
-    
-    def get_fragments_path(self):
-        return os.path.join(self.output_dir, "fragments.pkl")
+from loguru import logger
 
 
 def get_torch_device():
@@ -123,6 +75,7 @@ def fasta_iter(fasta_file):
 
 import re
 
+
 def extract_base_contig_name(fragment_header: str) -> str:
     """Extract the base contig name from a fragment header.
 
@@ -160,21 +113,21 @@ CoverageDict = Dict[str, float]
 
 class ContigHeaderMapper:
     """Efficient mapping between contig names and their headers in fragments_dict.
-    
+
     This class eliminates the O(n*m) complexity of repeatedly searching through
     fragments_dict to find headers matching contig names.
     """
-    
+
     def __init__(self, fragments_dict: FragmentDict):
         """Initialize the mapper with a fragments dictionary.
-        
+
         Args:
             fragments_dict: Dictionary with headers as keys and fragment data as values
         """
         self._fragments_dict = fragments_dict
         self._contig_to_header_map = {}
         self._build_mapping()
-    
+
     def _build_mapping(self):
         """Build the contig name to header mapping."""
         for header in self._fragments_dict.keys():
@@ -182,32 +135,32 @@ class ContigHeaderMapper:
             # In case of duplicates, keep the first one (consistent with original behavior)
             if contig_name not in self._contig_to_header_map:
                 self._contig_to_header_map[contig_name] = header
-    
+
     def get_header(self, contig_name: str) -> Union[str, None]:
         """Get the header for a given contig name.
-        
+
         Args:
             contig_name: The base contig name
-            
+
         Returns:
             The corresponding header from fragments_dict, or None if not found
         """
         return self._contig_to_header_map.get(contig_name)
-    
+
     def get_mapping(self) -> Dict[str, str]:
         """Get the complete contig to header mapping.
-        
+
         Returns:
             Dictionary mapping contig names to headers
         """
         return self._contig_to_header_map.copy()
-    
+
     def has_contig(self, contig_name: str) -> bool:
         """Check if a contig name exists in the mapping.
-        
+
         Args:
             contig_name: The base contig name to check
-            
+
         Returns:
             True if the contig exists in the mapping
         """
@@ -216,29 +169,29 @@ class ContigHeaderMapper:
 
 def group_contigs_by_cluster(clusters_df):
     """Group contigs by their cluster assignments.
-    
+
     Replaces the repeated pattern of manually building cluster_contig_counts
     dictionaries throughout the codebase.
-    
+
     Args:
         clusters_df: DataFrame with 'contig' and 'cluster' columns
-        
+
     Returns:
         Dictionary mapping cluster IDs to sets of contig names
     """
-    cluster_groups = clusters_df.groupby('cluster')['contig'].apply(set).to_dict()
+    cluster_groups = clusters_df.groupby("cluster")["contig"].apply(set).to_dict()
     return cluster_groups
 
 
 def initialize_duplication_columns(clusters_df):
     """Initialize core gene duplication columns in clusters DataFrame.
-    
+
     Common pattern used throughout miniprot_utils to set default values
     for duplication analysis columns.
-    
+
     Args:
         clusters_df: DataFrame with cluster assignments
-        
+
     Returns:
         DataFrame: Copy with initialized duplication columns
     """
