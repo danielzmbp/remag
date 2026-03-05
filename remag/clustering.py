@@ -19,49 +19,52 @@ from .utils import extract_base_contig_name, get_torch_device, group_contigs_by_
 
 class GraphManager:
     """Handles k-NN graph construction and caching."""
-    
+
     def __init__(self, k=15, similarity_threshold=0.1, n_jobs=-1):
         self.k = k
         self.similarity_threshold = similarity_threshold
         self.n_jobs = n_jobs
-    
+
     def construct_graph(self, embeddings, args=None):
         """Construct k-NN graph from embeddings."""
         return _construct_knn_graph(
-            embeddings, k=self.k, similarity_threshold=self.similarity_threshold, 
-            n_jobs=self.n_jobs, args=args
+            embeddings,
+            k=self.k,
+            similarity_threshold=self.similarity_threshold,
+            n_jobs=self.n_jobs,
+            args=args,
         )
 
 
 class ClusteringManager:
     """Main clustering orchestrator."""
-    
+
     def __init__(self, args):
         self.args = args
         self.graph_manager = GraphManager(
-            k=getattr(args, 'leiden_k_neighbors', 15),
-            similarity_threshold=getattr(args, 'leiden_similarity_threshold', 0.1)
+            k=getattr(args, "leiden_k_neighbors", 15),
+            similarity_threshold=getattr(args, "leiden_similarity_threshold", 0.1),
         )
 
 
 def _calculate_bin_quality(contig_names, gene_mappings):
     """
     Calculate quality score using F1-score inspired by SemiBin2.
-    
+
     Formulas:
         completeness = N / 133
         contamination = (G - N) / G
         F1-score = (2 * completeness * (1 - contamination)) / (completeness + (1 - contamination))
-        
+
     Where:
         N = Number of nonredundant genes (unique gene families)
         G = Total genes found (sum of all gene counts)
         133 = Total number of single-copy genes (user specified)
-    
+
     Args:
         contig_names: List of contig names in the bin
         gene_mappings: Dict mapping contig_name -> gene_family -> details
-        
+
     Returns:
         tuple: (score, scg_count, dup_count)
     """
@@ -78,43 +81,52 @@ def _calculate_bin_quality(contig_names, gene_mappings):
 
     scg = sum(1 for v in gene_counts.values() if v == 1)
     dups = sum(1 for v in gene_counts.values() if v > 1)
-    
+
     # N: nonredundant genes (unique gene families)
     N = len(gene_counts)
-    
+
     # G: total genes found
     G = sum(gene_counts.values())
-    
+
     # Calculate metrics based on provided formulas
     completeness = float(N) / 133.0
-    
+
     if G > 0:
         contamination = float(G - N) / float(G)
     else:
         contamination = 0.0
-    
+
     precision_term = 1.0 - contamination
-    
+
     # Calculate F1-score (harmonic mean)
     if (completeness + precision_term) > 0:
         score = (2.0 * completeness * precision_term) / (completeness + precision_term)
     else:
         score = 0.0
-        
+
     return score, scg, dups
 
 
-def _greedy_leiden_clustering(embeddings, contig_names, gene_mappings, k=15, similarity_threshold=0.1, 
-                            resolutions=[0.1, 0.5, 1.0, 2.0, 5.0], min_score=-5.0, max_contamination=0.10,
-                            random_state=42, n_jobs=1, args=None):
+def _greedy_leiden_clustering(
+    embeddings,
+    contig_names,
+    gene_mappings,
+    k=15,
+    similarity_threshold=0.1,
+    resolutions=[0.1, 0.5, 1.0, 2.0, 5.0],
+    max_contamination=0.10,
+    random_state=42,
+    n_jobs=1,
+    args=None,
+):
     """
     Perform greedy Leiden clustering.
-    
+
     Iteratively:
     1. Cluster active graph at multiple resolutions.
     2. Pick best cluster based on quality score (F1-score of completion and contamination).
     3. Remove best cluster nodes and repeat.
-    
+
     Args:
         embeddings: Numpy array of L2-normalized embeddings
         contig_names: List of contig names corresponding to embeddings
@@ -122,82 +134,91 @@ def _greedy_leiden_clustering(embeddings, contig_names, gene_mappings, k=15, sim
         k: k for KNN graph
         similarity_threshold: threshold for edges
         resolutions: list of resolutions to try
-        min_score: minimum score to accept a bin
         max_contamination: maximum contamination allowed (dups / 133)
         random_state: random seed
         n_jobs: number of cores
         args: args object
-        
+
     Returns:
         list: Cluster labels matching embeddings order (-1 for noise/unbinned)
     """
-    logger.info(f"Starting Greedy Leiden clustering with k={k}, resolutions={resolutions}, min_score={min_score}, max_contamination={max_contamination}")
-    
+    logger.info(
+        f"Starting Greedy Leiden clustering with k={k}, resolutions={resolutions}, max_contamination={max_contamination}"
+    )
+
     # 1. Construct initial graph
-    graph = _construct_knn_graph(embeddings, k=k, similarity_threshold=similarity_threshold, n_jobs=n_jobs, args=args)
-    
+    graph = _construct_knn_graph(
+        embeddings,
+        k=k,
+        similarity_threshold=similarity_threshold,
+        n_jobs=n_jobs,
+        args=args,
+    )
+
     # Add names to graph vertices for easy retrieval
     graph.vs["name"] = contig_names
-    
+
     # Keep track of original indices to assign final labels correctly
     n_samples = len(embeddings)
     graph.vs["original_index"] = range(n_samples)
-    
+
     cluster_labels = np.full(n_samples, -1, dtype=int)
-    
+
     # Current active indices in the ORIGINAL embeddings array
     active_indices = list(range(n_samples))
-    
+
     bin_counter = 0
     iteration = 0
-    
+
     while len(active_indices) > 0:
         iteration += 1
-        
+
         # Stop if very few nodes left
         if len(active_indices) < 2:
             logger.info("Fewer than 2 nodes remaining, stopping greedy loop.")
             break
-            
+
         # Extract subgraph for active nodes
         if iteration == 1:
             current_graph = graph
         else:
             current_graph = graph.induced_subgraph(active_indices)
-            
+
         # If no edges, can't cluster effectively
         if current_graph.ecount() == 0:
             logger.info(f"Iter {iteration}: No edges in remaining graph. Stopping.")
             break
-            
-        best_candidate = None # (score, scg, dups, resolution, node_indices_subgraph)
-        best_score = -float('inf')
-        
+
+        best_candidate = None  # (score, scg, dups, resolution, node_indices_subgraph)
+        best_score = -float("inf")
+
         # Try all resolutions
         for res in resolutions:
             partition = leidenalg.find_partition(
                 current_graph,
                 leidenalg.RBConfigurationVertexPartition,
                 resolution_parameter=res,
-                seed=random_state
+                seed=random_state,
             )
-            
+
             # Group nodes by cluster membership
             clusters = {}
             for i, cluster_id in enumerate(partition.membership):
                 clusters.setdefault(cluster_id, []).append(i)
-                
+
             # Evaluate each cluster
             for cid, node_indices_in_subgraph in clusters.items():
                 # Get contig names
-                c_names = [current_graph.vs[ix]["name"] for ix in node_indices_in_subgraph]
-                
+                c_names = [
+                    current_graph.vs[ix]["name"] for ix in node_indices_in_subgraph
+                ]
+
                 # Basic size filter (min 2 contigs)
-                if len(c_names) < 2: 
+                if len(c_names) < 2:
                     continue
-                    
+
                 score, scg, dups = _calculate_bin_quality(c_names, gene_mappings)
-                
+
                 # Check contamination constraint (dups < 10% of 133)
                 if (float(dups) / 133.0) > max_contamination:
                     continue
@@ -211,56 +232,66 @@ def _greedy_leiden_clustering(embeddings, contig_names, gene_mappings, k=15, sim
                         "dups": dups,
                         "res": res,
                         "node_indices_subgraph": node_indices_in_subgraph,
-                        "contigs": c_names
+                        "contigs": c_names,
                     }
-        
+
         # Check if best candidate meets criteria
-        if best_candidate and best_candidate["score"] >= min_score:
+        if best_candidate:
             # We found a valid bin
             bin_id = bin_counter
             bin_counter += 1
-            
+
             subgraph_indices = best_candidate["node_indices_subgraph"]
             # Map back to original indices
-            original_indices = [current_graph.vs[ix]["original_index"] for ix in subgraph_indices]
-            
+            original_indices = [
+                current_graph.vs[ix]["original_index"] for ix in subgraph_indices
+            ]
+
             # Assign label
             cluster_labels[original_indices] = bin_id
-            
-            logger.debug(f"Iter {iteration}: Picked bin_{bin_id} (res={best_candidate['res']:.1f}, "
-                        f"scg={best_candidate['scg']}, dups={best_candidate['dups']}, "
-                        f"score={best_candidate['score']:.1f}, size={len(original_indices)})")
-            
+
+            logger.debug(
+                f"Iter {iteration}: Picked bin_{bin_id} (res={best_candidate['res']:.1f}, "
+                f"scg={best_candidate['scg']}, dups={best_candidate['dups']}, "
+                f"score={best_candidate['score']:.1f}, size={len(original_indices)})"
+            )
+
             # Update active indices (remove binned nodes)
             to_remove = set(original_indices)
             active_indices = [idx for idx in active_indices if idx not in to_remove]
-            
+
         else:
-            logger.info(f"Iter {iteration}: No bin meets min_score ({min_score}). Best score was {best_score:.1f}. Stopping.")
+            logger.info(f"Iter {iteration}: No valid candidate found. Stopping.")
             break
-            
+
         # Log progress occasionally
         if iteration % 10 == 0:
-            logger.info(f"Greedy clustering: {len(active_indices)} contigs remaining...")
+            logger.info(
+                f"Greedy clustering: {len(active_indices)} contigs remaining..."
+            )
 
     n_clustered = np.sum(cluster_labels >= 0)
-    logger.info(f"Greedy clustering complete. {bin_counter} bins formed, {n_clustered} contigs binned out of {n_samples}.")
-    
+    logger.info(
+        f"Greedy clustering complete. {bin_counter} bins formed, {n_clustered} contigs binned out of {n_samples}."
+    )
+
     return cluster_labels
 
 
-def _construct_knn_graph(embeddings, k=15, similarity_threshold=0.1, n_jobs=1, args=None):
+def _construct_knn_graph(
+    embeddings, k=15, similarity_threshold=0.1, n_jobs=1, args=None
+):
     """
     Construct a k-NN graph from multidimensional embeddings using cosine similarity.
     Optimized for memory efficiency and parallelization.
-    
+
     Args:
         embeddings: Numpy array of L2-normalized embeddings (n_samples x embedding_dim)
         k: Number of nearest neighbors for each node
         similarity_threshold: Minimum cosine similarity to create an edge (0-1)
         n_jobs: Number of parallel jobs for k-NN search
         args: Arguments object containing output directory and keep_intermediate flag
-        
+
     Returns:
         igraph.Graph: Weighted graph with cosine similarity weights
     """
@@ -269,130 +300,143 @@ def _construct_knn_graph(embeddings, k=15, similarity_threshold=0.1, n_jobs=1, a
     if n_samples == 0:
         # Empty embeddings - return empty graph
         return ig.Graph()
-    
+
     if n_samples == 1:
         # Single node - return graph with one node and no edges
         graph = ig.Graph(n=1)
         return graph
-    
+
     # Adjust k if we have fewer samples than k+1
     if n_samples <= k:
         k = n_samples - 1
-        logger.warning(f"Adjusted k from {k+1} to {k} due to limited samples ({n_samples})")
-    
+        logger.warning(
+            f"Adjusted k from {k + 1} to {k} due to limited samples ({n_samples})"
+        )
+
     # Check if graph already exists and can be loaded
     if args and args.output:
         edge_list_path = os.path.join(args.output, "knn_graph_edges.csv")
         graph_stats_path = os.path.join(args.output, "knn_graph_stats.json")
-        
+
         if os.path.exists(edge_list_path) and os.path.exists(graph_stats_path):
             try:
                 # Load graph statistics to verify compatibility
-                with open(graph_stats_path, 'r') as f:
+                with open(graph_stats_path, "r") as f:
                     saved_stats = json.load(f)
-                
+
                 # Check if parameters match
-                if (saved_stats.get('n_vertices') == len(embeddings) and
-                    saved_stats.get('k') == k and
-                    saved_stats.get('similarity_threshold') == similarity_threshold):
-                    
+                if (
+                    saved_stats.get("n_vertices") == len(embeddings)
+                    and saved_stats.get("k") == k
+                    and saved_stats.get("similarity_threshold") == similarity_threshold
+                ):
                     logger.info(f"Loading existing k-NN graph from {edge_list_path}")
-                    
+
                     # Load edge list
                     edges = []
                     weights = []
-                    with open(edge_list_path, 'r') as f:
+                    with open(edge_list_path, "r") as f:
                         for line in f:
-                            if line.startswith('#') or line.startswith('source'):
+                            if line.startswith("#") or line.startswith("source"):
                                 continue  # Skip comments and header
-                            source, target, weight = line.strip().split(',')
+                            source, target, weight = line.strip().split(",")
                             edges.append((int(source), int(target)))
                             weights.append(float(weight))
-                    
+
                     # Reconstruct graph
                     g = ig.Graph()
                     g.add_vertices(len(embeddings))
                     g.add_edges(edges)
-                    g.es['weight'] = weights
-                    
-                    logger.info(f"Successfully loaded k-NN graph: {g.vcount()} nodes, {g.ecount()} edges")
+                    g.es["weight"] = weights
+
+                    logger.info(
+                        f"Successfully loaded k-NN graph: {g.vcount()} nodes, {g.ecount()} edges"
+                    )
                     return g
                 else:
-                    logger.info("Existing k-NN graph has different parameters, constructing new graph")
-                    logger.debug(f"Saved: vertices={saved_stats.get('n_vertices')}, k={saved_stats.get('k')}, "
-                               f"threshold={saved_stats.get('similarity_threshold')}")
-                    logger.debug(f"Current: vertices={len(embeddings)}, k={k}, threshold={similarity_threshold}")
+                    logger.info(
+                        "Existing k-NN graph has different parameters, constructing new graph"
+                    )
+                    logger.debug(
+                        f"Saved: vertices={saved_stats.get('n_vertices')}, k={saved_stats.get('k')}, "
+                        f"threshold={saved_stats.get('similarity_threshold')}"
+                    )
+                    logger.debug(
+                        f"Current: vertices={len(embeddings)}, k={k}, threshold={similarity_threshold}"
+                    )
             except Exception as e:
                 logger.warning(f"Could not load existing k-NN graph: {e}")
                 logger.info("Constructing new k-NN graph")
-    
-    logger.info(f"Constructing k-NN graph from {len(embeddings)} embeddings (k={k}, n_jobs={n_jobs})")
-    
+
+    logger.info(
+        f"Constructing k-NN graph from {len(embeddings)} embeddings (k={k}, n_jobs={n_jobs})"
+    )
+
     # Use sklearn's NearestNeighbors for efficient, parallelized k-NN search
     # Since embeddings are L2-normalized, cosine similarity = dot product
     nbrs = NearestNeighbors(
-        n_neighbors=k+1,  # +1 because it includes self
-        metric='cosine',
-        algorithm='brute',  # brute force is often fastest for high-dimensional data
-        n_jobs=n_jobs
+        n_neighbors=k + 1,  # +1 because it includes self
+        metric="cosine",
+        algorithm="brute",  # brute force is often fastest for high-dimensional data
+        n_jobs=n_jobs,
     )
     nbrs.fit(embeddings)
-    
+
     # Find k-NN for all points efficiently
     distances, indices = nbrs.kneighbors(embeddings)
-    
+
     # Convert distances to similarities (cosine distance = 1 - cosine similarity)
     similarities = 1 - distances
-    
+
     # Build edge list using vectorized operations
     # Skip self-match (column 0)
-    neighbor_indices = indices[:, 1:k+1]
-    neighbor_similarities = similarities[:, 1:k+1]
-    
+    neighbor_indices = indices[:, 1 : k + 1]
+    neighbor_similarities = similarities[:, 1 : k + 1]
+
     # Create source indices array [0, 0... 1, 1...] matching the shape
     # Use broadcasting/repeating to align with flattened neighbor arrays
     source_indices = np.repeat(np.arange(len(embeddings)), neighbor_indices.shape[1])
-    
+
     # Flatten arrays
     flat_sources = source_indices
     flat_targets = neighbor_indices.flatten()
     flat_weights = neighbor_similarities.flatten()
-    
+
     # Apply threshold mask
     mask = flat_weights >= similarity_threshold
-    
+
     # Create edges and weights
     # igraph expects list of tuples for edges
     valid_sources = flat_sources[mask]
     valid_targets = flat_targets[mask]
     edges = list(zip(valid_sources, valid_targets))
     weights = flat_weights[mask].tolist()
-    
+
     logger.info(f"Created {len(edges)} edges with similarity >= {similarity_threshold}")
-    
+
     # Create igraph from edge list
     g = ig.Graph()
     g.add_vertices(len(embeddings))
     g.add_edges(edges)
-    g.es['weight'] = weights
-    
+    g.es["weight"] = weights
+
     # Make graph undirected by averaging edge weights
-    g = g.as_undirected(mode='mean')
+    g = g.as_undirected(mode="mean")
 
     # Save graph if keep_intermediate is enabled
     if args and getattr(args, "keep_intermediate", False):
         # Save as edge list with weights
         edge_list_path = os.path.join(args.output, "knn_graph_edges.csv")
-        with open(edge_list_path, 'w') as f:
+        with open(edge_list_path, "w") as f:
             f.write("# Node IDs correspond to row indices in embeddings.csv\n")
             f.write("source,target,weight\n")
             for edge in g.es:
                 source = edge.source
                 target = edge.target
-                weight = edge['weight']
+                weight = edge["weight"]
                 f.write(f"{source},{target},{weight:.6f}\n")
         logger.info(f"Saved k-NN graph edge list to {edge_list_path}")
-        
+
         # Also save graph statistics
         graph_stats = {
             "n_vertices": g.vcount(),
@@ -403,14 +447,14 @@ def _construct_knn_graph(embeddings, k=15, similarity_threshold=0.1, n_jobs=1, a
             "n_connected_components": len(g.connected_components()),
             "average_degree": np.mean(g.degree()),
             "max_degree": max(g.degree()),
-            "min_degree": min(g.degree())
+            "min_degree": min(g.degree()),
         }
-        
+
         graph_stats_path = os.path.join(args.output, "knn_graph_stats.json")
-        with open(graph_stats_path, 'w') as f:
+        with open(graph_stats_path, "w") as f:
             json.dump(graph_stats, f, indent=2)
         logger.info(f"Saved k-NN graph statistics to {graph_stats_path}")
-    
+
     return g
 
 
@@ -444,7 +488,7 @@ def _leiden_clustering_on_graph(graph, resolution=1.0, random_state=42):
             graph,
             leidenalg.RBConfigurationVertexPartition,
             resolution_parameter=resolution,
-            seed=random_state
+            seed=random_state,
         )
         cluster_labels = np.array(partition.membership)
 
@@ -466,7 +510,7 @@ def _leiden_clustering_on_graph(graph, resolution=1.0, random_state=42):
                 subgraph,
                 leidenalg.RBConfigurationVertexPartition,
                 resolution_parameter=resolution,
-                seed=random_state
+                seed=random_state,
             )
 
             # Map back to original indices
@@ -483,24 +527,24 @@ def _leiden_clustering_on_graph(graph, resolution=1.0, random_state=42):
 def _vectorized_pairwise_distances(embeddings1, embeddings2=None):
     """
     Calculate pairwise cosine distances using vectorized operations.
-    
+
     Args:
         embeddings1: First set of embeddings (n1 x dim)
-        embeddings2: Second set of embeddings (n2 x dim). If None, calculate 
+        embeddings2: Second set of embeddings (n2 x dim). If None, calculate
                     intra-group distances within embeddings1.
-    
+
     Returns:
         Array of cosine distances (1 - cosine_similarity)
     """
     # Handle empty inputs
     if len(embeddings1) == 0 or (embeddings2 is not None and len(embeddings2) == 0):
         return np.array([])
-    
+
     if embeddings2 is None:
         # Intra-group distances: upper triangle of similarity matrix
         if len(embeddings1) <= 1:
             return np.array([])
-        
+
         similarity_matrix = cosine_similarity(embeddings1)
         # Extract upper triangle (excluding diagonal)
         mask = np.triu(np.ones(similarity_matrix.shape), k=1).astype(bool)
@@ -509,94 +553,102 @@ def _vectorized_pairwise_distances(embeddings1, embeddings2=None):
         # Inter-group distances: all pairwise distances between groups
         similarity_matrix = cosine_similarity(embeddings1, embeddings2)
         distances = 1 - similarity_matrix.flatten()
-    
+
     return distances
 
 
-def _permutation_anova_chimera_test(h1_embeddings, h2_embeddings, n_permutations=1000, alpha=0.05):
+def _permutation_anova_chimera_test(
+    h1_embeddings, h2_embeddings, n_permutations=1000, alpha=0.05
+):
     """
     Perform permutation ANOVA to test if inter-group distances are significantly
     larger than intra-group distances, indicating a possible chimeric contig.
-    
+
     Args:
         h1_embeddings: numpy array of embeddings for h1 fragments (n_h1 x embedding_dim)
-        h2_embeddings: numpy array of embeddings for h2 fragments (n_h2 x embedding_dim) 
+        h2_embeddings: numpy array of embeddings for h2 fragments (n_h2 x embedding_dim)
         n_permutations: number of permutations for the test
         alpha: significance level
-        
+
     Returns:
         tuple: (is_chimeric, results_dict)
     """
     # Calculate pairwise cosine distances within and between groups using vectorized operations
-    
+
     # Intra-group distances (within h1) - vectorized
     h1_intra_distances = _vectorized_pairwise_distances(h1_embeddings)
-    
+
     # Intra-group distances (within h2) - vectorized
     h2_intra_distances = _vectorized_pairwise_distances(h2_embeddings)
-    
+
     # Inter-group distances (between h1 and h2) - vectorized
     inter_distances = _vectorized_pairwise_distances(h1_embeddings, h2_embeddings)
-    
+
     # Combine all distances with group labels
-    all_distances = np.concatenate([h1_intra_distances, h2_intra_distances, inter_distances])
-    group_labels = (['intra'] * (len(h1_intra_distances) + len(h2_intra_distances)) + 
-                   ['inter'] * len(inter_distances))
-    
+    all_distances = np.concatenate(
+        [h1_intra_distances, h2_intra_distances, inter_distances]
+    )
+    group_labels = ["intra"] * (len(h1_intra_distances) + len(h2_intra_distances)) + [
+        "inter"
+    ] * len(inter_distances)
+
     if len(all_distances) == 0 or len(set(group_labels)) < 2:
         # Not enough data for test
         return False, {
-            'f_statistic': 0.0,
-            'p_value': 1.0,
-            'mean_intra_distance': 0.0,
-            'mean_inter_distance': 0.0,
-            'n_intra_pairs': len(h1_intra_distances) + len(h2_intra_distances),
-            'n_inter_pairs': len(inter_distances),
-            'test_performed': False
+            "f_statistic": 0.0,
+            "p_value": 1.0,
+            "mean_intra_distance": 0.0,
+            "mean_inter_distance": 0.0,
+            "n_intra_pairs": len(h1_intra_distances) + len(h2_intra_distances),
+            "n_inter_pairs": len(inter_distances),
+            "test_performed": False,
         }
-    
+
     # Calculate observed F-statistic
     def calculate_f_statistic(distances, labels):
         # Vectorized implementation
         # Ensure labels is a numpy array for boolean indexing
         labels_arr = np.asarray(labels)
-        
+
         # Create masks for groups
-        intra_mask = labels_arr == 'intra'
-        inter_mask = labels_arr == 'inter'
-        
+        intra_mask = labels_arr == "intra"
+        inter_mask = labels_arr == "inter"
+
         n_intra = np.sum(intra_mask)
         n_inter = np.sum(inter_mask)
-        
+
         if n_intra == 0 or n_inter == 0:
             return 0.0
-            
+
         # Calculate means
         mean_intra = np.mean(distances[intra_mask])
         mean_inter = np.mean(distances[inter_mask])
         mean_total = np.mean(distances)
-        
+
         # Between-group sum of squares
-        ss_between = (n_intra * (mean_intra - mean_total)**2 + 
-                     n_inter * (mean_inter - mean_total)**2)
-        
+        ss_between = (
+            n_intra * (mean_intra - mean_total) ** 2
+            + n_inter * (mean_inter - mean_total) ** 2
+        )
+
         # Within-group sum of squares
-        ss_within = (np.sum((distances[intra_mask] - mean_intra)**2) + 
-                    np.sum((distances[inter_mask] - mean_inter)**2))
-        
+        ss_within = np.sum((distances[intra_mask] - mean_intra) ** 2) + np.sum(
+            (distances[inter_mask] - mean_inter) ** 2
+        )
+
         # Degrees of freedom
         df_between = 1  # 2 groups - 1
         df_within = len(distances) - 2
-        
+
         if df_within <= 0 or ss_within == 0:
             return 0.0
-            
+
         # F-statistic
         ms_between = ss_between / df_between
         ms_within = ss_within / df_within
-        
+
         return ms_between / ms_within if ms_within > 0 else 0.0
-    
+
     observed_f = calculate_f_statistic(all_distances, group_labels)
 
     # Permutation test with seeded RNG for reproducibility
@@ -608,58 +660,67 @@ def _permutation_anova_chimera_test(h1_embeddings, h2_embeddings, n_permutations
         # Randomly shuffle group labels using seeded RNG
         shuffled_labels = rng.permutation(group_labels)
         permuted_f = calculate_f_statistic(all_distances, shuffled_labels)
-        
+
         if permuted_f >= observed_f:
             extreme_count += 1
-    
+
     p_value = extreme_count / n_permutations
     is_chimeric = p_value < alpha
-    
+
     # Calculate summary statistics
-    intra_distances_all = [d for d, l in zip(all_distances, group_labels) if l == 'intra']
-    inter_distances_all = [d for d, l in zip(all_distances, group_labels) if l == 'inter']
-    
+    intra_distances_all = [
+        d for d, l in zip(all_distances, group_labels) if l == "intra"
+    ]
+    inter_distances_all = [
+        d for d, l in zip(all_distances, group_labels) if l == "inter"
+    ]
+
     results = {
-        'f_statistic': float(observed_f),
-        'p_value': float(p_value),
-        'mean_intra_distance': float(np.mean(intra_distances_all)) if intra_distances_all else 0.0,
-        'mean_inter_distance': float(np.mean(inter_distances_all)) if inter_distances_all else 0.0,
-        'n_intra_pairs': len(intra_distances_all),
-        'n_inter_pairs': len(inter_distances_all),
-        'test_performed': True,
-        'alpha': alpha,
-        'n_permutations': n_permutations
+        "f_statistic": float(observed_f),
+        "p_value": float(p_value),
+        "mean_intra_distance": (
+            float(np.mean(intra_distances_all)) if intra_distances_all else 0.0
+        ),
+        "mean_inter_distance": (
+            float(np.mean(inter_distances_all)) if inter_distances_all else 0.0
+        ),
+        "n_intra_pairs": len(intra_distances_all),
+        "n_inter_pairs": len(inter_distances_all),
+        "test_performed": True,
+        "alpha": alpha,
+        "n_permutations": n_permutations,
     }
-    
+
     return is_chimeric, results
 
 
 def detect_chimeric_contigs(embeddings_df, clusters_df, args):
     """
     Detect chimeric contigs by analyzing clustering patterns and embedding similarity of contig halves.
-    
+
     For large contigs (>50kb) that were split into halves during feature generation,
     this function checks if the two halves have divergent embeddings and cluster assignments,
     which could indicate a chimeric contig containing sequences from different organisms.
-    
+
     Args:
         embeddings_df: DataFrame with embeddings for all fragments
         clusters_df: DataFrame with cluster assignments for contigs
         args: Command line arguments
-    
+
     Returns:
         dict: Mapping of contig names to chimera detection results
     """
     logger.info("Starting chimera detection for large contigs...")
-    
+
     # Find contigs that have both h1 and h2 fragments (large contigs that were split)
     split_contigs = {}
     chimera_results = {}
-    
+
     # Load features data to find h1/h2 fragments for large contigs
     from .features import get_features_csv_path
+
     features_csv_path = get_features_csv_path(args.output)
-    
+
     features_df = None
     if os.path.exists(features_csv_path):
         try:
@@ -668,145 +729,169 @@ def detect_chimeric_contigs(embeddings_df, clusters_df, args):
             logger.error(f"Error loading features data from csv: {e}")
             return {}
     else:
-        logger.warning(f"Features file not found at {features_csv_path}, skipping chimera detection")
+        logger.warning(
+            f"Features file not found at {features_csv_path}, skipping chimera detection"
+        )
         return {}
-    
+
     # Group h1/h2 fragments by base contig name
     for fragment_name in features_df.index:
-        if '.h1.' in fragment_name or '.h2.' in fragment_name:
+        if ".h1." in fragment_name or ".h2." in fragment_name:
             # Extract base contig name (everything before .h1. or .h2.)
-            if '.h1.' in fragment_name:
-                base_contig = fragment_name.split('.h1.')[0]
-                half_id = 'h1'
+            if ".h1." in fragment_name:
+                base_contig = fragment_name.split(".h1.")[0]
+                half_id = "h1"
             else:
-                base_contig = fragment_name.split('.h2.')[0]
-                half_id = 'h2'
-            
+                base_contig = fragment_name.split(".h2.")[0]
+                half_id = "h2"
+
             # Only process if this is a large contig with .original embedding
             original_fragment = f"{base_contig}.original"
             if original_fragment in embeddings_df.index:
                 if base_contig not in split_contigs:
-                    split_contigs[base_contig] = {'h1': [], 'h2': []}
+                    split_contigs[base_contig] = {"h1": [], "h2": []}
                 split_contigs[base_contig][half_id].append(fragment_name)
-    
+
     logger.info(f"Found {len(split_contigs)} large contigs split into halves")
-    
+
     if not split_contigs:
         logger.info("No large contigs found for chimera detection")
         return {}
-    
+
     # Load the trained model for generating embeddings
-    from .models import train_siamese_network, generate_embeddings_for_fragments, get_model_path
-    
+    from .models import (
+        generate_embeddings_for_fragments,
+        get_model_path,
+        train_siamese_network,
+    )
+
     # Load or train the model
     model_path = get_model_path(args)
     if os.path.exists(model_path):
         logger.info(f"Loading trained model from {model_path}")
         device = get_torch_device()
-        
+
         from .models import SiameseNetwork
-        
+
         # Determine feature dimensions (same logic as in train_siamese_network)
         n_kmer_features = 136
         total_features = features_df.shape[1]
         n_coverage_features = total_features - n_kmer_features
-        
+
         # Create model instance and load state dict
         model = SiameseNetwork(
-            n_kmer_features=n_kmer_features, 
+            n_kmer_features=n_kmer_features,
             n_coverage_features=n_coverage_features,
-            embedding_dim=getattr(args, 'embedding_dim', 128)
+            embedding_dim=getattr(args, "embedding_dim", 128),
         ).to(device)
         model.load_state_dict(torch.load(model_path, map_location=device))
         model.eval()  # Set to evaluation mode
     else:
         logger.info("Training new model for chimera detection...")
         model = train_siamese_network(features_df, args)
-    
+
     # Get h1/h2 fragments that need embeddings
     h1_h2_fragments = []
     for halves in split_contigs.values():
-        h1_h2_fragments.extend(halves['h1'])
-        h1_h2_fragments.extend(halves['h2'])
-    
+        h1_h2_fragments.extend(halves["h1"])
+        h1_h2_fragments.extend(halves["h2"])
+
     # Generate embeddings for h1/h2 fragments
     try:
-        logger.info(f"Generating embeddings for {len(h1_h2_fragments)} h1/h2 fragments...")
-        h1_h2_embeddings_df = generate_embeddings_for_fragments(model, features_df, h1_h2_fragments, args)
-        logger.info(f"Generated embeddings for {len(h1_h2_embeddings_df)} h1/h2 fragments")
-        
+        logger.info(
+            f"Generating embeddings for {len(h1_h2_fragments)} h1/h2 fragments..."
+        )
+        h1_h2_embeddings_df = generate_embeddings_for_fragments(
+            model, features_df, h1_h2_fragments, args
+        )
+        logger.info(
+            f"Generated embeddings for {len(h1_h2_embeddings_df)} h1/h2 fragments"
+        )
+
         if h1_h2_embeddings_df.empty:
             logger.warning("No embeddings generated for h1/h2 fragments")
             return {}
     except Exception as e:
         logger.error(f"Error generating embeddings for h1/h2 fragments: {e}")
         return {}
-    
+
     # Analyze each split contig for chimeric patterns
     for base_contig, halves in split_contigs.items():
-        if not halves['h1'] or not halves['h2']:
+        if not halves["h1"] or not halves["h2"]:
             # Skip if we don't have both halves
             logger.debug(f"Skipping {base_contig}: missing h1 or h2 fragments")
             continue
-            
+
         # Validate that embeddings exist for all fragments
         missing_embeddings = []
-        for fragment_list in [halves['h1'], halves['h2']]:
+        for fragment_list in [halves["h1"], halves["h2"]]:
             for fragment in fragment_list:
                 if fragment not in h1_h2_embeddings_df.index:
                     missing_embeddings.append(fragment)
-        
+
         if missing_embeddings:
-            logger.warning(f"Skipping {base_contig}: missing embeddings for {len(missing_embeddings)} fragments")
+            logger.warning(
+                f"Skipping {base_contig}: missing embeddings for {len(missing_embeddings)} fragments"
+            )
             continue
-        
+
         # Get embeddings for each half
-        h1_embeddings = h1_h2_embeddings_df.loc[halves['h1']]
-        h2_embeddings = h1_h2_embeddings_df.loc[halves['h2']]
-        
+        h1_embeddings = h1_h2_embeddings_df.loc[halves["h1"]]
+        h2_embeddings = h1_h2_embeddings_df.loc[halves["h2"]]
+
         # Calculate mean embeddings for each half
         h1_mean = h1_embeddings.mean(axis=0)
         h2_mean = h2_embeddings.mean(axis=0)
-        
+
         # Perform permutation ANOVA to test for significant differences between halves
         is_possible_chimera, anova_results = _permutation_anova_chimera_test(
             h1_embeddings.values, h2_embeddings.values, n_permutations=1000
         )
-        
+
         # Find cluster assignment for this base contig
         base_contig_cluster = None
-        cluster_row = clusters_df[clusters_df['contig'] == base_contig]
+        cluster_row = clusters_df[clusters_df["contig"] == base_contig]
         if not cluster_row.empty:
-            base_contig_cluster = cluster_row.iloc[0]['cluster']
-        
+            base_contig_cluster = cluster_row.iloc[0]["cluster"]
+
         # Calculate fragment count balance for additional info
-        fragment_ratio = min(len(halves['h1']), len(halves['h2'])) / max(len(halves['h1']), len(halves['h2']))
-        
+        fragment_ratio = min(len(halves["h1"]), len(halves["h2"])) / max(
+            len(halves["h1"]), len(halves["h2"])
+        )
+
         chimera_results[base_contig] = {
-            'h1_fragment_count': int(len(halves['h1'])),
-            'h2_fragment_count': int(len(halves['h2'])),
-            'fragment_ratio': float(fragment_ratio),
-            'cluster_assignment': str(base_contig_cluster) if base_contig_cluster is not None else None,
-            'is_possible_chimera': bool(is_possible_chimera),
-            **anova_results  # Include all ANOVA statistics
+            "h1_fragment_count": int(len(halves["h1"])),
+            "h2_fragment_count": int(len(halves["h2"])),
+            "fragment_ratio": float(fragment_ratio),
+            "cluster_assignment": (
+                str(base_contig_cluster) if base_contig_cluster is not None else None
+            ),
+            "is_possible_chimera": bool(is_possible_chimera),
+            **anova_results,  # Include all ANOVA statistics
         }
-        
+
         if is_possible_chimera:
-            logger.info(f"Possible chimeric contig detected: {base_contig} "
-                       f"(p-value: {anova_results['p_value']:.4f}, "
-                       f"F-stat: {anova_results['f_statistic']:.3f}, "
-                       f"fragment_ratio: {fragment_ratio:.3f})")
-    
+            logger.info(
+                f"Possible chimeric contig detected: {base_contig} "
+                f"(p-value: {anova_results['p_value']:.4f}, "
+                f"F-stat: {anova_results['f_statistic']:.3f}, "
+                f"fragment_ratio: {fragment_ratio:.3f})"
+            )
+
     # Save results only if keeping intermediate files
     if getattr(args, "keep_intermediate", False):
         results_path = os.path.join(args.output, "chimera_detection_results.json")
-        with open(results_path, 'w') as f:
+        with open(results_path, "w") as f:
             json.dump(chimera_results, f, indent=2)
         logger.info(f"Results saved to {results_path}")
-    
-    chimeric_count = sum(1 for r in chimera_results.values() if r['is_possible_chimera'])
-    logger.info(f"Chimera detection complete. Found {chimeric_count} possible chimeric contigs out of {len(chimera_results)} analyzed")
-    
+
+    chimeric_count = sum(
+        1 for r in chimera_results.values() if r["is_possible_chimera"]
+    )
+    logger.info(
+        f"Chimera detection complete. Found {chimeric_count} possible chimeric contigs out of {len(chimera_results)} analyzed"
+    )
+
     return chimera_results
 
 
@@ -814,7 +899,7 @@ def cluster_contigs(embeddings_df, fragments_dict, gene_mappings, args):
     """Main clustering function that orchestrates the clustering process using Greedy Leiden."""
     # Ensure output directory exists for all code paths
     os.makedirs(args.output, exist_ok=True)
-    
+
     bins_path = os.path.join(args.output, "bins.csv")
 
     # Check if bins file already exists
@@ -828,21 +913,22 @@ def cluster_contigs(embeddings_df, fragments_dict, gene_mappings, args):
     # Embeddings are already L2 normalized when saved to CSV
     logger.debug("Using pre-normalized embeddings for clustering...")
     norm_data = embeddings_df.values
-    
+
     # Get contig names correctly
     contig_names = list(embeddings_df.index)
 
     # Log essential data properties
-    logger.info(f"Clustering {len(contig_names)} contigs with {embeddings_df.shape[1]}D embeddings")
+    logger.info(
+        f"Clustering {len(contig_names)} contigs with {embeddings_df.shape[1]}D embeddings"
+    )
 
     # Use Greedy Leiden clustering
     logger.info("Using Greedy Leiden clustering strategy")
-    
+
     # Get parameters from args or defaults
-    greedy_resolutions = getattr(args, 'greedy_resolutions', [0.5, 1.0, 2.0, 5.0])
-    greedy_min_score = getattr(args, 'greedy_min_score', -5.0)
-    greedy_max_contamination = getattr(args, 'greedy_max_contamination', 0.10)
-    
+    greedy_resolutions = getattr(args, "greedy_resolutions", [0.5, 1.0, 2.0, 5.0])
+    greedy_max_contamination = getattr(args, "greedy_max_contamination", 0.10)
+
     cluster_labels = _greedy_leiden_clustering(
         norm_data,
         contig_names=contig_names,
@@ -850,17 +936,18 @@ def cluster_contigs(embeddings_df, fragments_dict, gene_mappings, args):
         k=clustering_manager.graph_manager.k,
         similarity_threshold=clustering_manager.graph_manager.similarity_threshold,
         resolutions=greedy_resolutions,
-        min_score=greedy_min_score,
         max_contamination=greedy_max_contamination,
         random_state=42,
-        n_jobs=getattr(args, 'cores', 1),
-        args=args
+        n_jobs=getattr(args, "cores", 1),
+        args=args,
     )
-    
+
     n_clusters = len(set(cluster_labels)) - (1 if -1 in cluster_labels else 0)
     n_noise = sum(1 for label in cluster_labels if label == -1)
-    cluster_sizes = np.bincount(cluster_labels[cluster_labels >= 0]) if n_clusters > 0 else []
-    
+    cluster_sizes = (
+        np.bincount(cluster_labels[cluster_labels >= 0]) if n_clusters > 0 else []
+    )
+
     formatted_labels = [
         f"bin_{label}" if label != -1 else "noise" for label in cluster_labels
     ]
@@ -893,7 +980,7 @@ def cluster_contigs(embeddings_df, fragments_dict, gene_mappings, args):
 
     # Filter out noise contigs for final bins.csv
     final_bins_df = contig_clusters_df[contig_clusters_df["cluster"] != "noise"].copy()
-    
+
     # Save final bins (excluding noise) - keep only first two columns
     final_bins_df = final_bins_df[["contig", "cluster"]]
     final_bins_df.to_csv(bins_path, index=False)
@@ -903,10 +990,12 @@ def cluster_contigs(embeddings_df, fragments_dict, gene_mappings, args):
     cluster_contig_counts = group_contigs_by_cluster(contig_clusters_df)
 
     # Note about visualization (embeddings.csv is always saved)
-    logger.info("Embeddings saved to embeddings.csv. Use scripts/plot_features.py for UMAP visualization with plotting dependencies.")
+    logger.info(
+        "Embeddings saved to embeddings.csv. Use scripts/plot_features.py for UMAP visualization with plotting dependencies."
+    )
 
     # Perform chimera detection for large contigs
-    if not getattr(args, 'skip_chimera_detection', False):
+    if not getattr(args, "skip_chimera_detection", False):
         logger.info("Running chimera detection on large contigs...")
         chimera_results = detect_chimeric_contigs(embeddings_df, clusters_df, args)
 

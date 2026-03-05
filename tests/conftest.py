@@ -1,11 +1,12 @@
 """Shared test fixtures for REMAG tests."""
 
-import pytest
-import tempfile
 import os
+import tempfile
+from unittest.mock import Mock
+
 import numpy as np
 import pandas as pd
-from unittest.mock import Mock
+import pytest
 import torch
 
 
@@ -35,13 +36,12 @@ def mock_args(temp_dir):
     args.leiden_resolution = 1.0
     # Add greedy clustering parameters
     args.greedy_resolutions = [0.1, 0.5, 1.0, 2.0, 5.0]
-    args.greedy_min_score = -5.0
     args.greedy_max_contamination = 0.1
     # Add rescue parameters
     args.rescue_max_duplication_increase = 5.0
     args.rescue_max_total_duplication = 5.0
     args.skip_rescue = False
-    
+
     args.fasta = "test.fasta"
     return args
 
@@ -53,24 +53,26 @@ def sample_features_df():
     n_samples = 20
     n_kmer_features = 136
     n_coverage_features = 4
-    
+
     # Create realistic k-mer features (0-1 normalized)
     kmer_features = np.random.dirichlet(np.ones(n_kmer_features), size=n_samples)
-    
+
     # Create realistic coverage features (log-normal distribution)
-    coverage_features = np.random.lognormal(mean=1.0, sigma=0.5, size=(n_samples, n_coverage_features))
-    
+    coverage_features = np.random.lognormal(
+        mean=1.0, sigma=0.5, size=(n_samples, n_coverage_features)
+    )
+
     # Combine features
     features = np.column_stack([kmer_features, coverage_features])
-    
+
     # Create index with proper contig naming
     index = [f"contig_{i}.original" for i in range(n_samples)]
-    
+
     # Create column names
     kmer_cols = [f"kmer_{i}" for i in range(n_kmer_features)]
     coverage_cols = [f"coverage_{i}" for i in range(n_coverage_features)]
     columns = kmer_cols + coverage_cols
-    
+
     return pd.DataFrame(features, index=index, columns=columns)
 
 
@@ -80,14 +82,14 @@ def sample_embeddings_df():
     np.random.seed(42)
     n_contigs = 15
     embedding_dim = 64
-    
+
     # Create normalized embeddings
     embeddings = np.random.randn(n_contigs, embedding_dim)
     embeddings = embeddings / np.linalg.norm(embeddings, axis=1, keepdims=True)
-    
+
     index = [f"contig_{i}" for i in range(n_contigs)]
     columns = [f"dim_{i}" for i in range(embedding_dim)]
-    
+
     return pd.DataFrame(embeddings, index=index, columns=columns)
 
 
@@ -98,23 +100,20 @@ def sample_fragments_dict():
     for i in range(10):
         # Create sequences of different lengths
         seq_length = np.random.randint(1000, 5000)
-        sequence = ''.join(np.random.choice(['A', 'T', 'G', 'C'], size=seq_length))
-        
-        fragments[f"contig_{i}.original"] = {
-            "sequence": sequence,
-            "length": seq_length
-        }
-    
+        sequence = "".join(np.random.choice(["A", "T", "G", "C"], size=seq_length))
+
+        fragments[f"contig_{i}.original"] = {"sequence": sequence, "length": seq_length}
+
     return fragments
 
 
 @pytest.fixture
 def mock_torch_device():
     """Mock torch device for testing without GPU dependency."""
-    return torch.device('cpu')
+    return torch.device("cpu")
 
 
-@pytest.fixture  
+@pytest.fixture
 def sample_fasta_content():
     """Create sample FASTA content for testing."""
     return """>test_contig_1
@@ -130,6 +129,6 @@ TTAAGGCCTTAAGGCCTTAAGGCCTTAAGGCCTTAA
 def create_test_fasta(temp_dir, sample_fasta_content):
     """Create a test FASTA file."""
     fasta_path = os.path.join(temp_dir, "test.fasta")
-    with open(fasta_path, 'w') as f:
+    with open(fasta_path, "w") as f:
         f.write(sample_fasta_content)
     return fasta_path

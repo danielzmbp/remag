@@ -416,13 +416,6 @@ def validate_coverage_options(ctx, param, value):
     help="Space-separated list of Leiden resolutions to try in greedy clustering.",
 )
 @click.option(
-    "--greedy-min-score",
-    type=float,
-    default=-5.0,
-    show_default=True,
-    help="Minimum quality score (total_core_genes - 5*Dups) required to accept a bin in greedy clustering.",
-)
-@click.option(
     "--leiden-k-neighbors",
     type=int,
     default=None,
@@ -490,7 +483,6 @@ def main_cli(
     num_augmentations,
     skip_chimera_detection,
     greedy_resolutions,
-    greedy_min_score,
     leiden_k_neighbors,
     leiden_similarity_threshold,
     keep_intermediate,
@@ -641,7 +633,6 @@ def main_cli(
         num_augmentations=num_augmentations,
         skip_chimera_detection=skip_chimera_detection,
         greedy_resolutions=greedy_resolutions,
-        greedy_min_score=greedy_min_score,
         leiden_k_neighbors=effective_k,
         leiden_similarity_threshold=leiden_similarity_threshold,
         keep_intermediate=keep_intermediate,
