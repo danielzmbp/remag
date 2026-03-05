@@ -7,23 +7,23 @@ sequence detection.
 """
 
 import os
-import sys
 import random
-from typing import List, Dict, Tuple
-from itertools import islice
+import sys
 from concurrent.futures import ThreadPoolExecutor
-from functools import partial
+from itertools import islice
+from typing import Dict, List, Tuple
 
-import torch
 import numpy as np
+import torch
 from loguru import logger
 
 # Add compatibility layer for models trained with different module paths
 # This allows loading models that expect 'hyenadna_model' module
-if 'hyenadna_model' not in sys.modules:
+if "hyenadna_model" not in sys.modules:
     try:
         from . import hyenadna_model
-        sys.modules['hyenadna_model'] = hyenadna_model
+
+        sys.modules["hyenadna_model"] = hyenadna_model
     except ImportError:
         pass  # Will fall back to full module path
 
@@ -61,7 +61,9 @@ def sliding_window(sequence: str, window_size: int = 4096, stride: int = 2048):
             break
 
 
-def estimate_window_count(seq_len: int, window_size: int = 4096, stride: int = 2048) -> int:
+def estimate_window_count(
+    seq_len: int, window_size: int = 4096, stride: int = 2048
+) -> int:
     """Estimate how many windows will be generated."""
     if window_size <= 0 or stride <= 0:
         raise ValueError("window_size and stride must be positive")
@@ -76,7 +78,9 @@ def estimate_window_count(seq_len: int, window_size: int = 4096, stride: int = 2
     return full_windows + (1 if has_partial else 0)
 
 
-def generate_random_windows(sequence: str, window_size: int, num_windows: int, seed: int = 42) -> List[str]:
+def generate_random_windows(
+    sequence: str, window_size: int, num_windows: int, seed: int = 42
+) -> List[str]:
     """Generate random windows from a sequence for additional sampling.
 
     Args:
@@ -99,7 +103,7 @@ def generate_random_windows(sequence: str, window_size: int, num_windows: int, s
     rng = random.Random(seed)
     for _ in range(num_windows):
         start = rng.randint(0, max_start)
-        window = sequence[start:start + window_size]
+        window = sequence[start : start + window_size]
         windows.append(window)
 
     return windows
@@ -107,15 +111,16 @@ def generate_random_windows(sequence: str, window_size: int, num_windows: int, s
 
 def _build_window_encoder(tokenizer):
     """Create a fast window encoder for the tokenizer."""
+
     def slow_encoder(windows: List[str]) -> torch.Tensor:
         encoded = tokenizer(
             windows,
-            padding='max_length',
+            padding="max_length",
             truncation=True,
             max_length=getattr(tokenizer, "model_max_length", 4096),
-            return_tensors='pt'
+            return_tensors="pt",
         )
-        return encoded['input_ids']
+        return encoded["input_ids"]
 
     required_attrs = [
         "model_max_length",
@@ -135,7 +140,7 @@ def _build_window_encoder(tokenizer):
     unk_id = int(tokenizer.unk_token_id)
     max_tokens = max_length - 2
 
-    if getattr(tokenizer, "padding_side", "right") != 'left' or max_tokens <= 0:
+    if getattr(tokenizer, "padding_side", "right") != "left" or max_tokens <= 0:
         return slow_encoder
 
     char_to_id: Dict[str, int] = {}
@@ -170,7 +175,7 @@ def _build_window_encoder(tokenizer):
                 available = max_length - end_idx - 1
                 if available > 0:
                     use_tokens = tokens[:available]
-                    input_ids[row, end_idx:end_idx + len(use_tokens)] = torch.tensor(
+                    input_ids[row, end_idx : end_idx + len(use_tokens)] = torch.tensor(
                         use_tokens, dtype=torch.long
                     )
                     end_idx += len(use_tokens)
@@ -207,7 +212,7 @@ class HyenaDNAClassifier:
     def __init__(
         self,
         model_path: str = None,
-        device: str = 'auto',
+        device: str = "auto",
         window_size: int = None,
         stride: int = None,
         batch_size: int = 64,
@@ -238,13 +243,13 @@ class HyenaDNAClassifier:
         self.length_threshold = length_threshold
 
         # Determine device
-        if device == 'auto':
+        if device == "auto":
             if torch.backends.mps.is_available():
-                self.device = 'mps'
+                self.device = "mps"
             elif torch.cuda.is_available():
-                self.device = 'cuda'
+                self.device = "cuda"
             else:
-                self.device = 'cpu'
+                self.device = "cpu"
         else:
             self.device = device
 
@@ -256,36 +261,44 @@ class HyenaDNAClassifier:
             logger.info("Initializing dual-model classifier (1024 + 4096 context)")
 
             # Load small model (1024 context)
-            small_model_path = os.path.join(curr_path, "models", "pytorch_model.bin.20251024")
+            small_model_path = os.path.join(
+                curr_path, "models", "pytorch_model.bin.20251024"
+            )
             if not os.path.exists(small_model_path):
                 raise FileNotFoundError(f"Small model not found: {small_model_path}")
 
             logger.debug(f"Loading small model (1024) from {small_model_path}")
-            self.small_model = torch.load(small_model_path, map_location=self.device, weights_only=False)
+            self.small_model = torch.load(
+                small_model_path, map_location=self.device, weights_only=False
+            )
             self.small_model = self.small_model.to(self.device)
             self.small_model.eval()
 
             # Load large model (4096 context)
-            large_model_path = os.path.join(curr_path, "models", "pytorch_model.bin.20251116.4k")
+            large_model_path = os.path.join(
+                curr_path, "models", "pytorch_model.bin.20251116.4k"
+            )
             if not os.path.exists(large_model_path):
                 raise FileNotFoundError(f"Large model not found: {large_model_path}")
 
             logger.debug(f"Loading large model (4096) from {large_model_path}")
-            self.large_model = torch.load(large_model_path, map_location=self.device, weights_only=False)
+            self.large_model = torch.load(
+                large_model_path, map_location=self.device, weights_only=False
+            )
             self.large_model = self.large_model.to(self.device)
             self.large_model.eval()
 
             # Create tokenizers for both models
             self.small_tokenizer = CharacterTokenizer(
-                characters=['A', 'C', 'G', 'T', 'N'],
+                characters=["A", "C", "G", "T", "N"],
                 model_max_length=1024,
-                padding_side='left',
+                padding_side="left",
             )
 
             self.large_tokenizer = CharacterTokenizer(
-                characters=['A', 'C', 'G', 'T', 'N'],
+                characters=["A", "C", "G", "T", "N"],
                 model_max_length=4096,
-                padding_side='left',
+                padding_side="left",
             )
 
             # Set to None - will be selected dynamically
@@ -297,13 +310,15 @@ class HyenaDNAClassifier:
         else:
             # Single model mode (backward compatibility)
             if model_path is None:
-                model_path = os.path.join(curr_path, "models", "pytorch_model.bin.20251116.4k")
+                model_path = os.path.join(
+                    curr_path, "models", "pytorch_model.bin.20251116.4k"
+                )
                 default_window_size = 4096
                 default_stride = 2048
                 default_max_length = 4096
             else:
                 # Infer parameters from model name
-                if '4k' in model_path or '4096' in model_path:
+                if "4k" in model_path or "4096" in model_path:
                     default_window_size = 4096
                     default_stride = 2048
                     default_max_length = 4096
@@ -316,17 +331,21 @@ class HyenaDNAClassifier:
                 raise FileNotFoundError(f"Model file not found: {model_path}")
 
             logger.debug(f"Loading single model from {model_path}")
-            self.model = torch.load(model_path, map_location=self.device, weights_only=False)
+            self.model = torch.load(
+                model_path, map_location=self.device, weights_only=False
+            )
             self.model = self.model.to(self.device)
             self.model.eval()
 
             self.tokenizer = CharacterTokenizer(
-                characters=['A', 'C', 'G', 'T', 'N'],
+                characters=["A", "C", "G", "T", "N"],
                 model_max_length=default_max_length,
-                padding_side='left',
+                padding_side="left",
             )
 
-            self.window_size = window_size if window_size is not None else default_window_size
+            self.window_size = (
+                window_size if window_size is not None else default_window_size
+            )
             self.stride = stride if stride is not None else default_stride
             self.small_model = None
             self.large_model = None
@@ -435,7 +454,7 @@ class HyenaDNAClassifier:
                         stride = 512  # 50% overlap
                 else:
                     stride = 512
-                model_name = 'small_1024'
+                model_name = "small_1024"
             else:
                 # Large contigs: use 4096 model with standard windowing
                 model = self.large_model
@@ -450,7 +469,7 @@ class HyenaDNAClassifier:
                         stride = 8192  # Large jumps for very long contigs
                 else:
                     stride = 2048
-                model_name = 'large_4096'
+                model_name = "large_4096"
         else:
             # Single model mode
             model = self.model
@@ -464,10 +483,14 @@ class HyenaDNAClassifier:
                     stride = window_size
                 else:
                     stride = window_size * 2
-            model_name = 'single'
+            model_name = "single"
 
         window_iter = sliding_window(sequence, window_size, stride)
-        total_windows = estimate_window_count(seq_len, window_size, stride) if early_stopping else None
+        total_windows = (
+            estimate_window_count(seq_len, window_size, stride)
+            if early_stopping
+            else None
+        )
 
         num_windows = 0
         num_eukaryote = 0
@@ -480,7 +503,9 @@ class HyenaDNAClassifier:
             if not batch:
                 break
 
-            euk_count, prob_total, batch_windows = self._predict_window_stats(batch, model, tokenizer)
+            euk_count, prob_total, batch_windows = self._predict_window_stats(
+                batch, model, tokenizer
+            )
 
             if batch_windows == 0:
                 continue
@@ -504,16 +529,26 @@ class HyenaDNAClassifier:
                     break
 
                 # Low confidence detected - switch to random sampling immediately
-                if confidence < low_confidence_threshold and not uncertainty_detected and seq_len > window_size:
+                if (
+                    confidence < low_confidence_threshold
+                    and not uncertainty_detected
+                    and seq_len > window_size
+                ):
                     uncertainty_detected = True
                     resampled = True
 
                     # Generate random windows and add them to current batch processing
                     # For small contigs, use more random windows for better coverage
-                    num_random = additional_random_windows * 2 if seq_len < self.length_threshold else additional_random_windows
-                    random_windows = generate_random_windows(sequence, window_size, num_random)
-                    euk_count_extra, prob_total_extra, batch_windows_extra = self._predict_window_stats(
-                        random_windows, model, tokenizer
+                    num_random = (
+                        additional_random_windows * 2
+                        if seq_len < self.length_threshold
+                        else additional_random_windows
+                    )
+                    random_windows = generate_random_windows(
+                        sequence, window_size, num_random
+                    )
+                    euk_count_extra, prob_total_extra, batch_windows_extra = (
+                        self._predict_window_stats(random_windows, model, tokenizer)
                     )
 
                     if batch_windows_extra > 0:
@@ -545,9 +580,11 @@ class HyenaDNAClassifier:
         if num_windows == 2 and prob_sum / num_windows in [0.5]:
             # Ambiguous case - add more random windows
             num_additional = 10 if seq_len < self.length_threshold else 6
-            random_windows = generate_random_windows(sequence, window_size, num_additional)
-            euk_count_extra, prob_total_extra, batch_windows_extra = self._predict_window_stats(
-                random_windows, model, tokenizer
+            random_windows = generate_random_windows(
+                sequence, window_size, num_additional
+            )
+            euk_count_extra, prob_total_extra, batch_windows_extra = (
+                self._predict_window_stats(random_windows, model, tokenizer)
             )
             if batch_windows_extra > 0:
                 num_windows += batch_windows_extra
@@ -557,13 +594,13 @@ class HyenaDNAClassifier:
 
         if num_windows == 0:
             return {
-                'prediction': 'non_eukaryote',
-                'eukaryote_prob': 0.0,
-                'confidence': 0.0,
-                'num_windows': 0,
-                'length': seq_len,
-                'resampled': False,
-                'model_used': model_name
+                "prediction": "non_eukaryote",
+                "eukaryote_prob": 0.0,
+                "confidence": 0.0,
+                "num_windows": 0,
+                "length": seq_len,
+                "resampled": False,
+                "model_used": model_name,
             }
 
         # Calculate final results
@@ -576,13 +613,13 @@ class HyenaDNAClassifier:
             confidence = (num_windows - num_eukaryote) / num_windows
 
         return {
-            'prediction': 'eukaryote' if is_eukaryote else 'non_eukaryote',
-            'eukaryote_prob': float(avg_prob),
-            'confidence': float(confidence),
-            'num_windows': num_windows,
-            'length': seq_len,
-            'resampled': resampled,
-            'model_used': model_name
+            "prediction": "eukaryote" if is_eukaryote else "non_eukaryote",
+            "eukaryote_prob": float(avg_prob),
+            "confidence": float(confidence),
+            "num_windows": num_windows,
+            "length": seq_len,
+            "resampled": resampled,
+            "model_used": model_name,
         }
 
     def _classify_single(self, seq):
@@ -591,7 +628,7 @@ class HyenaDNAClassifier:
             return [1.0, 0.0]  # Too short
 
         result = self.predict_contig(seq)
-        euk_prob = result['eukaryote_prob']
+        euk_prob = result["eukaryote_prob"]
         non_euk_prob = 1.0 - euk_prob
         return [non_euk_prob, euk_prob]
 
@@ -616,7 +653,7 @@ class HyenaDNAClassifier:
                 return np.array([[1.0, 0.0]])  # Too short, classify as non-eukaryotic
 
             result = self.predict_contig(sequences)
-            euk_prob = result['eukaryote_prob']
+            euk_prob = result["eukaryote_prob"]
             non_euk_prob = 1.0 - euk_prob
 
             return np.array([[non_euk_prob, euk_prob]])
@@ -633,10 +670,14 @@ class HyenaDNAClassifier:
 
                 results = []
                 with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                    for i, result in enumerate(executor.map(self._classify_single, sequences)):
+                    for i, result in enumerate(
+                        executor.map(self._classify_single, sequences)
+                    ):
                         results.append(result)
                         if (i + 1) % 1000 == 0:
-                            logger.info(f"Classified {i + 1}/{len(sequences)} sequences")
+                            logger.info(
+                                f"Classified {i + 1}/{len(sequences)} sequences"
+                            )
 
                 logger.info(f"Classification complete: {len(sequences)} sequences")
                 return np.array(results)
@@ -652,7 +693,7 @@ class HyenaDNAClassifier:
                         continue
 
                     result = self.predict_contig(seq)
-                    euk_prob = result['eukaryote_prob']
+                    euk_prob = result["eukaryote_prob"]
                     non_euk_prob = 1.0 - euk_prob
                     results.append([non_euk_prob, euk_prob])
 
