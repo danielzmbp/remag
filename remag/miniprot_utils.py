@@ -9,8 +9,9 @@ import json
 import os
 import shutil
 import subprocess
-from tqdm import tqdm
+
 from loguru import logger
+from tqdm import tqdm
 
 from .utils import ContigHeaderMapper, initialize_duplication_columns
 
@@ -20,7 +21,9 @@ def check_miniprot_available():
     return shutil.which("miniprot") is not None
 
 
-def estimate_organisms_from_all_contigs(fragments_dict, args, target_coverage_threshold=0.60, identity_threshold=0.40):
+def estimate_organisms_from_all_contigs(
+    fragments_dict, args, target_coverage_threshold=0.60, identity_threshold=0.40
+):
     """
     Run miniprot on all contigs to estimate the number of organisms based on core gene duplications.
 
@@ -40,7 +43,6 @@ def estimate_organisms_from_all_contigs(fragments_dict, args, target_coverage_th
     cache_path = get_gene_mappings_cache_path(args)
     if os.path.exists(cache_path):
         try:
-            import json
             with open(cache_path, "r") as f:
                 gene_mappings = json.load(f)
 
@@ -50,7 +52,9 @@ def estimate_organisms_from_all_contigs(fragments_dict, args, target_coverage_th
                 for gene_family in genes.keys():
                     gene_counts[gene_family] = gene_counts.get(gene_family, 0) + 1
 
-            logger.info(f"Using cached miniprot results ({len(gene_mappings)} contigs, {len(gene_counts)} core genes)")
+            logger.info(
+                f"Using cached miniprot results ({len(gene_mappings)} contigs, {len(gene_counts)} core genes)"
+            )
             return gene_counts
         except Exception as e:
             logger.warning(f"Failed to load miniprot cache, will re-run: {e}")
@@ -82,7 +86,7 @@ def estimate_organisms_from_all_contigs(fragments_dict, args, target_coverage_th
                 seq = data["sequence"]
                 f.write(f">{header}\n")
                 for i in range(0, len(seq), 60):
-                    f.write(f"{seq[i: i+60]}\n")
+                    f.write(f"{seq[i : i + 60]}\n")
 
         # Run miniprot
         miniprot_output = os.path.join(temp_dir, "all_contigs.paf")
@@ -91,24 +95,26 @@ def estimate_organisms_from_all_contigs(fragments_dict, args, target_coverage_th
         cmd_list = [
             "miniprot",
             "-I",
-            "-t", str(args.cores),
+            "-t",
+            str(args.cores),
             "--outs=0.95",
             all_contigs_fasta,
-            db_path
+            db_path,
         ]
 
         if args.verbose:
             logger.debug(f"Running miniprot command: {' '.join(cmd_list)}")
 
-        with open(miniprot_output, 'w') as stdout_file, \
-             open(miniprot_stderr, 'w') as stderr_file:
-
+        with (
+            open(miniprot_output, "w") as stdout_file,
+            open(miniprot_stderr, "w") as stderr_file,
+        ):
             process = subprocess.run(
                 cmd_list,
                 stdout=stdout_file,
                 stderr=stderr_file,
                 timeout=14400,  # 4 hour timeout
-                check=False
+                check=False,
             )
             result = process.returncode
 
@@ -151,15 +157,20 @@ def estimate_organisms_from_all_contigs(fragments_dict, args, target_coverage_th
                             # Calculate quality metrics
                             query_coverage = (
                                 (query_end - query_start) / query_length
-                                if query_length > 0 else 0
+                                if query_length > 0
+                                else 0
                             )
                             identity = (
                                 matching_bases / alignment_length
-                                if alignment_length > 0 else 0
+                                if alignment_length > 0
+                                else 0
                             )
 
                             # Only consider high-quality alignments
-                            if query_coverage >= target_coverage_threshold and identity >= identity_threshold:
+                            if (
+                                query_coverage >= target_coverage_threshold
+                                and identity >= identity_threshold
+                            ):
                                 score = query_coverage * identity
 
                                 # Initialize contig entry in gene_mappings if needed
@@ -167,12 +178,17 @@ def estimate_organisms_from_all_contigs(fragments_dict, args, target_coverage_th
                                     gene_mappings[target_name] = {}
 
                                 # Keep best alignment per contig-gene pair
-                                if (gene_family_code not in gene_mappings[target_name] or
-                                    score > gene_mappings[target_name][gene_family_code]["score"]):
+                                if (
+                                    gene_family_code not in gene_mappings[target_name]
+                                    or score
+                                    > gene_mappings[target_name][gene_family_code][
+                                        "score"
+                                    ]
+                                ):
                                     gene_mappings[target_name][gene_family_code] = {
                                         "score": score,
                                         "coverage": query_coverage,
-                                        "identity": identity
+                                        "identity": identity,
                                     }
 
                         except (ValueError, IndexError):
@@ -190,16 +206,19 @@ def estimate_organisms_from_all_contigs(fragments_dict, args, target_coverage_th
             counts_list = list(gene_counts.values())
             max_count = max(counts_list)
             median_count = sorted(counts_list)[len(counts_list) // 2]
-            logger.debug(f"Core gene occurrence statistics: max={max_count}, median={median_count}")
+            logger.debug(
+                f"Core gene occurrence statistics: max={max_count}, median={median_count}"
+            )
 
         # Save cache if we have data
         if gene_mappings:
             cache_path = get_gene_mappings_cache_path(args)
             try:
-                import json
                 with open(cache_path, "w") as f:
                     json.dump(gene_mappings, f, indent=2)
-                logger.info(f"Saved gene mappings cache for {len(gene_mappings)} contigs to {cache_path}")
+                logger.info(
+                    f"Saved gene mappings cache for {len(gene_mappings)} contigs to {cache_path}"
+                )
             except Exception as e:
                 logger.warning(f"Failed to save gene mappings cache: {e}")
 
@@ -215,7 +234,9 @@ def estimate_organisms_from_all_contigs(fragments_dict, args, target_coverage_th
             if os.path.exists(temp_dir):
                 try:
                     shutil.rmtree(temp_dir)
-                    logger.debug(f"Cleaned up temporary organism estimation files at: {temp_dir}")
+                    logger.debug(
+                        f"Cleaned up temporary organism estimation files at: {temp_dir}"
+                    )
                 except Exception as e:
                     logger.warning(f"Failed to clean up temporary files: {e}")
         else:
@@ -232,40 +253,45 @@ def get_gene_mappings_cache_path(args):
     return os.path.join(args.output, "gene_contig_mappings.json")
 
 
-def parse_and_cache_paf_files(temp_dir, filtered_clusters, args,
-                            target_coverage_threshold=0.60, identity_threshold=0.40):
+def parse_and_cache_paf_files(
+    temp_dir,
+    filtered_clusters,
+    args,
+    target_coverage_threshold=0.60,
+    identity_threshold=0.40,
+):
     """
     Parse PAF files from miniprot output and cache gene-to-contig mappings.
-    
+
     This function extracts all gene-to-contig mappings from PAF files and stores
     them in a format that can be reused during refinement without re-running miniprot.
-    
+
     Args:
         temp_dir: Directory containing PAF files
         filtered_clusters: Dictionary of cluster_id -> contig_headers
         args: Arguments object
         target_coverage_threshold: Minimum target coverage for alignments
         identity_threshold: Minimum identity for alignments
-    
+
     Returns:
         dict: {contig_name: {gene_family: {score, coverage, identity}}}
     """
     logger.info("Parsing and caching gene-to-contig mappings from PAF files...")
-    
+
     # Global mapping: contig -> gene_family -> alignment_info
     global_gene_mappings = {}
-    
+
     for cluster_id in filtered_clusters.keys():
         paf_file = os.path.join(temp_dir, f"{cluster_id}.paf")
-        
+
         if not os.path.exists(paf_file) or os.path.getsize(paf_file) == 0:
             continue
-            
+
         with open(paf_file, "r") as f:
             for line in f:
                 if line.startswith("#") or not line.strip():
                     continue
-                    
+
                 parts = line.strip().split("\t")
                 if len(parts) >= 11:
                     try:
@@ -289,24 +315,35 @@ def parse_and_cache_paf_files(temp_dir, filtered_clusters, args,
                         # Calculate quality metrics
                         query_coverage = (
                             (query_end - query_start) / query_length
-                            if query_length > 0 else 0
+                            if query_length > 0
+                            else 0
                         )
                         identity = (
                             matching_bases / alignment_length
-                            if alignment_length > 0 else 0
+                            if alignment_length > 0
+                            else 0
                         )
 
                         # Only consider high-quality alignments
-                        if query_coverage >= target_coverage_threshold and identity >= identity_threshold:
+                        if (
+                            query_coverage >= target_coverage_threshold
+                            and identity >= identity_threshold
+                        ):
                             score = query_coverage * identity
-                            
+
                             # Initialize contig entry if needed
                             if target_name not in global_gene_mappings:
                                 global_gene_mappings[target_name] = {}
-                            
+
                             # Keep only the best alignment per contig-gene pair
-                            if (gene_family_code not in global_gene_mappings[target_name] or
-                                score > global_gene_mappings[target_name][gene_family_code]["score"]):
+                            if (
+                                gene_family_code
+                                not in global_gene_mappings[target_name]
+                                or score
+                                > global_gene_mappings[target_name][gene_family_code][
+                                    "score"
+                                ]
+                            ):
                                 global_gene_mappings[target_name][gene_family_code] = {
                                     "score": score,
                                     "coverage": query_coverage,
@@ -315,14 +352,14 @@ def parse_and_cache_paf_files(temp_dir, filtered_clusters, args,
 
                     except (ValueError, IndexError):
                         continue
-    
+
     # Save cache if keeping intermediate files
     if getattr(args, "keep_intermediate", False):
         cache_path = get_gene_mappings_cache_path(args)
         with open(cache_path, "w") as f:
             json.dump(global_gene_mappings, f, indent=2)
         logger.info(f"Gene-to-contig mappings cached to {cache_path}")
-    
+
     logger.info(f"Cached gene mappings for {len(global_gene_mappings)} contigs")
     return global_gene_mappings
 
@@ -330,39 +367,35 @@ def parse_and_cache_paf_files(temp_dir, filtered_clusters, args,
 def check_core_gene_duplications_from_cache(clusters_df, gene_mappings_cache, args):
     """
     Check for duplicated core genes using cached gene-to-contig mappings.
-    
+
     This function reuses existing gene mappings instead of re-running miniprot,
     making it much faster for refinement steps.
-    
+
     Args:
         clusters_df: DataFrame with cluster assignments
         gene_mappings_cache: Dict from parse_and_cache_paf_files()
         args: Arguments object
-        
+
     Returns:
         DataFrame: Updated clusters_df with duplication information
     """
     logger.debug("Checking core gene duplications using cached mappings...")
-    
+
     # Group contigs by cluster efficiently
-    cluster_contig_dict = (
-        clusters_df.groupby("cluster")["contig"]
-        .apply(set)
-        .to_dict()
-    )
-    
+    cluster_contig_dict = clusters_df.groupby("cluster")["contig"].apply(set).to_dict()
+
     duplication_results = {}
-    
+
     for cluster_id, contig_names in cluster_contig_dict.items():
         if cluster_id == "noise":
             continue
-            
+
         # Count gene families present in each contig in this cluster
         contig_genes = {}
         for contig_name in contig_names:
             if contig_name in gene_mappings_cache:
                 contig_genes[contig_name] = set(gene_mappings_cache[contig_name].keys())
-        
+
         # Count total occurrences of each gene family across the cluster
         gene_counts = {}
         for contig, gene_families in contig_genes.items():
@@ -370,7 +403,7 @@ def check_core_gene_duplications_from_cache(clusters_df, gene_mappings_cache, ar
                 if gene_family not in gene_counts:
                     gene_counts[gene_family] = 0
                 gene_counts[gene_family] += 1
-        
+
         # Check for duplications
         duplicated_genes = {
             gene: count for gene, count in gene_counts.items() if count > 1
@@ -386,16 +419,20 @@ def check_core_gene_duplications_from_cache(clusters_df, gene_mappings_cache, ar
             "total_genes_found": len(gene_counts),
             "single_copy_genes_count": single_copy_genes_count,
         }
-    
+
     # Add duplication information to clusters_df
     clusters_df = initialize_duplication_columns(clusters_df)
 
     for cluster_id, result in duplication_results.items():
         mask = clusters_df["cluster"] == cluster_id
         clusters_df.loc[mask, "has_duplicated_core_genes"] = result["has_duplications"]
-        clusters_df.loc[mask, "duplicated_core_genes_count"] = len(result["duplicated_genes"])
+        clusters_df.loc[mask, "duplicated_core_genes_count"] = len(
+            result["duplicated_genes"]
+        )
         clusters_df.loc[mask, "total_core_genes_found"] = result["total_genes_found"]
-        clusters_df.loc[mask, "single_copy_genes_count"] = result["single_copy_genes_count"]
+        clusters_df.loc[mask, "single_copy_genes_count"] = result[
+            "single_copy_genes_count"
+        ]
 
     # Log summary
     bins_with_duplications = sum(
@@ -418,9 +455,13 @@ def check_core_gene_duplications_from_cache(clusters_df, gene_mappings_cache, ar
     return clusters_df
 
 
-def check_core_gene_duplications(clusters_df, fragments_dict, args,
-                                target_coverage_threshold=0.60,
-                                identity_threshold=0.40):
+def check_core_gene_duplications(
+    clusters_df,
+    fragments_dict,
+    args,
+    target_coverage_threshold=0.60,
+    identity_threshold=0.40,
+):
     """
     Check for duplicated core genes using miniprot.
 
@@ -462,14 +503,14 @@ def check_core_gene_duplications(clusters_df, fragments_dict, args,
     # Group contigs by cluster (clusters_df is now contig-level)
     # Use ContigHeaderMapper for efficient lookups
     mapper = ContigHeaderMapper(fragments_dict)
-    
+
     cluster_contig_dict = (
         clusters_df.groupby("cluster")["contig"]
-        .apply(lambda contigs: {
-            mapper.get_header(c) 
-            for c in contigs 
-            if mapper.get_header(c)
-        })
+        .apply(
+            lambda contigs: {
+                mapper.get_header(c) for c in contigs if mapper.get_header(c)
+            }
+        )
         .to_dict()
     )
 
@@ -495,21 +536,22 @@ def check_core_gene_duplications(clusters_df, fragments_dict, args,
                     seq = fragments_dict[header]["sequence"]
                     f.write(f">{header}\n")
                     for i in range(0, len(seq), 60):
-                        f.write(f"{seq[i: i+60]}\n")
+                        f.write(f"{seq[i : i + 60]}\n")
 
             # Run miniprot
             miniprot_output = os.path.join(temp_dir, f"{cluster_id}.paf")
             miniprot_stderr = os.path.join(temp_dir, f"{cluster_id}.stderr")
             db_to_use = db_path  # Use the compressed file directly
-            
+
             # Build secure command list (no shell injection possible)
             cmd_list = [
                 "miniprot",
                 "-I",
-                "-t", str(args.cores),
+                "-t",
+                str(args.cores),
                 "--outs=0.95",
                 bin_fasta,
-                db_to_use
+                db_to_use,
             ]
 
             if args.verbose:
@@ -517,15 +559,16 @@ def check_core_gene_duplications(clusters_df, fragments_dict, args,
 
             try:
                 # Use secure subprocess with proper I/O redirection
-                with open(miniprot_output, 'w') as stdout_file, \
-                     open(miniprot_stderr, 'w') as stderr_file:
-                    
+                with (
+                    open(miniprot_output, "w") as stdout_file,
+                    open(miniprot_stderr, "w") as stderr_file,
+                ):
                     process = subprocess.run(
                         cmd_list,
                         stdout=stdout_file,
                         stderr=stderr_file,
                         timeout=14400,  # 4 hour timeout for large datasets
-                        check=False    # Don't raise exception on non-zero exit
+                        check=False,  # Don't raise exception on non-zero exit
                     )
                     result = process.returncode
                 if result == 0:
@@ -580,7 +623,10 @@ def check_core_gene_duplications(clusters_df, fragments_dict, args,
                                         )
 
                                         # Only consider high-quality alignments with configurable thresholds
-                                        if query_coverage >= target_coverage_threshold and identity >= identity_threshold:
+                                        if (
+                                            query_coverage >= target_coverage_threshold
+                                            and identity >= identity_threshold
+                                        ):
                                             score = query_coverage * identity
                                             key = (
                                                 target_name,
@@ -623,7 +669,9 @@ def check_core_gene_duplications(clusters_df, fragments_dict, args,
                     has_duplications = len(duplicated_genes) > 0
 
                     # Count single-copy genes (appear exactly once)
-                    single_copy_genes_count = sum(1 for count in gene_counts.values() if count == 1)
+                    single_copy_genes_count = sum(
+                        1 for count in gene_counts.values() if count == 1
+                    )
 
                     duplication_results[cluster_id] = {
                         "has_duplications": has_duplications,
@@ -634,14 +682,19 @@ def check_core_gene_duplications(clusters_df, fragments_dict, args,
 
                 else:
                     # Log miniprot error if available
-                    error_msg = f"miniprot failed for {cluster_id} (exit code: {result})"
-                    if os.path.exists(miniprot_stderr) and os.path.getsize(miniprot_stderr) > 0:
+                    error_msg = (
+                        f"miniprot failed for {cluster_id} (exit code: {result})"
+                    )
+                    if (
+                        os.path.exists(miniprot_stderr)
+                        and os.path.getsize(miniprot_stderr) > 0
+                    ):
                         with open(miniprot_stderr, "r") as stderr_file:
                             stderr_content = stderr_file.read().strip()
                             if stderr_content:
                                 error_msg += f" - Error: {stderr_content}"
                     logger.warning(error_msg)
-                    
+
                     duplication_results[cluster_id] = {
                         "has_duplications": False,
                         "duplicated_genes": {},
@@ -660,7 +713,11 @@ def check_core_gene_duplications(clusters_df, fragments_dict, args,
 
         # Parse and cache gene mappings for potential reuse during refinement
         gene_mappings_cache = parse_and_cache_paf_files(
-            temp_dir, filtered_clusters, args, target_coverage_threshold, identity_threshold
+            temp_dir,
+            filtered_clusters,
+            args,
+            target_coverage_threshold,
+            identity_threshold,
         )
 
         # Store cache and duplication results in args for immediate use during refinement
@@ -689,7 +746,9 @@ def check_core_gene_duplications(clusters_df, fragments_dict, args,
             result["duplicated_genes"]
         )
         clusters_df.loc[mask, "total_core_genes_found"] = result["total_genes_found"]
-        clusters_df.loc[mask, "single_copy_genes_count"] = result["single_copy_genes_count"]
+        clusters_df.loc[mask, "single_copy_genes_count"] = result[
+            "single_copy_genes_count"
+        ]
 
     # Log summary
     bins_with_duplications = sum(
