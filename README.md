@@ -179,6 +179,12 @@ remag -f contigs.fasta -c alignments.bam
 
 # Keep intermediate files with -k shorthand
 remag contigs.fasta -c alignments.bam -k
+
+# Only run eukaryotic filtering (skip binning)
+remag contigs.fasta -c alignments.bam --filter-only
+
+# Use single-cell mode (adjusts k-NN and clustering defaults)
+remag contigs.fasta -c alignments.bam -m single-cell
 ```
 
 ### Python module mode
@@ -204,19 +210,18 @@ REMAG uses a sophisticated multi-stage pipeline specifically designed for eukary
 1. **Eukaryotic Filtering**: By default, REMAG automatically filters for eukaryotic contigs using the integrated HyenaDNA LLM-based classifier (can be disabled with `--skip-bacterial-filter`)
 2. **Feature Extraction**: Combines k-mer composition (4-mers) with coverage profiles across multiple samples. Large contigs are split into overlapping fragments for augmentation during training
 3. **Contrastive Learning**: Trains a Siamese neural network using the Barlow Twins self-supervised loss function. This creates embeddings where fragments from the same contig are close together
-4. **Adaptive Resolution**: Automatically determines optimal Leiden clustering resolution by testing multiple resolutions and selecting the one that maximizes individual bin completeness
-5. **Clustering**: Graph-based Leiden clustering on the learned contig embeddings to form bins
-6. **Quality Assessment**: Uses miniprot to align bins against a database of eukaryotic core genes to detect contamination
-7. **Iterative Refinement**: Automatically splits contaminated bins based on core gene duplications, then tests lower resolutions to find the most conservative solution
+4. **Eukaryotic Gene Marker Annotation**: Uses miniprot to annotate contigs with eukaryotic single-copy core genes, providing the quality metrics needed for clustering decisions
+5. **Greedy Clustering**: Iteratively extracts bins using a greedy Leiden approach -- at each step, tests multiple Leiden resolutions on the remaining contigs, selects the single best-quality cluster (by F1 score of completeness vs. contamination), removes it from the graph, and repeats
+6. **Bin Rescue**: Merges fragmented bins into larger bins based on embedding similarity and single-copy gene safety, and rescues unbinned contigs into matching bins
 
 ## Key Features
 
 - **Automatic Eukaryotic Filtering**: The HyenaDNA classifier uses a pre-trained genomic foundation model to identify and retain eukaryotic sequences
 - **Multi-Sample Support**: Can process coverage information from multiple samples (BAM/CRAM files) simultaneously
-- **Adaptive Resolution**: Automatically determines optimal clustering resolution based on bin completeness and contamination
+- **Greedy Multi-Resolution Clustering**: Iteratively extracts bins by testing multiple Leiden resolutions at each step, allowing different bins to use different resolutions for optimal quality
 - **Barlow Twins Loss**: Uses a self-supervised contrastive learning approach that doesn't require negative pairs
 - **Fragment Augmentation**: Large contigs are split into multiple overlapping fragments during training to improve representation learning
-- **Conservative Refinement**: After successful bin refinement, tests lower resolutions to find the most consolidated solution that maintains quality
+- **Bin Rescue**: Merges fragmented bins and rescues unbinned contigs into existing bins based on embedding similarity and single-copy gene safety
 
 ## Options
 
@@ -262,11 +267,12 @@ REMAG produces several output files:
 - `params.json`: Complete run parameters for reproducibility
 - `features.csv`: Extracted k-mer and coverage features
 - `fragments.pkl`: Fragment information used during training
-- `hyenadna_classification_results.csv`: HyenaDNA eukaryotic classification results
-- `organism_estimation_gene_counts.json`: Gene counts used for adaptive resolution determination
-- `refinement_summary.json`: Summary of the bin refinement process
-- `gene_contig_mappings.json`: Cached gene-to-contig mappings for faster refinement
-- `core_gene_duplication_results.json`: Core gene duplication analysis from refinement
+- `*_hyenadna_classification.tsv`: HyenaDNA eukaryotic classification results (tab-separated)
+- `gene_contig_mappings.json`: Cached gene-to-contig mappings for faster processing
+- `core_gene_duplication_results.json`: Core gene duplication analysis
+- `chimera_detection_results.json`: Chimera detection results for large contigs
+- `knn_graph_edges.csv`: k-NN graph edge list used for Leiden clustering
+- `knn_graph_stats.json`: k-NN graph construction statistics
 - `temp_miniprot/`: Temporary directory for miniprot alignments (removed unless --keep-intermediate)
 
 ### Visualization (optional, requires plotting dependencies):
@@ -296,6 +302,7 @@ This creates:
 - igraph (≥0.10.0) - for graph construction in Leiden clustering
 - pandas (≥1.3.0)
 - numpy (≥1.21.0)
+- scipy (≥1.6.0)
 - pysam (≥0.18.0)
 - loguru (≥0.6.0)
 - tqdm (≥4.62.0)
