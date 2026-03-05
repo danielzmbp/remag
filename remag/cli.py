@@ -637,6 +637,7 @@ def main_cli(
         keep_intermediate=keep_intermediate,
         coverage_batch_size=coverage_batch_size,
         hyenadna_batch_size=hyenadna_batch_size,
+        filter_only=filter_only,
     )
     run_remag(args)
 
