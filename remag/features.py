@@ -2,22 +2,23 @@
 Feature extraction module for REMAG
 """
 
-import itertools
 import hashlib
+import itertools
+import os
+import random
+from collections import OrderedDict
+from functools import lru_cache
+from multiprocessing import Pool
+from typing import Dict, List, Optional, Set, Tuple
+
 import numpy as np
 import pandas as pd
 import pysam
-import os
-import random
-from functools import lru_cache
-from collections import OrderedDict
-from multiprocessing import Pool
-from typing import Dict, List, Tuple, Optional, Set
-from tqdm import tqdm
 from loguru import logger
 from sklearn.preprocessing import MinMaxScaler
+from tqdm import tqdm
 
-from .utils import fasta_iter, FragmentDict, CoverageDict
+from .utils import CoverageDict, FragmentDict, fasta_iter
 
 
 @lru_cache(maxsize=None)
@@ -25,9 +26,9 @@ def generate_feature_mapping(kmer_len):
     BASE_COMPLEMENT = {"A": "T", "T": "A", "G": "C", "C": "G"}
     kmer_hash = {}
     counter = 0
-    
-    kmers = [''.join(kmer) for kmer in itertools.product("ATGC", repeat=kmer_len)]
-    
+
+    kmers = ["".join(kmer) for kmer in itertools.product("ATGC", repeat=kmer_len)]
+
     for kmer in kmers:
         if kmer not in kmer_hash:
             kmer_hash[kmer] = counter
@@ -65,7 +66,9 @@ def _calculate_kmer_composition(
                 kmers.append(kmer_dict[kmer])
 
         if kmers:
-            composition[header] = np.bincount(np.array(kmers, dtype=np.int64), minlength=nr_features)
+            composition[header] = np.bincount(
+                np.array(kmers, dtype=np.int64), minlength=nr_features
+            )
         else:
             composition[header] = np.zeros(nr_features, dtype=np.int64)
 
@@ -96,7 +99,13 @@ def get_features_csv_path(output_dir):
     return os.path.join(output_dir, "features.csv")
 
 
-def filter_bacterial_contigs(fasta_file, output_dir, min_contig_length=1000, hyenadna_batch_size=1024, save_filtered_contigs=False):
+def filter_bacterial_contigs(
+    fasta_file,
+    output_dir,
+    min_contig_length=1000,
+    hyenadna_batch_size=1024,
+    save_filtered_contigs=False,
+):
     """
     Filter non-eukaryotic contigs using the HyenaDNA classifier.
     Keeps contigs predicted as eukaryotic with sufficient confidence.
@@ -133,7 +142,7 @@ def filter_bacterial_contigs(fasta_file, output_dir, min_contig_length=1000, hye
             from hyenadna_classifier import HyenaDNAClassifier
 
         classifier = HyenaDNAClassifier(
-            device='auto',
+            device="auto",
             min_contig_length=min_contig_length,
             batch_size=hyenadna_batch_size,
         )
@@ -161,8 +170,9 @@ def filter_bacterial_contigs(fasta_file, output_dir, min_contig_length=1000, hye
         )
         filtered_out_file = open(filtered_out_fasta + ".tmp", "w", encoding="utf-8")
 
-    with open(classification_results, "w", encoding="utf-8") as results_file, \
-         open(temp_fasta, "w", encoding="utf-8") as fasta_out:
+    with open(classification_results, "w", encoding="utf-8") as results_file, open(
+        temp_fasta, "w", encoding="utf-8"
+    ) as fasta_out:
 
         results_file.write(
             "contig_id\tlength\tprediction\teukaryote_prob\tconfidence\tnum_windows\tresampled\n"
@@ -181,11 +191,11 @@ def filter_bacterial_contigs(fasta_file, output_dir, min_contig_length=1000, hye
                 # Get detailed prediction results using predict_contig
                 result = classifier.predict_contig(seq_upper)
 
-                prediction = result['prediction']
-                euk_prob = result['eukaryote_prob']
-                confidence = result['confidence']
-                num_windows = result['num_windows']
-                resampled = result.get('resampled', False)
+                prediction = result["prediction"]
+                euk_prob = result["eukaryote_prob"]
+                confidence = result["confidence"]
+                num_windows = result["num_windows"]
+                resampled = result.get("resampled", False)
 
                 results_file.write(
                     f"{header}\t{len(seq)}\t{prediction}\t{euk_prob:.4f}\t{confidence:.4f}\t{num_windows}\t{resampled}\n"
@@ -246,18 +256,29 @@ def filter_bacterial_contigs(fasta_file, output_dir, min_contig_length=1000, hye
 
 class FragmentProcessor:
     """Handles fragment generation and processing logic."""
-    
-    def __init__(self, min_contig_length: int, num_augmentations: int = 8, max_overlap: float = 0.25):
+
+    def __init__(
+        self,
+        min_contig_length: int,
+        num_augmentations: int = 8,
+        max_overlap: float = 0.25,
+    ):
         self.min_contig_length = min_contig_length
         self.num_augmentations = num_augmentations
         self.max_overlap = max_overlap
-    
-    def generate_fragments(self, sequence: str, header: str) -> list[tuple[str, str, int, int]]:
+
+    def generate_fragments(
+        self, sequence: str, header: str
+    ) -> list[tuple[str, str, int, int]]:
         """Generate fragments for a sequence."""
         return generate_augmented_fragments(
-            sequence, header, self.min_contig_length, self.num_augmentations, self.max_overlap
+            sequence,
+            header,
+            self.min_contig_length,
+            self.num_augmentations,
+            self.max_overlap,
         )
-    
+
     def validate_sequence(self, sequence: str) -> bool:
         """Check if sequence meets minimum length requirements."""
         return len(sequence) >= self.min_contig_length
@@ -398,9 +419,7 @@ def _generate_half_augmentations(
         if rng.choice([True, False]):
             mask_strategy = "both"  # Both edges - more variable
         else:
-            mask_strategy = rng.choice(
-                ["left", "right", "center"]
-            )  # Other strategies
+            mask_strategy = rng.choice(["left", "right", "center"])  # Other strategies
 
         if mask_strategy == "left":
             # Mask from left edge: sequence[mask_size:]
@@ -512,7 +531,7 @@ def get_features(
     min_contig_length: int = 1000,
     cores: int = 16,
     num_augmentations: int = 8,
-    args = None,
+    args=None,
 ) -> Tuple[pd.DataFrame, FragmentDict]:
     """
     Generate k-mer and coverage features for fragments.
@@ -549,19 +568,26 @@ def get_features(
             coverage_batch_size = getattr(args, "coverage_batch_size", 100000)
             if bam_files and not any("_coverage" in col for col in df.columns):
                 needs_recalc = True
-                coverage_calculator = BAMCoverageCalculator(bam_files, cores, coverage_batch_size)
+                coverage_calculator = BAMCoverageCalculator(
+                    bam_files, cores, coverage_batch_size
+                )
             elif tsv_files:
-                expected_cols = [os.path.splitext(os.path.basename(f))[0] for f in tsv_files]
+                expected_cols = [
+                    os.path.splitext(os.path.basename(f))[0] for f in tsv_files
+                ]
                 missing_cols = [col for col in expected_cols if col not in df.columns]
                 if missing_cols:
                     needs_recalc = True
                     coverage_calculator = TSVCoverageCalculator(tsv_files, cores)
-            
+
             if needs_recalc:
                 logger.info("Recalculating coverage...")
                 coverage_df = coverage_calculator.calculate_coverage(fragments_dict)
                 # Remove existing coverage columns and add new ones
-                df = df.drop(columns=[c for c in df.columns if "coverage" in c.lower()], errors="ignore")
+                df = df.drop(
+                    columns=[c for c in df.columns if "coverage" in c.lower()],
+                    errors="ignore",
+                )
                 df = pd.concat([df, coverage_df], axis=1)
                 if getattr(args, "keep_intermediate", False):
                     df.to_csv(features_csv_path)
@@ -582,10 +608,12 @@ def get_features(
 
     # Initialize fragment processor
     fragment_processor = FragmentProcessor(length_threshold, num_augmentations)
-    
+
     # Process sequences and generate fragments
     sequence_count = fragment_count = filtered_count = short_fragment_count = 0
-    logger.debug(f"Using original contig + {num_augmentations} random fragments per contig")
+    logger.debug(
+        f"Using original contig + {num_augmentations} random fragments per contig"
+    )
 
     # Collect all fragment sequences for batch processing
     all_fragments = []
@@ -639,17 +667,21 @@ def get_features(
     coverage_batch_size = getattr(args, "coverage_batch_size", 100000)
     if bam_files:
         logger.debug("Calculating coverage from alignment files...")
-        coverage_calculator = BAMCoverageCalculator(bam_files, cores, coverage_batch_size)
+        coverage_calculator = BAMCoverageCalculator(
+            bam_files, cores, coverage_batch_size
+        )
     elif tsv_files:
         logger.debug("Calculating coverage from TSV files...")
         coverage_calculator = TSVCoverageCalculator(tsv_files, cores)
-    
+
     if coverage_calculator:
         coverage_df = coverage_calculator.calculate_coverage(fragments_dict)
         df = pd.concat([df, coverage_df.reindex(df.index).fillna(0.0)], axis=1)
-        
+
         # Identify fragments with zero coverage but keep them so embeddings can still use k-mer features
-        coverage_columns = [col for col in coverage_df.columns if "coverage" in col.lower()]
+        coverage_columns = [
+            col for col in coverage_df.columns if "coverage" in col.lower()
+        ]
         if coverage_columns:
             zero_coverage_mask = (df[coverage_columns] == 0).all(axis=1)
             zero_count = int(zero_coverage_mask.sum())
@@ -670,19 +702,25 @@ def get_features(
             f"Applied log transformation to {len(coverage_columns)} coverage features"
         )
 
-        logger.debug("Applying global scaling to preserve co-abundance patterns across samples")
+        logger.debug(
+            "Applying global scaling to preserve co-abundance patterns across samples"
+        )
 
         scaler = MinMaxScaler(feature_range=(0, 1))
         df[coverage_columns] = scaler.fit_transform(df[coverage_columns])
-        logger.debug(f"Applied MinMaxScaler (0-1 range) to {len(coverage_columns)} coverage features")
-        
+        logger.debug(
+            f"Applied MinMaxScaler (0-1 range) to {len(coverage_columns)} coverage features"
+        )
+
         # Log sample information for debugging
         sample_names = set()
         for col in coverage_columns:
             if "_coverage" in col:
                 sample_name = col.replace("_coverage", "").replace("_std", "")
                 sample_names.add(sample_name)
-        logger.debug(f"Processing coverage from {len(sample_names)} samples: {sorted(sample_names)}")
+        logger.debug(
+            f"Processing coverage from {len(sample_names)} samples: {sorted(sample_names)}"
+        )
     else:
         logger.info("Using k-mer features only")
 
@@ -708,10 +746,10 @@ def get_features(
 # Coverage calculation classes and helper functions
 class CoverageCalculator:
     """Base class for coverage calculation."""
-    
+
     def __init__(self, cores: int = 16):
         self.cores = cores
-    
+
     def calculate_coverage(self, fragments_dict: FragmentDict) -> pd.DataFrame:
         """Calculate coverage for fragments. Must be implemented by subclasses."""
         raise NotImplementedError
@@ -720,7 +758,9 @@ class CoverageCalculator:
 class BAMCoverageCalculator(CoverageCalculator):
     """Calculate coverage from BAM/CRAM files."""
 
-    def __init__(self, bam_files: List[str], cores: int = 16, coverage_batch_size: int = 100000):
+    def __init__(
+        self, bam_files: List[str], cores: int = 16, coverage_batch_size: int = 100000
+    ):
         super().__init__(cores)
         self.bam_files = bam_files
         self.coverage_batch_size = coverage_batch_size
@@ -734,11 +774,11 @@ class BAMCoverageCalculator(CoverageCalculator):
 
 class TSVCoverageCalculator(CoverageCalculator):
     """Calculate coverage from TSV files."""
-    
+
     def __init__(self, tsv_files: List[str], cores: int = 16):
         super().__init__(cores)
         self.tsv_files = tsv_files
-    
+
     def calculate_coverage(self, fragments_dict: FragmentDict) -> pd.DataFrame:
         """Calculate coverage from TSV files."""
         return calculate_coverage_from_tsv(self.tsv_files, fragments_dict)
@@ -749,15 +789,17 @@ def _validate_alignment_file(alignment_file: str) -> bool:
         logger.error(f"Alignment file not found at {alignment_file}")
         return False
 
-    file_ext = alignment_file.lower().split('.')[-1]
-    
-    if file_ext == 'bam':
+    file_ext = alignment_file.lower().split(".")[-1]
+
+    if file_ext == "bam":
         # Check for .bai index file (both .bam.bai and .bai extensions)
         bai_filepath = alignment_file + ".bai"
         alt_bai_filepath = os.path.splitext(alignment_file)[0] + ".bai"
 
         if not os.path.exists(bai_filepath) and not os.path.exists(alt_bai_filepath):
-            logger.info(f"BAM index (.bai) not found for {alignment_file}, creating index...")
+            logger.info(
+                f"BAM index (.bai) not found for {alignment_file}, creating index..."
+            )
             try:
                 pysam.index(alignment_file)
                 logger.debug(f"BAM index created at {bai_filepath}")
@@ -766,14 +808,16 @@ def _validate_alignment_file(alignment_file: str) -> bool:
                 logger.error(f"Error creating BAM index: {e}")
                 logger.error("Please ensure samtools is installed and in your PATH.")
                 return False
-    
-    elif file_ext == 'cram':
+
+    elif file_ext == "cram":
         # Check for .crai index file (both .cram.crai and .crai extensions)
         crai_filepath = alignment_file + ".crai"
         alt_crai_filepath = os.path.splitext(alignment_file)[0] + ".crai"
 
         if not os.path.exists(crai_filepath) and not os.path.exists(alt_crai_filepath):
-            logger.info(f"CRAM index (.crai) not found for {alignment_file}, creating index...")
+            logger.info(
+                f"CRAM index (.crai) not found for {alignment_file}, creating index..."
+            )
             try:
                 pysam.index(alignment_file)
                 logger.debug(f"CRAM index created at {crai_filepath}")
@@ -782,21 +826,29 @@ def _validate_alignment_file(alignment_file: str) -> bool:
                 logger.error(f"Error creating CRAM index: {e}")
                 logger.error("Please ensure samtools is installed and in your PATH.")
                 return False
-    
+
     else:
-        logger.error(f"Unsupported alignment file format: {alignment_file}. Supported formats: BAM, CRAM")
+        logger.error(
+            f"Unsupported alignment file format: {alignment_file}. Supported formats: BAM, CRAM"
+        )
         return False
 
     return True
 
 
 def _map_fasta_to_bam_refs(
-    fragments_dict: FragmentDict, bam_references: Set[str], disable_progress: bool = False
+    fragments_dict: FragmentDict,
+    bam_references: Set[str],
+    disable_progress: bool = False,
 ) -> Tuple[Dict[str, str], List[str]]:
     bam_ref_map = {}
     unmapped_fasta_headers = []
 
-    iterator = fragments_dict.keys() if disable_progress else tqdm(fragments_dict.keys(), desc="Mapping headers")
+    iterator = (
+        fragments_dict.keys()
+        if disable_progress
+        else tqdm(fragments_dict.keys(), desc="Mapping headers")
+    )
     for original_header in iterator:
         fasta_key = original_header
 
@@ -834,7 +886,9 @@ def _process_contig_coverage_worker(args):
     Returns:
         Tuple of (fragment_coverage, fragment_coverage_std, [])
     """
-    (bam_contig_name, contig_data_list, total_coverage_per_base, bam_contig_length) = args
+    (bam_contig_name, contig_data_list, total_coverage_per_base, bam_contig_length) = (
+        args
+    )
     fragment_coverage = {}
     fragment_coverage_std = {}
 
@@ -850,7 +904,7 @@ def _process_contig_coverage_worker(args):
         # Collect all fragment coordinates and headers for vectorized processing
         fragment_coords = []
         fragment_headers = []
-        
+
         for original_header, data in contig_data_list:
             fragment_info = data.get("fragment_info", {})
 
@@ -889,7 +943,6 @@ def _process_contig_coverage_worker(args):
                 effective_start = max(0, start_pos)
                 effective_end = min(end_pos, bam_contig_length)
 
-
                 if effective_start >= effective_end:
                     fragment_coverage[fragment_header] = 0.0
                     fragment_coverage_std[fragment_header] = 0.0
@@ -905,12 +958,12 @@ def _process_contig_coverage_worker(args):
                 means, stds = _calculate_fragment_stats_vectorized(
                     total_coverage_per_base, fragment_coords
                 )
-                
+
                 # Assign results
                 for i, fragment_header in enumerate(fragment_headers):
                     fragment_coverage[fragment_header] = float(means[i])
                     fragment_coverage_std[fragment_header] = float(stds[i])
-                    
+
             except Exception as e:
                 logger.warning(f"Error in vectorized coverage calculation: {e}")
                 # Fallback to individual processing
@@ -919,13 +972,19 @@ def _process_contig_coverage_worker(args):
                     try:
                         fragment_coverage_array = total_coverage_per_base[start:end]
                         if fragment_coverage_array.size > 0:
-                            fragment_coverage[fragment_header] = float(np.mean(fragment_coverage_array))
-                            fragment_coverage_std[fragment_header] = float(np.std(fragment_coverage_array))
+                            fragment_coverage[fragment_header] = float(
+                                np.mean(fragment_coverage_array)
+                            )
+                            fragment_coverage_std[fragment_header] = float(
+                                np.std(fragment_coverage_array)
+                            )
                         else:
                             fragment_coverage[fragment_header] = 0.0
                             fragment_coverage_std[fragment_header] = 0.0
                     except Exception as e2:
-                        logger.warning(f"Error calculating coverage for fragment {fragment_header}: {e2}")
+                        logger.warning(
+                            f"Error calculating coverage for fragment {fragment_header}: {e2}"
+                        )
                         fragment_coverage[fragment_header] = 0.0
                         fragment_coverage_std[fragment_header] = 0.0
 
@@ -944,36 +1003,38 @@ def _calculate_fragment_stats_vectorized(coverage_array, fragment_coords):
     """
     Calculate mean and std coverage for multiple fragments using vectorized operations.
     This is significantly faster than individual fragment processing.
-    
+
     Args:
         coverage_array: numpy array with coverage per base
         fragment_coords: List of (start, end) tuples for fragment coordinates
-    
+
     Returns:
         Tuple of (means_array, stds_array)
     """
     n_fragments = len(fragment_coords)
     means = np.zeros(n_fragments, dtype=np.float64)
     stds = np.zeros(n_fragments, dtype=np.float64)
-    
+
     # For small numbers of fragments, individual processing might be faster
     if n_fragments < 10:
         for i, (start, end) in enumerate(fragment_coords):
             fragment_coverage = coverage_array[start:end]
             if len(fragment_coverage) > 0:
                 means[i] = np.mean(fragment_coverage)
-                stds[i] = np.std(fragment_coverage) if len(fragment_coverage) > 1 else 0.0
+                stds[i] = (
+                    np.std(fragment_coverage) if len(fragment_coverage) > 1 else 0.0
+                )
             else:
                 means[i] = 0.0
                 stds[i] = 0.0
         return means, stds
-    
+
     # For larger numbers of fragments, use advanced indexing for speedup
     try:
         all_indices = []
         fragment_starts = []
         fragment_lengths = []
-        
+
         for start, end in fragment_coords:
             length = end - start
             if length > 0:
@@ -983,43 +1044,43 @@ def _calculate_fragment_stats_vectorized(coverage_array, fragment_coords):
             else:
                 fragment_starts.append(0)
                 fragment_lengths.append(0)
-        
+
         if all_indices:
             # Extract all fragment data at once using advanced indexing
             all_fragment_data = coverage_array[all_indices]
-            
+
             # Prepare arrays for reduceat
             fragment_lengths_arr = np.array(fragment_lengths)
             cumulative_indices_arr = np.cumsum([0] + fragment_lengths[:-1])
-            
+
             # Only process non-empty fragments
             valid_mask = fragment_lengths_arr > 0
-            
+
             if np.any(valid_mask):
                 valid_indices = cumulative_indices_arr[valid_mask]
                 valid_lengths = fragment_lengths_arr[valid_mask]
-                
+
                 # Calculate sums using reduceat
                 # reduceat computes sum[indices[i]:indices[i+1]]
                 # For the last segment, it goes to the end of the array, which is exactly what we want
                 # as all_fragment_data is perfectly packed with only valid fragments
                 sums = np.add.reduceat(all_fragment_data, valid_indices)
                 means_valid = sums / valid_lengths
-                
+
                 # Calculate stds: sqrt(mean(x^2) - mean(x)^2)
                 sums_sq = np.add.reduceat(all_fragment_data**2, valid_indices)
-                vars_valid = (sums_sq / valid_lengths) - (means_valid ** 2)
-                
+                vars_valid = (sums_sq / valid_lengths) - (means_valid**2)
+
                 # Handle numerical precision issues
                 vars_valid = np.maximum(vars_valid, 0)
                 stds_valid = np.sqrt(vars_valid)
-                
+
                 # Map back to full arrays
                 means[valid_mask] = means_valid
                 stds[valid_mask] = stds_valid
-        
+
         return means, stds
-        
+
     except (IndexError, ValueError, ZeroDivisionError) as e:
         # Fallback to individual processing if vectorized approach fails
         logger.debug(f"Vectorized processing failed, using fallback: {e}")
@@ -1027,7 +1088,9 @@ def _calculate_fragment_stats_vectorized(coverage_array, fragment_coords):
             fragment_coverage = coverage_array[start:end]
             if len(fragment_coverage) > 0:
                 means[i] = np.mean(fragment_coverage)
-                stds[i] = np.std(fragment_coverage) if len(fragment_coverage) > 1 else 0.0
+                stds[i] = (
+                    np.std(fragment_coverage) if len(fragment_coverage) > 1 else 0.0
+                )
             else:
                 means[i] = 0.0
                 stds[i] = 0.0
@@ -1035,7 +1098,11 @@ def _calculate_fragment_stats_vectorized(coverage_array, fragment_coords):
 
 
 def calculate_fragment_coverage(
-    bam_file: str, fragments_dict: FragmentDict, cores: int = 16, coverage_batch_size: int = 100000, disable_progress: bool = False
+    bam_file: str,
+    fragments_dict: FragmentDict,
+    cores: int = 16,
+    coverage_batch_size: int = 100000,
+    disable_progress: bool = False,
 ) -> Tuple[CoverageDict, CoverageDict]:
     """Calculate average coverage and standard deviation for each fragment."""
     fragment_coverage: CoverageDict = {}
@@ -1074,7 +1141,9 @@ def calculate_fragment_coverage(
 
             # Process coverage data in batches to reduce memory usage
             # Calculate total bases to estimate memory requirements
-            total_bases = sum(bam_lengths.get(contig, 0) for contig in contig_fragments.keys())
+            total_bases = sum(
+                bam_lengths.get(contig, 0) for contig in contig_fragments.keys()
+            )
 
             # Use batching if total data size is large (>1GB of coverage data estimated)
             # Each base takes ~4 bytes for coverage array, so 250M bases ≈ 1GB
@@ -1089,10 +1158,16 @@ def calculate_fragment_coverage(
             num_batches = (len(contig_list) + batch_size - 1) // batch_size
 
             if use_batching:
-                logger.debug(f"Processing {len(contig_fragments)} contigs ({total_bases:,} total bases) in {num_batches} batches (batch_size={batch_size}) using {cores} cores...")
-                logger.debug(f"Estimated peak memory for coverage: ~{(batch_size * (total_bases / len(contig_fragments)) * 4 / 1e9):.2f} GB per batch")
+                logger.debug(
+                    f"Processing {len(contig_fragments)} contigs ({total_bases:,} total bases) in {num_batches} batches (batch_size={batch_size}) using {cores} cores..."
+                )
+                logger.debug(
+                    f"Estimated peak memory for coverage: ~{(batch_size * (total_bases / len(contig_fragments)) * 4 / 1e9):.2f} GB per batch"
+                )
             else:
-                logger.debug(f"Processing {len(contig_fragments)} contigs ({total_bases:,} total bases) using {cores} cores...")
+                logger.debug(
+                    f"Processing {len(contig_fragments)} contigs ({total_bases:,} total bases) using {cores} cores..."
+                )
 
             results = []
             for batch_idx in range(num_batches):
@@ -1100,11 +1175,20 @@ def calculate_fragment_coverage(
                 end_idx = min(start_idx + batch_size, len(contig_list))
                 batch_contigs = contig_list[start_idx:end_idx]
 
-                logger.debug(f"Processing batch {batch_idx + 1}/{num_batches} ({len(batch_contigs)} contigs)...")
+                logger.debug(
+                    f"Processing batch {batch_idx + 1}/{num_batches} ({len(batch_contigs)} contigs)..."
+                )
 
                 # Load coverage data only for this batch
                 coverage_data = {}
-                batch_iterator = batch_contigs if disable_progress else tqdm(batch_contigs, desc=f"Loading coverage (batch {batch_idx + 1}/{num_batches})")
+                batch_iterator = (
+                    batch_contigs
+                    if disable_progress
+                    else tqdm(
+                        batch_contigs,
+                        desc=f"Loading coverage (batch {batch_idx + 1}/{num_batches})",
+                    )
+                )
                 for bam_contig_name, _ in batch_iterator:
                     bam_contig_length = bam_lengths.get(bam_contig_name)
                     if bam_contig_length is None:
@@ -1119,9 +1203,14 @@ def calculate_fragment_coverage(
                             quality_threshold=0,
                         )
                         total_coverage_per_base = np.sum(coverage_arrays, axis=0)
-                        coverage_data[bam_contig_name] = (total_coverage_per_base, bam_contig_length)
+                        coverage_data[bam_contig_name] = (
+                            total_coverage_per_base,
+                            bam_contig_length,
+                        )
                     except Exception as e:
-                        logger.warning(f"Error loading coverage for contig {bam_contig_name}: {e}")
+                        logger.warning(
+                            f"Error loading coverage for contig {bam_contig_name}: {e}"
+                        )
                         coverage_data[bam_contig_name] = (None, None)
 
                 # Process this batch with pre-loaded coverage data
@@ -1137,7 +1226,9 @@ def calculate_fragment_coverage(
 
                 with Pool(processes=cores) as pool:
                     if disable_progress:
-                        batch_results = list(pool.imap(_process_contig_coverage_worker, worker_args))
+                        batch_results = list(
+                            pool.imap(_process_contig_coverage_worker, worker_args)
+                        )
                     else:
                         batch_results = list(
                             tqdm(
@@ -1167,6 +1258,7 @@ def calculate_fragment_coverage(
 
     except Exception as e:
         import traceback
+
         logger.error(f"Error processing alignment file {bam_file}: {e}")
         logger.debug(f"Traceback: {traceback.format_exc()}")
 
@@ -1175,9 +1267,13 @@ def calculate_fragment_coverage(
             if bamfile:
                 total_mapped = bamfile.mapped
                 total_unmapped = bamfile.unmapped
-                logger.error(f"BAM file stats: {total_mapped} mapped reads, {total_unmapped} unmapped reads")
+                logger.error(
+                    f"BAM file stats: {total_mapped} mapped reads, {total_unmapped} unmapped reads"
+                )
                 if total_mapped == 0:
-                    logger.error(f"BAM file {bam_file} has NO mapped reads - cannot calculate coverage")
+                    logger.error(
+                        f"BAM file {bam_file} has NO mapped reads - cannot calculate coverage"
+                    )
         except:
             logger.error(f"Could not read BAM file stats for {bam_file}")
 
@@ -1273,7 +1369,9 @@ def _get_total_mapped_reads(bam_file: str) -> int:
     try:
         with pysam.AlignmentFile(bam_file, "rb") as bamfile:
             total_mapped = bamfile.mapped
-            logger.debug(f"Alignment file {os.path.basename(bam_file)}: {total_mapped:,} mapped reads")
+            logger.debug(
+                f"Alignment file {os.path.basename(bam_file)}: {total_mapped:,} mapped reads"
+            )
             return total_mapped
     except Exception as e:
         logger.error(f"Error calculating mapped reads for {bam_file}: {e}")
@@ -1281,10 +1379,13 @@ def _get_total_mapped_reads(bam_file: str) -> int:
 
 
 def calculate_coverage_from_multiple_bams(
-    bam_files: List[str], fragments_dict: FragmentDict, cores: int = 16, coverage_batch_size: int = 100000
+    bam_files: List[str],
+    fragments_dict: FragmentDict,
+    cores: int = 16,
+    coverage_batch_size: int = 100000,
 ) -> pd.DataFrame:
     """Calculate coverage from multiple alignment files (BAM/CRAM), creating separate columns for each sample.
-    
+
     Coverage is normalized by total mapped reads per sample to account for different
     sequencing depths, then scaled per-sample to preserve within-sample relationships.
 
@@ -1312,7 +1413,11 @@ def calculate_coverage_from_multiple_bams(
 
     # Use tqdm for progress if processing multiple files
     disable_inner_progress = len(bam_files) > 1
-    bam_iterator = tqdm(bam_files, desc="Processing BAM files") if disable_inner_progress else bam_files
+    bam_iterator = (
+        tqdm(bam_files, desc="Processing BAM files")
+        if disable_inner_progress
+        else bam_files
+    )
 
     # Pre-calculate unique sample names to avoid collisions
     sample_names_map = {}
@@ -1322,7 +1427,9 @@ def calculate_coverage_from_multiple_bams(
             sample_names_map[f] = os.path.splitext(os.path.basename(f))[0]
     else:
         # Handle duplicates by including parent directory
-        logger.info("Duplicate alignment filenames detected. Using parent directory to disambiguate sample names.")
+        logger.info(
+            "Duplicate alignment filenames detected. Using parent directory to disambiguate sample names."
+        )
         for f in bam_files:
             base = os.path.splitext(os.path.basename(f))[0]
             parent = os.path.basename(os.path.dirname(f))
@@ -1339,7 +1446,11 @@ def calculate_coverage_from_multiple_bams(
 
             # Calculate coverage for this alignment file
             coverage, coverage_std = calculate_fragment_coverage(
-                bam_file, fragments_dict, cores, coverage_batch_size, disable_progress=disable_inner_progress
+                bam_file,
+                fragments_dict,
+                cores,
+                coverage_batch_size,
+                disable_progress=disable_inner_progress,
             )
             if total_mapped_reads <= 0:
                 logger.warning(
@@ -1371,8 +1482,12 @@ def calculate_coverage_from_multiple_bams(
             mean_col_name = f"{sample_name}_coverage"
             std_col_name = f"{sample_name}_coverage_std"
 
-            mean_series = pd.Series(normalized_coverage, name=mean_col_name, dtype=float)
-            std_series = pd.Series(normalized_coverage_std, name=std_col_name, dtype=float)
+            mean_series = pd.Series(
+                normalized_coverage, name=mean_col_name, dtype=float
+            )
+            std_series = pd.Series(
+                normalized_coverage_std, name=std_col_name, dtype=float
+            )
 
             all_coverage_series.extend([mean_series, std_series])
 

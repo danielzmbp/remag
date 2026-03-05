@@ -12,6 +12,7 @@ Usage:
 import argparse
 import os
 import sys
+
 import numpy as np
 import pandas as pd
 
@@ -35,10 +36,13 @@ except ImportError:
             if len(parts) >= 3 and parts[-2].startswith("h"):
                 return ".".join(parts[:-2])
         return name
+
+
 try:
-    import matplotlib.pyplot as plt
     import matplotlib.cm as cm
+    import matplotlib.pyplot as plt
     import umap
+
     HAS_PLOTTING = True
 except ImportError:
     HAS_PLOTTING = False
@@ -49,17 +53,17 @@ except ImportError:
 
 def load_embeddings(features_file):
     """Load embeddings from CSV or numpy archive."""
-    if features_file.endswith('.csv'):
+    if features_file.endswith(".csv"):
         # Load from CSV file (REMAG default format)
         df = pd.read_csv(features_file, index_col=0)
         embeddings = df.values
         contig_names = df.index.tolist()
-    elif features_file.endswith('.npz'):
+    elif features_file.endswith(".npz"):
         # Load from numpy archive
         data = np.load(features_file)
-        if 'embeddings' in data:
-            embeddings = data['embeddings']
-            contig_names = data['contig_names'] if 'contig_names' in data else None
+        if "embeddings" in data:
+            embeddings = data["embeddings"]
+            contig_names = data["contig_names"] if "contig_names" in data else None
         else:
             # Fallback: assume first array is embeddings
             keys = list(data.keys())
@@ -67,7 +71,7 @@ def load_embeddings(features_file):
             contig_names = data[keys[1]] if len(keys) > 1 else None
     else:
         raise ValueError("Unsupported file format. Use .csv or .npz files.")
-    
+
     return embeddings, contig_names
 
 
@@ -77,56 +81,58 @@ def create_umap_projection(embeddings, n_components=2, random_state=42):
         n_components=n_components,
         random_state=random_state,
         n_neighbors=15,
-        min_dist=0.1
+        min_dist=0.1,
     )
     projection = reducer.fit_transform(embeddings)
     return projection
 
 
-def plot_umap_embeddings(embeddings, contig_names=None, clusters_df=None, output_dir="."):
+def plot_umap_embeddings(
+    embeddings, contig_names=None, clusters_df=None, output_dir="."
+):
     """Create UMAP plot of embeddings with optional cluster coloring."""
     if not HAS_PLOTTING:
         print("Plotting libraries not available")
         return
-    
+
     # Create UMAP projection
     print("Creating UMAP projection...")
     umap_coords = create_umap_projection(embeddings)
-    
+
     # Save UMAP coordinates to CSV
     umap_df = pd.DataFrame(
-        umap_coords, 
+        umap_coords,
         columns=["UMAP1", "UMAP2"],
-        index=contig_names if contig_names is not None else range(len(embeddings))
+        index=contig_names if contig_names is not None else range(len(embeddings)),
     )
-    
+
     # Add cluster information if available
     if clusters_df is not None and contig_names is not None:
         # Create mapping from contig to cluster
-        contig_to_cluster = dict(zip(clusters_df['contig'], clusters_df['cluster']))
-        
+        contig_to_cluster = dict(zip(clusters_df["contig"], clusters_df["cluster"]))
+
         # Map clusters to UMAP data (handle fragment names)
         umap_clusters = []
         original_names = [extract_base_contig_name(name) for name in contig_names]
-        
+
         for original_name in original_names:
             cluster = contig_to_cluster.get(original_name, "noise")
             umap_clusters.append(cluster)
-        
+
         umap_df["cluster"] = umap_clusters
-    
+
     # Save UMAP coordinates
     umap_coords_path = os.path.join(output_dir, "umap_coordinates.csv")
     umap_df.to_csv(umap_coords_path)
     print(f"UMAP coordinates saved to: {umap_coords_path}")
-    
+
     # Create plot
     plt.figure(figsize=(12, 8))
-    
+
     if clusters_df is not None and contig_names is not None:
         # Color by clusters
         cluster_assignments = umap_df["cluster"].values
-        
+
         # Plot noise points
         noise_mask = cluster_assignments == "noise"
         if np.any(noise_mask):
@@ -134,12 +140,12 @@ def plot_umap_embeddings(embeddings, contig_names=None, clusters_df=None, output
             plt.scatter(
                 umap_coords[noise_mask, 0],
                 umap_coords[noise_mask, 1],
-                c='lightgray',
+                c="lightgray",
                 alpha=0.5,
                 s=20,
-                label=f'Noise ({noise_count})'
+                label=f"Noise ({noise_count})",
             )
-        
+
         # Get actual cluster IDs (non-noise)
         actual_clusters = [c for c in cluster_assignments if c != "noise"]
         if actual_clusters:
@@ -147,7 +153,7 @@ def plot_umap_embeddings(embeddings, contig_names=None, clusters_df=None, output
                 unique_clusters = sorted(set(actual_clusters))
             except (ValueError, TypeError):
                 unique_clusters = list(set(actual_clusters))
-            
+
             # Use tab20 colormap for better cluster distinction
             n_clusters = len(unique_clusters)
             if n_clusters <= 20:
@@ -156,7 +162,7 @@ def plot_umap_embeddings(embeddings, contig_names=None, clusters_df=None, output
                 # Cycle through tab20 colors for more than 20 clusters
                 base_colors = cm.tab20(np.linspace(0, 1, 20))
                 colors = [base_colors[i % 20] for i in range(n_clusters)]
-            
+
             for i, cluster_id in enumerate(unique_clusters):
                 cluster_mask = cluster_assignments == cluster_id
                 cluster_count = cluster_mask.sum()
@@ -166,63 +172,66 @@ def plot_umap_embeddings(embeddings, contig_names=None, clusters_df=None, output
                     c=[colors[i]],
                     s=30,
                     alpha=0.7,
-                    label=f'{cluster_id} ({cluster_count})'
+                    label=f"{cluster_id} ({cluster_count})",
                 )
-            
+
             plt.legend(bbox_to_anchor=(1.05, 1), loc="upper left")
         elif not noise_mask.any():
             print("Warning: No clusters or noise found in data")
     else:
         # Simple scatter plot without clustering
-        plt.scatter(umap_coords[:, 0], umap_coords[:, 1], 
-                   c='blue', alpha=0.6, s=20)
-    
+        plt.scatter(umap_coords[:, 0], umap_coords[:, 1], c="blue", alpha=0.6, s=20)
+
     plt.title("UMAP projection of contig embeddings")
     plt.xlabel("UMAP1")
     plt.ylabel("UMAP2")
-    
+
     plt.tight_layout()
     plot_path = os.path.join(output_dir, "umap_plot.pdf")
     plt.savefig(plot_path, bbox_inches="tight", dpi=300)
     plt.close()
-    
+
     print(f"UMAP plot saved to: {plot_path}")
 
 
 def main():
     parser = argparse.ArgumentParser(description="Plot REMAG features and embeddings")
-    parser.add_argument("--features", "-f", required=True,
-                       help="Path to features/embeddings file (.csv or .npz)")
-    parser.add_argument("--clusters", "-c", 
-                       help="Path to clusters CSV file (optional)")
-    parser.add_argument("--output", "-o", default=".",
-                       help="Output directory for plots")
-    
+    parser.add_argument(
+        "--features",
+        "-f",
+        required=True,
+        help="Path to features/embeddings file (.csv or .npz)",
+    )
+    parser.add_argument("--clusters", "-c", help="Path to clusters CSV file (optional)")
+    parser.add_argument(
+        "--output", "-o", default=".", help="Output directory for plots"
+    )
+
     args = parser.parse_args()
-    
+
     if not HAS_PLOTTING:
         print("Error: Required plotting libraries not available")
         print("Please install with: pip install matplotlib umap-learn")
         return 1
-    
+
     # Load data
     print(f"Loading embeddings from {args.features}")
     embeddings, contig_names = load_embeddings(args.features)
     print(f"Loaded {len(embeddings)} embeddings with dimension {embeddings.shape[1]}")
-    
+
     clusters_df = None
     if args.clusters:
         print(f"Loading clusters from {args.clusters}")
         clusters_df = pd.read_csv(args.clusters)
         print(f"Loaded {len(clusters_df)} cluster assignments")
-    
+
     # Create output directory
     os.makedirs(args.output, exist_ok=True)
-    
+
     # Generate plots
     print("Creating UMAP visualization...")
     plot_umap_embeddings(embeddings, contig_names, clusters_df, args.output)
-    
+
     print("Plotting complete!")
     return 0
 
