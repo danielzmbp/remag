@@ -105,7 +105,6 @@ click.rich_click.OPTION_GROUPS = {
             "options": [
                 "--min-cluster-size",
                 "--greedy-resolutions",
-                "--greedy-min-score",
                 "--leiden-k-neighbors",
                 "--leiden-similarity-threshold",
             ],

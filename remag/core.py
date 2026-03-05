@@ -6,15 +6,20 @@ import json
 import os
 import sys
 from importlib.metadata import version
+
 from loguru import logger
 
-from .utils import setup_logging
-from .features import filter_bacterial_contigs, get_features
-from .models import train_siamese_network, generate_embeddings
 from .clustering import cluster_contigs
-from .miniprot_utils import check_core_gene_duplications, check_core_gene_duplications_from_cache, get_gene_mappings_cache_path
-from .rescue import rescue_fragmented_bins # Import the new rescue function
+from .features import filter_bacterial_contigs, get_features
+from .miniprot_utils import (
+    check_core_gene_duplications,
+    check_core_gene_duplications_from_cache,
+    get_gene_mappings_cache_path,
+)
+from .models import generate_embeddings, train_siamese_network
 from .output import save_clusters_as_fasta
+from .rescue import rescue_fragmented_bins  # Import the new rescue function
+from .utils import setup_logging
 
 
 def main(args):
@@ -26,13 +31,10 @@ def main(args):
     except Exception as e:
         logger.error(f"Failed to initialize output directory: {e}")
         sys.exit(1)
-    
+
     if getattr(args, "keep_intermediate", False):
         params_path = os.path.join(args.output, "params.json")
-        params = {
-            "version": version("remag"),
-            **vars(args)
-        }
+        params = {"version": version("remag"), **vars(args)}
         with open(params_path, "w", encoding="utf-8") as f:
             json.dump(params, f, indent=4)
         logger.debug(f"Run parameters saved to {params_path}")
@@ -54,7 +56,9 @@ def main(args):
 
     # If user only wants filtering, exit early
     if getattr(args, "filter_only", False):
-        logger.info("Filter-only mode enabled; skipping feature generation and binning.")
+        logger.info(
+            "Filter-only mode enabled; skipping feature generation and binning."
+        )
         return
 
     # Generate all features with full augmentations upfront
@@ -91,29 +95,32 @@ def main(args):
     # Generate gene mappings for greedy clustering
     logger.info("Generating gene mappings for greedy clustering...")
     try:
-        from .miniprot_utils import estimate_organisms_from_all_contigs, get_gene_mappings_cache_path
-        
+        from .miniprot_utils import (
+            estimate_organisms_from_all_contigs,
+            get_gene_mappings_cache_path,
+        )
+
         # Check if cache exists
         cache_path = get_gene_mappings_cache_path(args)
         gene_mappings = {}
-        
+
         if os.path.exists(cache_path):
             logger.info(f"Loading existing gene mappings from {cache_path}")
-            with open(cache_path, 'r') as f:
+            with open(cache_path, "r") as f:
                 gene_mappings = json.load(f)
         else:
             logger.info("Running miniprot to generate gene mappings...")
             _ = estimate_organisms_from_all_contigs(fragments_dict, args)
-            
+
             # Reload from the newly created file
             if os.path.exists(cache_path):
-                with open(cache_path, 'r') as f:
+                with open(cache_path, "r") as f:
                     gene_mappings = json.load(f)
             else:
                 logger.warning("Gene mappings cache not found after miniprot run.")
-                
+
         logger.info(f"Loaded {len(gene_mappings)} contig gene mappings")
-        
+
         # Store in args for later use
         args._gene_mappings_cache = gene_mappings
 
@@ -123,7 +130,9 @@ def main(args):
         gene_mappings = {}
 
     try:
-        clusters_df = cluster_contigs(embeddings_df, fragments_dict, gene_mappings, args)
+        clusters_df = cluster_contigs(
+            embeddings_df, fragments_dict, gene_mappings, args
+        )
     except Exception as e:
         logger.error(f"Failed to cluster contigs: {e}")
         sys.exit(1)
@@ -132,15 +141,15 @@ def main(args):
     logger.info("Checking for duplicated core genes...")
 
     # Use the gene mappings we already loaded for greedy clustering
-    gene_mappings_cache = args._gene_mappings_cache if hasattr(args, '_gene_mappings_cache') else None
+    gene_mappings_cache = (
+        args._gene_mappings_cache if hasattr(args, "_gene_mappings_cache") else None
+    )
 
     # Use cached approach if available, otherwise run miniprot
     if gene_mappings_cache is not None:
         try:
             clusters_df = check_core_gene_duplications_from_cache(
-                clusters_df,
-                gene_mappings_cache,
-                args
+                clusters_df, gene_mappings_cache, args
             )
             # Store cache in args for refinement
             args._gene_mappings_cache = gene_mappings_cache
@@ -152,7 +161,7 @@ def main(args):
                 fragments_dict,
                 args,
                 target_coverage_threshold=0.55,
-                identity_threshold=0.35
+                identity_threshold=0.35,
             )
     else:
         clusters_df = check_core_gene_duplications(
@@ -160,13 +169,10 @@ def main(args):
             fragments_dict,
             args,
             target_coverage_threshold=0.55,
-            identity_threshold=0.35
+            identity_threshold=0.35,
         )
 
-    refinement_summary = {}
-    # Refinement step removed for greedy clustering workflow
-
-    # --- NEW: Run rescue step ---
+    # --- Run rescue step ---
     if not getattr(args, "skip_rescue", False):
         logger.info("Applying bin rescue strategy...")
         clusters_df = rescue_fragmented_bins(
@@ -174,18 +180,14 @@ def main(args):
             embeddings_df,
             fragments_dict,
             args,
-            similarity_threshold=0.70, # Based on our proof of concept
-            max_duplication_increase=getattr(args, "rescue_max_duplication_increase", 5.0),
-            max_total_duplication=getattr(args, "rescue_max_total_duplication", 5.0)
+            similarity_threshold=0.70,  # Based on our proof of concept
+            max_duplication_increase=getattr(
+                args, "rescue_max_duplication_increase", 5.0
+            ),
+            max_total_duplication=getattr(args, "rescue_max_total_duplication", 5.0),
         )
     else:
         logger.info("Skipping rescue step")
-
-
-    if refinement_summary and getattr(args, "keep_intermediate", False):
-        refinement_summary_path = os.path.join(args.output, "refinement_summary.json")
-        with open(refinement_summary_path, "w", encoding="utf-8") as f:
-            json.dump(refinement_summary, f, indent=2)
 
     # Save updated bins.csv with refined cluster assignments (excluding noise)
     logger.info("Saving final bins.csv with refined cluster assignments...")
@@ -195,7 +197,7 @@ def main(args):
     final_bins_df = final_bins_df[["contig", "cluster"]]
 
     valid_bins = save_clusters_as_fasta(clusters_df, fragments_dict, args)
-    
+
     # Filter bins to only include contigs from valid bins (those that meet minimum size)
     logger.info("Filtering bins.csv to match saved bins...")
     filtered_bins_df = final_bins_df[final_bins_df["cluster"].isin(valid_bins)]
