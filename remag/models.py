@@ -4,20 +4,21 @@ Neural network models for REMAG
 
 import copy
 import itertools
-import numpy as np
 import os
 import random
 import re
 
+import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader
-from tqdm import tqdm
 from loguru import logger
-from .utils import get_torch_device
+from torch.utils.data import DataLoader, Dataset
+from tqdm import tqdm
+
 from .losses import BarlowTwinsLoss
+from .utils import get_torch_device
 
 
 def seed_worker(worker_id):
@@ -58,13 +59,13 @@ def set_random_seeds(seed=42):
 
 class EarlyStoppingManager:
     """Manages early stopping logic during training."""
-    
+
     def __init__(self, patience=20):
         self.patience = patience
         self.best_loss = float("inf")
         self.best_model_state = None
         self.epochs_no_improve = 0
-    
+
     def check_improvement(self, current_loss, model_state):
         """Check if current loss is an improvement and update state."""
         if current_loss < self.best_loss:
@@ -75,11 +76,11 @@ class EarlyStoppingManager:
         else:
             self.epochs_no_improve += 1
             return False
-    
+
     def should_stop(self):
         """Check if training should stop based on patience."""
         return self.epochs_no_improve >= self.patience
-    
+
     def get_best_state(self):
         """Get the best model state and loss."""
         return self.best_model_state, self.best_loss
@@ -87,19 +88,19 @@ class EarlyStoppingManager:
 
 class LearningRateScheduler:
     """Handles learning rate scheduling setup."""
-    
+
     @staticmethod
     def create_warmup_cosine_scheduler(optimizer, args):
         """Create a warmup + cosine annealing scheduler."""
-        base_learning_rate = getattr(args, 'base_learning_rate', 0.0025)
+        base_learning_rate = getattr(args, "base_learning_rate", 0.0025)
         scaled_lr = (args.batch_size / 256) * base_learning_rate * 0.2
         warmup_epochs = 10
         warmup_start_lr = scaled_lr * 0.1
-        
+
         # Update optimizer's initial learning rate
         for param_group in optimizer.param_groups:
-            param_group['lr'] = warmup_start_lr
-        
+            param_group["lr"] = warmup_start_lr
+
         def warmup_lambda(epoch):
             if epoch < warmup_epochs:
                 target_multiplier = scaled_lr / warmup_start_lr
@@ -114,8 +115,10 @@ class LearningRateScheduler:
                 max_multiplier = scaled_lr / warmup_start_lr
                 min_multiplier = (scaled_lr * min_lr_factor) / warmup_start_lr
                 cosine_factor = 0.5 * (1 + np.cos(np.pi * cosine_epoch / cosine_total))
-                return min_multiplier + (max_multiplier - min_multiplier) * cosine_factor
-        
+                return (
+                    min_multiplier + (max_multiplier - min_multiplier) * cosine_factor
+                )
+
         return optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=warmup_lambda)
 
 
@@ -134,8 +137,7 @@ class TrainingManager:
         np.random.seed(42)
 
         dataset = SequenceDataset(
-            features_df,
-            max_positive_pairs=self.args.max_positive_pairs
+            features_df, max_positive_pairs=self.args.max_positive_pairs
         )
 
         # Automatically adjust batch size if dataset is too small
@@ -156,7 +158,9 @@ class TrainingManager:
             "worker_init_fn": seed_worker,
         }
         if self.device.type == "cuda":
-            dataloader_kwargs["num_workers"] = self.args.cores if self.args.cores > 0 else 4
+            dataloader_kwargs["num_workers"] = (
+                self.args.cores if self.args.cores > 0 else 4
+            )
             dataloader_kwargs["pin_memory"] = True
 
         dataloader = DataLoader(dataset, **dataloader_kwargs)
@@ -165,7 +169,9 @@ class TrainingManager:
             model.parameters(), lr=1e-4, weight_decay=0.05, betas=(0.9, 0.95)
         )
 
-        scheduler = LearningRateScheduler.create_warmup_cosine_scheduler(optimizer, self.args)
+        scheduler = LearningRateScheduler.create_warmup_cosine_scheduler(
+            optimizer, self.args
+        )
 
         # Use BarlowTwinsLoss for contrastive learning
         lambda_param = getattr(self.args, "barlow_lambda", 5e-3)
@@ -173,7 +179,7 @@ class TrainingManager:
         logger.info(f"Using BarlowTwinsLoss (lambda={lambda_param})")
 
         return dataloader, optimizer, scheduler, criterion
-    
+
     def train_epoch(self, model, dataloader, optimizer, criterion):
         """Train for one epoch and return average loss."""
         model.train()
@@ -195,9 +201,11 @@ class TrainingManager:
             output1, output2 = model(features1, features2)
 
             # Compute Barlow Twins loss
-            is_last_batch = (batch_idx == len(dataloader) - 1)
+            is_last_batch = batch_idx == len(dataloader) - 1
             if is_last_batch:
-                loss, matrix_stats = criterion(output1, output2, base_ids, return_stats=True)
+                loss, matrix_stats = criterion(
+                    output1, output2, base_ids, return_stats=True
+                )
             else:
                 loss = criterion(output1, output2, base_ids)
 
@@ -232,7 +240,9 @@ class AdaptiveDropout(nn.Module):
         normalized_var = torch.sigmoid(input_var * self.adaptation_factor)
 
         # Higher variance = higher dropout (less reliable features)
-        adaptive_rate = self.base_rate + (self.max_rate - self.base_rate) * normalized_var
+        adaptive_rate = (
+            self.base_rate + (self.max_rate - self.base_rate) * normalized_var
+        )
 
         # Apply dropout with adaptive rates
         dropout_mask = torch.bernoulli(1 - adaptive_rate)
@@ -255,13 +265,21 @@ class EnhancedFusionLayer(nn.Module):
     COMPRESSOR_OUTPUT_MULTIPLIER = 2
     INTERACTION_HIDDEN_MULTIPLIER = 3
     INTERACTION_INTERMEDIATE_MULTIPLIER = 2
-    FINAL_FUSION_INPUT_MULTIPLIER = 4  # gated_kmer + gated_coverage + interaction + alignment
+    FINAL_FUSION_INPUT_MULTIPLIER = (
+        4  # gated_kmer + gated_coverage + interaction + alignment
+    )
     FINAL_FUSION_HIDDEN_MULTIPLIER = 2
     RESIDUAL_WEIGHT_INIT = 0.5
     ADAPTIVE_DROPOUT_MAX_MULTIPLIER = 2.0
 
-    def __init__(self, kmer_dim, coverage_dim, embedding_dim,
-                 num_heads=DEFAULT_NUM_HEADS, dropout=DEFAULT_DROPOUT):
+    def __init__(
+        self,
+        kmer_dim,
+        coverage_dim,
+        embedding_dim,
+        num_heads=DEFAULT_NUM_HEADS,
+        dropout=DEFAULT_DROPOUT,
+    ):
         super(EnhancedFusionLayer, self).__init__()
 
         self.embedding_dim = embedding_dim
@@ -272,37 +290,48 @@ class EnhancedFusionLayer(nn.Module):
 
         # Bidirectional cross-attention
         self.kmer_to_coverage_attn = nn.MultiheadAttention(
-            embed_dim=embedding_dim, num_heads=num_heads, dropout=dropout, batch_first=True
+            embed_dim=embedding_dim,
+            num_heads=num_heads,
+            dropout=dropout,
+            batch_first=True,
         )
         self.coverage_to_kmer_attn = nn.MultiheadAttention(
-            embed_dim=embedding_dim, num_heads=num_heads, dropout=dropout, batch_first=True
+            embed_dim=embedding_dim,
+            num_heads=num_heads,
+            dropout=dropout,
+            batch_first=True,
         )
-
 
         # Gated fusion mechanism
         self.kmer_gate = nn.Sequential(
             nn.Linear(embedding_dim * self.GATE_INPUT_MULTIPLIER, embedding_dim),
-            nn.Sigmoid()
+            nn.Sigmoid(),
         )
         self.coverage_gate = nn.Sequential(
             nn.Linear(embedding_dim * self.GATE_INPUT_MULTIPLIER, embedding_dim),
-            nn.Sigmoid()
+            nn.Sigmoid(),
         )
 
         # Multi-scale feature fusion (all project back to embedding_dim for consistent concatenation)
-        self.multi_scale_fusion = nn.ModuleList([
-            nn.Sequential(
-                nn.Linear(embedding_dim, embedding_dim // 2),
-                nn.ReLU(),
-                nn.Linear(embedding_dim // 2, embedding_dim)  # Project back to common dim
-            ),
-            nn.Linear(embedding_dim, embedding_dim),  # Identity scale
-            nn.Sequential(
-                nn.Linear(embedding_dim, embedding_dim * 2),
-                nn.ReLU(),
-                nn.Linear(embedding_dim * 2, embedding_dim)  # Project back to common dim
-            )
-        ])
+        self.multi_scale_fusion = nn.ModuleList(
+            [
+                nn.Sequential(
+                    nn.Linear(embedding_dim, embedding_dim // 2),
+                    nn.ReLU(),
+                    nn.Linear(
+                        embedding_dim // 2, embedding_dim
+                    ),  # Project back to common dim
+                ),
+                nn.Linear(embedding_dim, embedding_dim),  # Identity scale
+                nn.Sequential(
+                    nn.Linear(embedding_dim, embedding_dim * 2),
+                    nn.ReLU(),
+                    nn.Linear(
+                        embedding_dim * 2, embedding_dim
+                    ),  # Project back to common dim
+                ),
+            ]
+        )
 
         # Batch normalization and residual connections
         self.batch_norm1 = nn.BatchNorm1d(embedding_dim)
@@ -311,36 +340,54 @@ class EnhancedFusionLayer(nn.Module):
 
         # Multi-scale compressor to reduce dimensions for interaction module
         self.multi_scale_compressor = nn.Sequential(
-            nn.Linear(embedding_dim * self.MULTI_SCALE_CONCAT_MULTIPLIER, embedding_dim * self.COMPRESSOR_HIDDEN_MULTIPLIER),
+            nn.Linear(
+                embedding_dim * self.MULTI_SCALE_CONCAT_MULTIPLIER,
+                embedding_dim * self.COMPRESSOR_HIDDEN_MULTIPLIER,
+            ),
             nn.BatchNorm1d(embedding_dim * self.COMPRESSOR_HIDDEN_MULTIPLIER),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(embedding_dim * self.COMPRESSOR_HIDDEN_MULTIPLIER, embedding_dim * self.COMPRESSOR_OUTPUT_MULTIPLIER)
+            nn.Linear(
+                embedding_dim * self.COMPRESSOR_HIDDEN_MULTIPLIER,
+                embedding_dim * self.COMPRESSOR_OUTPUT_MULTIPLIER,
+            ),
         )
 
         # Feature interaction module
         self.interaction_module = nn.Sequential(
-            nn.Linear(embedding_dim * self.COMPRESSOR_OUTPUT_MULTIPLIER, embedding_dim * self.INTERACTION_HIDDEN_MULTIPLIER),
+            nn.Linear(
+                embedding_dim * self.COMPRESSOR_OUTPUT_MULTIPLIER,
+                embedding_dim * self.INTERACTION_HIDDEN_MULTIPLIER,
+            ),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(embedding_dim * self.INTERACTION_HIDDEN_MULTIPLIER, embedding_dim * self.INTERACTION_INTERMEDIATE_MULTIPLIER),
+            nn.Linear(
+                embedding_dim * self.INTERACTION_HIDDEN_MULTIPLIER,
+                embedding_dim * self.INTERACTION_INTERMEDIATE_MULTIPLIER,
+            ),
             nn.ReLU(),
-            nn.Linear(embedding_dim * self.INTERACTION_INTERMEDIATE_MULTIPLIER, embedding_dim)
+            nn.Linear(
+                embedding_dim * self.INTERACTION_INTERMEDIATE_MULTIPLIER, embedding_dim
+            ),
         )
 
         # Adaptive dropout
         self.adaptive_dropout = AdaptiveDropout(
-            base_rate=dropout,
-            max_rate=dropout * self.ADAPTIVE_DROPOUT_MAX_MULTIPLIER
+            base_rate=dropout, max_rate=dropout * self.ADAPTIVE_DROPOUT_MAX_MULTIPLIER
         )
 
         # Final fusion MLP with improved architecture
         self.fusion_mlp = nn.Sequential(
-            nn.Linear(embedding_dim * self.FINAL_FUSION_INPUT_MULTIPLIER, embedding_dim * self.FINAL_FUSION_HIDDEN_MULTIPLIER),
+            nn.Linear(
+                embedding_dim * self.FINAL_FUSION_INPUT_MULTIPLIER,
+                embedding_dim * self.FINAL_FUSION_HIDDEN_MULTIPLIER,
+            ),
             nn.BatchNorm1d(embedding_dim * self.FINAL_FUSION_HIDDEN_MULTIPLIER),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(embedding_dim * self.FINAL_FUSION_HIDDEN_MULTIPLIER, embedding_dim),
+            nn.Linear(
+                embedding_dim * self.FINAL_FUSION_HIDDEN_MULTIPLIER, embedding_dim
+            ),
             nn.BatchNorm1d(embedding_dim),
             nn.ReLU(),
         )
@@ -351,23 +398,33 @@ class EnhancedFusionLayer(nn.Module):
     def forward(self, kmer_features, coverage_features):
         # Input validation
         if kmer_features.dim() != 2 or coverage_features.dim() != 2:
-            raise ValueError(f"Expected 2D tensors, got kmer: {kmer_features.dim()}D, "
-                           f"coverage: {coverage_features.dim()}D")
+            raise ValueError(
+                f"Expected 2D tensors, got kmer: {kmer_features.dim()}D, "
+                f"coverage: {coverage_features.dim()}D"
+            )
 
         if kmer_features.size(0) != coverage_features.size(0):
-            raise ValueError(f"Batch size mismatch: kmer {kmer_features.size(0)} "
-                           f"vs coverage {coverage_features.size(0)}")
+            raise ValueError(
+                f"Batch size mismatch: kmer {kmer_features.size(0)} "
+                f"vs coverage {coverage_features.size(0)}"
+            )
 
         if kmer_features.size(1) != self.kmer_proj.in_features:
-            raise ValueError(f"K-mer feature dimension mismatch: expected "
-                           f"{self.kmer_proj.in_features}, got {kmer_features.size(1)}")
+            raise ValueError(
+                f"K-mer feature dimension mismatch: expected "
+                f"{self.kmer_proj.in_features}, got {kmer_features.size(1)}"
+            )
 
         if coverage_features.size(1) != self.coverage_proj.in_features:
-            raise ValueError(f"Coverage feature dimension mismatch: expected "
-                           f"{self.coverage_proj.in_features}, got {coverage_features.size(1)}")
+            raise ValueError(
+                f"Coverage feature dimension mismatch: expected "
+                f"{self.coverage_proj.in_features}, got {coverage_features.size(1)}"
+            )
 
         if self.debug_counter % 100 == 0:
-            logger.debug(f"Fusion input shapes - kmer: {kmer_features.shape}, coverage: {coverage_features.shape}")
+            logger.debug(
+                f"Fusion input shapes - kmer: {kmer_features.shape}, coverage: {coverage_features.shape}"
+            )
 
         batch_size = kmer_features.size(0)
 
@@ -400,22 +457,33 @@ class EnhancedFusionLayer(nn.Module):
         # Debugging: Print gate weights (rate limited)
         self.debug_counter += 1
         if self.debug_counter % 100 == 0:
-            logger.debug(f"DEBUG: K-mer Gate Weight: Mean={kmer_gate_weight.mean().item():.4f}, Std={kmer_gate_weight.std().item():.4f}")
-            logger.debug(f"DEBUG: Coverage Gate Weight: Mean={coverage_gate_weight.mean().item():.4f}, Std={coverage_gate_weight.std().item():.4f}")
+            logger.debug(
+                f"DEBUG: K-mer Gate Weight: Mean={kmer_gate_weight.mean().item():.4f}, Std={kmer_gate_weight.std().item():.4f}"
+            )
+            logger.debug(
+                f"DEBUG: Coverage Gate Weight: Mean={coverage_gate_weight.mean().item():.4f}, Std={coverage_gate_weight.std().item():.4f}"
+            )
 
         # Apply gates
-        gated_kmer = kmer_gate_weight * kmer_proj + (1 - kmer_gate_weight) * kmer_attended
-        gated_coverage = coverage_gate_weight * coverage_proj + (1 - coverage_gate_weight) * coverage_attended
+        gated_kmer = (
+            kmer_gate_weight * kmer_proj + (1 - kmer_gate_weight) * kmer_attended
+        )
+        gated_coverage = (
+            coverage_gate_weight * coverage_proj
+            + (1 - coverage_gate_weight) * coverage_attended
+        )
 
         # Apply batch normalization with improved residual connections
         # Use learnable weighting with better gradient flow
         residual_weight_clamped = torch.clamp(self.residual_weight, min=0.1, max=0.9)
 
         gated_kmer = self.batch_norm1(
-            (1 - residual_weight_clamped) * gated_kmer + residual_weight_clamped * kmer_proj
+            (1 - residual_weight_clamped) * gated_kmer
+            + residual_weight_clamped * kmer_proj
         )
         gated_coverage = self.batch_norm2(
-            (1 - residual_weight_clamped) * gated_coverage + residual_weight_clamped * coverage_proj
+            (1 - residual_weight_clamped) * gated_coverage
+            + residual_weight_clamped * coverage_proj
         )
 
         # Multi-scale feature processing
@@ -438,12 +506,15 @@ class EnhancedFusionLayer(nn.Module):
         interaction_features = self.adaptive_dropout(interaction_features)
 
         # Final fusion with all components
-        final_features = torch.cat([
-            gated_kmer,
-            gated_coverage,
-            interaction_features,
-            kmer_attended + coverage_attended  # Cross-modal alignment signal
-        ], dim=1)
+        final_features = torch.cat(
+            [
+                gated_kmer,
+                gated_coverage,
+                interaction_features,
+                kmer_attended + coverage_attended,  # Cross-modal alignment signal
+            ],
+            dim=1,
+        )
 
         # Final MLP
         output = self.fusion_mlp(final_features)
@@ -457,11 +528,11 @@ class EnhancedFusionLayer(nn.Module):
 class SiameseNetwork(nn.Module):
     def __init__(self, n_kmer_features, n_coverage_features, embedding_dim=128):
         super(SiameseNetwork, self).__init__()
-        
+
         self.n_kmer_features = n_kmer_features
         self.n_coverage_features = n_coverage_features
         self.has_coverage = n_coverage_features > 0
-        
+
         # Separate encoders for k-mer and coverage features
         # Using LeakyReLU in encoders to prevent dead neurons during feature extraction
         self.kmer_encoder = nn.Sequential(
@@ -473,7 +544,7 @@ class SiameseNetwork(nn.Module):
             nn.BatchNorm1d(128),
             nn.LeakyReLU(),
         )
-        
+
         if self.has_coverage:
             # Adaptively size the coverage encoder based on number of samples
             # Assume ~2 features per sample (mean + std), so n_samples ≈ n_coverage_features / 2
@@ -497,10 +568,12 @@ class SiameseNetwork(nn.Module):
                 # >10 samples: >20 features → 256 → 128
                 coverage_hidden1 = 256
                 coverage_hidden2 = 128
-                
-            logger.debug(f"Coverage encoder sized for ~{n_samples_estimate} samples: "
-                        f"{n_coverage_features} -> {coverage_hidden1} -> {coverage_hidden2}")
-            
+
+            logger.debug(
+                f"Coverage encoder sized for ~{n_samples_estimate} samples: "
+                f"{n_coverage_features} -> {coverage_hidden1} -> {coverage_hidden2}"
+            )
+
             self.coverage_encoder = nn.Sequential(
                 nn.Linear(n_coverage_features, coverage_hidden1),
                 nn.BatchNorm1d(coverage_hidden1),
@@ -510,17 +583,17 @@ class SiameseNetwork(nn.Module):
                 nn.BatchNorm1d(coverage_hidden2),
                 nn.LeakyReLU(),
             )
-            
+
             # Store final coverage dimension for fusion layer
             self.coverage_final_dim = coverage_hidden2
-            
+
             # Enhanced fusion layer with bidirectional attention and gated fusion
             self.fusion_layer = EnhancedFusionLayer(
                 kmer_dim=128,
                 coverage_dim=self.coverage_final_dim,
                 embedding_dim=embedding_dim,
                 num_heads=4,
-                dropout=0.1
+                dropout=0.1,
             )
         else:
             # No coverage features - use a simple projection
@@ -545,14 +618,14 @@ class SiameseNetwork(nn.Module):
     def _encode_features(self, x):
         """Internal method to encode features using appropriate architecture"""
         # Split input into k-mer and coverage features
-        kmer_features = x[:, :self.n_kmer_features]
+        kmer_features = x[:, : self.n_kmer_features]
 
         # Encode k-mer features
         kmer_encoded = self.kmer_encoder(kmer_features)
 
         if self.has_coverage:
             # Normal path with coverage features
-            coverage_features = x[:, self.n_kmer_features:]
+            coverage_features = x[:, self.n_kmer_features :]
             coverage_encoded = self.coverage_encoder(coverage_features)
 
             # Use fusion layer to combine k-mer and coverage encodings
@@ -570,14 +643,14 @@ class SiameseNetwork(nn.Module):
             tuple: (kmer_encoded, coverage_encoded) or (kmer_encoded, None) if no coverage
         """
         # Split input into k-mer and coverage features
-        kmer_features = x[:, :self.n_kmer_features]
+        kmer_features = x[:, : self.n_kmer_features]
 
         # Encode k-mer features
         kmer_encoded = self.kmer_encoder(kmer_features)
 
         if self.has_coverage:
             # Encode coverage features
-            coverage_features = x[:, self.n_kmer_features:]
+            coverage_features = x[:, self.n_kmer_features :]
             coverage_encoded = self.coverage_encoder(coverage_features)
             return kmer_encoded, coverage_encoded
         else:
@@ -630,7 +703,9 @@ class SequenceDataset(Dataset):
             if len(indices) > 1
         }
 
-        logger.debug(f"Filtered to {len(self.contig_to_fragment_indices)} contigs with multiple fragments (removed {original_count - len(self.contig_to_fragment_indices)})")
+        logger.debug(
+            f"Filtered to {len(self.contig_to_fragment_indices)} contigs with multiple fragments (removed {original_count - len(self.contig_to_fragment_indices)})"
+        )
 
         if not self.contig_to_fragment_indices:
             raise ValueError(
@@ -655,7 +730,9 @@ class SequenceDataset(Dataset):
             # Match patterns: .original, .h1.N, .h2.N, .h1, .h2, or .N (where N is a number)
             # Updated to handle both .h1/.h2 with and without fragment numbers
             # Use non-greedy (.+?) to avoid matching the dot before the suffix
-            match = re.match(r"(.+?)\.(?:h[12](?:\.(\d+))?|(\d+)|original)$", fragment_header)
+            match = re.match(
+                r"(.+?)\.(?:h[12](?:\.(\d+))?|(\d+)|original)$", fragment_header
+            )
             if match:
                 base_name = match.group(1)
             else:
@@ -699,7 +776,7 @@ def train_siamese_network(features_df, args):
         args: Arguments object with training parameters
     """
     # Set random seeds for reproducible training
-    seed = getattr(args, 'random_seed', 42)
+    seed = getattr(args, "random_seed", 42)
     set_random_seeds(seed)
 
     model_path = get_model_path(args)
@@ -708,19 +785,23 @@ def train_siamese_network(features_df, args):
     n_kmer_features = 136
     total_features = features_df.shape[1]
     n_coverage_features = total_features - n_kmer_features
-    
-    logger.info(f"Using dual-encoder architecture: {n_kmer_features} k-mer + {n_coverage_features} coverage features")
+
+    logger.info(
+        f"Using dual-encoder architecture: {n_kmer_features} k-mer + {n_coverage_features} coverage features"
+    )
 
     # Load existing model if available
     if os.path.exists(model_path):
         logger.info(f"Loading existing model from {model_path}")
         device = get_torch_device()
         model = SiameseNetwork(
-            n_kmer_features=n_kmer_features, 
+            n_kmer_features=n_kmer_features,
             n_coverage_features=n_coverage_features,
-            embedding_dim=args.embedding_dim
+            embedding_dim=args.embedding_dim,
         ).to(device)
-        model.load_state_dict(torch.load(model_path, map_location=device, weights_only=False))
+        model.load_state_dict(
+            torch.load(model_path, map_location=device, weights_only=False)
+        )
         return model
 
     device = get_torch_device()
@@ -729,12 +810,14 @@ def train_siamese_network(features_df, args):
     model = SiameseNetwork(
         n_kmer_features=n_kmer_features,
         n_coverage_features=n_coverage_features,
-        embedding_dim=args.embedding_dim
+        embedding_dim=args.embedding_dim,
     ).to(device)
 
     # Initialize training manager and set up training
     trainer = TrainingManager(args)
-    dataloader, optimizer, scheduler, criterion = trainer.setup_training(model, features_df)
+    dataloader, optimizer, scheduler, criterion = trainer.setup_training(
+        model, features_df
+    )
 
     # Check if dataloader is empty (dataset too small)
     if len(dataloader) == 0:
@@ -749,17 +832,21 @@ def train_siamese_network(features_df, args):
 
     # Training loop
     # Only show progress bar in verbose mode
-    if getattr(args, 'verbose', False):
+    if getattr(args, "verbose", False):
         epoch_progress = tqdm(range(args.epochs), desc="Training Progress")
     else:
         epoch_progress = range(args.epochs)
 
     for epoch in epoch_progress:
-        avg_loss, matrix_stats = trainer.train_epoch(model, dataloader, optimizer, criterion)
+        avg_loss, matrix_stats = trainer.train_epoch(
+            model, dataloader, optimizer, criterion
+        )
         scheduler.step()
         current_lr = optimizer.param_groups[0]["lr"]
 
-        logger.debug(f"Epoch {epoch+1}/{args.epochs} - Avg Loss: {avg_loss:.4f}, LR: {current_lr:.2e}")
+        logger.debug(
+            f"Epoch {epoch+1}/{args.epochs} - Avg Loss: {avg_loss:.4f}, LR: {current_lr:.2e}"
+        )
 
         # Log cross-correlation matrix statistics for debugging
         if matrix_stats is not None:
@@ -776,20 +863,26 @@ def train_siamese_network(features_df, args):
         # Early stopping check
         trainer.early_stopping.check_improvement(avg_loss, model.state_dict())
         if trainer.early_stopping.should_stop():
-            logger.info(f"Early stopping after {epoch+1} epochs (patience: {trainer.early_stopping.patience})")
+            logger.info(
+                f"Early stopping after {epoch+1} epochs (patience: {trainer.early_stopping.patience})"
+            )
             break
 
         # Update progress bar (only if verbose mode enabled)
-        if getattr(args, 'verbose', False):
-            epoch_progress.set_postfix({
-                "Loss": f"{avg_loss:.4f}",
-                "LR": f"{current_lr:.2e}",
-                "Best": f"{trainer.early_stopping.best_loss:.4f}"
-            })
+        if getattr(args, "verbose", False):
+            epoch_progress.set_postfix(
+                {
+                    "Loss": f"{avg_loss:.4f}",
+                    "LR": f"{current_lr:.2e}",
+                    "Best": f"{trainer.early_stopping.best_loss:.4f}",
+                }
+            )
 
         # Print to screen every 20 epochs or on the last epoch
         if (epoch + 1) % 20 == 0 or epoch == args.epochs - 1:
-            logger.info(f"Epoch {epoch+1}/{args.epochs} - Avg Loss: {avg_loss:.4f}, LR: {current_lr:.2e}")
+            logger.info(
+                f"Epoch {epoch+1}/{args.epochs} - Avg Loss: {avg_loss:.4f}, LR: {current_lr:.2e}"
+            )
 
     # Load best model
     best_state, best_loss = trainer.early_stopping.get_best_state()
@@ -801,7 +894,7 @@ def train_siamese_network(features_df, args):
     if getattr(args, "keep_intermediate", False):
         torch.save(model.state_dict(), model_path)
         logger.info(f"Model saved to {model_path}")
-    
+
     return model
 
 
@@ -836,14 +929,20 @@ def generate_embeddings(model, features_df, args):
     with torch.no_grad():
         batch_size = args.batch_size
         for i in range(0, len(original_features_df), batch_size):
-            batch_df = original_features_df.iloc[i:i+batch_size]
-            batch_features = torch.tensor(batch_df.values, dtype=torch.float32).to(device)
+            batch_df = original_features_df.iloc[i : i + batch_size]
+            batch_features = torch.tensor(batch_df.values, dtype=torch.float32).to(
+                device
+            )
             batch_embeddings = model.get_embedding(batch_features)
-            batch_embeddings = torch.nn.functional.normalize(batch_embeddings, p=2, dim=1)
+            batch_embeddings = torch.nn.functional.normalize(
+                batch_embeddings, p=2, dim=1
+            )
 
             # Optionally extract encoder embeddings before fusion
             if save_encoder_embeddings:
-                kmer_encoded, coverage_encoded = model.get_encoder_embeddings(batch_features)
+                kmer_encoded, coverage_encoded = model.get_encoder_embeddings(
+                    batch_features
+                )
 
             for j, header in enumerate(batch_df.index):
                 clean_header = header.replace(".original", "")
@@ -853,7 +952,9 @@ def generate_embeddings(model, features_df, args):
                 if save_encoder_embeddings:
                     kmer_embeddings[clean_header] = kmer_encoded[j].cpu().numpy()
                     if coverage_encoded is not None:
-                        coverage_embeddings[clean_header] = coverage_encoded[j].cpu().numpy()
+                        coverage_embeddings[clean_header] = (
+                            coverage_encoded[j].cpu().numpy()
+                        )
 
     embeddings_df = pd.DataFrame.from_dict(embeddings, orient="index")
 
@@ -869,10 +970,16 @@ def generate_embeddings(model, features_df, args):
         logger.info(f"K-mer encoder embeddings saved to {kmer_embeddings_path}")
 
         if coverage_embeddings:
-            coverage_embeddings_path = os.path.join(args.output, "coverage_embeddings.csv")
-            coverage_embeddings_df = pd.DataFrame.from_dict(coverage_embeddings, orient="index")
+            coverage_embeddings_path = os.path.join(
+                args.output, "coverage_embeddings.csv"
+            )
+            coverage_embeddings_df = pd.DataFrame.from_dict(
+                coverage_embeddings, orient="index"
+            )
             coverage_embeddings_df.to_csv(coverage_embeddings_path)
-            logger.info(f"Coverage encoder embeddings saved to {coverage_embeddings_path}")
+            logger.info(
+                f"Coverage encoder embeddings saved to {coverage_embeddings_path}"
+            )
 
     return embeddings_df
 
@@ -901,10 +1008,12 @@ def generate_embeddings_for_fragments(model, features_df, fragment_names, args):
     with torch.no_grad():
         batch_size = args.batch_size
         for i in range(0, len(fragment_features_df), batch_size):
-            batch_df = fragment_features_df.iloc[i:i+batch_size]
-            batch_features = torch.tensor(batch_df.values, dtype=torch.float32).to(device)
+            batch_df = fragment_features_df.iloc[i : i + batch_size]
+            batch_features = torch.tensor(batch_df.values, dtype=torch.float32).to(
+                device
+            )
             batch_embeddings = model.get_embedding(batch_features)
-            
+
             for j, header in enumerate(batch_df.index):
                 embeddings[header] = batch_embeddings[j].cpu().numpy()
 

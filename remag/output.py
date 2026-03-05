@@ -3,6 +3,7 @@ Output module for REMAG
 """
 
 import os
+
 from loguru import logger
 
 from .utils import ContigHeaderMapper
@@ -21,11 +22,11 @@ def save_clusters_as_fasta(clusters_df, fragments_dict, args):
     # Group contigs by cluster directly using vectorized operations
     cluster_contig_dict = (
         clusters_df.groupby("cluster")["contig"]
-        .apply(lambda contigs: {
-            mapper.get_header(c) 
-            for c in contigs 
-            if mapper.get_header(c)
-        })
+        .apply(
+            lambda contigs: {
+                mapper.get_header(c) for c in contigs if mapper.get_header(c)
+            }
+        )
         .to_dict()
     )
 
@@ -64,6 +65,6 @@ def save_clusters_as_fasta(clusters_df, fragments_dict, args):
     logger.info(
         f"Saved {len(filtered_cluster_contigs)} bins with {total_contigs_in_bins} total contigs"
     )
-    
+
     valid_bins = set(filtered_cluster_contigs.keys()) - {"noise"}
     return valid_bins

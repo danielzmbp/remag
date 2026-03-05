@@ -49,7 +49,9 @@ class BarlowTwinsLoss(nn.Module):
         invariance_loss = torch.pow(torch.diagonal(cross_corr) - 1.0, 2).sum()
 
         # Compute redundancy reduction loss (off-diagonal terms should be close to 0)
-        off_diagonal_mask = ~torch.eye(projection_dim, dtype=torch.bool, device=output1.device)
+        off_diagonal_mask = ~torch.eye(
+            projection_dim, dtype=torch.bool, device=output1.device
+        )
         redundancy_loss = torch.pow(cross_corr[off_diagonal_mask], 2).sum()
 
         # Total loss
@@ -62,12 +64,12 @@ class BarlowTwinsLoss(nn.Module):
                 off_diagonal = cross_corr[off_diagonal_mask]
 
                 stats = {
-                    'mean_diagonal': diagonal.mean().item(),
-                    'std_diagonal': diagonal.std().item(),
-                    'mean_abs_off_diagonal': off_diagonal.abs().mean().item(),
-                    'max_abs_off_diagonal': off_diagonal.abs().max().item(),
-                    'invariance_loss': invariance_loss.item(),
-                    'redundancy_loss': redundancy_loss.item(),
+                    "mean_diagonal": diagonal.mean().item(),
+                    "std_diagonal": diagonal.std().item(),
+                    "mean_abs_off_diagonal": off_diagonal.abs().mean().item(),
+                    "max_abs_off_diagonal": off_diagonal.abs().max().item(),
+                    "invariance_loss": invariance_loss.item(),
+                    "redundancy_loss": redundancy_loss.item(),
                 }
                 return loss, stats
 

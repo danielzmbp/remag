@@ -28,7 +28,7 @@ class StandaloneCharacterTokenizer:
         self,
         characters: Sequence[str],
         model_max_length: int,
-        padding_side: str = 'left'
+        padding_side: str = "left",
     ):
         """
         Initialize character tokenizer.
@@ -101,7 +101,9 @@ class StandaloneCharacterTokenizer:
         """Convert an ID to its token (character)."""
         return self._vocab_int_to_str.get(token_id, "[UNK]")
 
-    def convert_tokens_to_ids(self, tokens: Union[str, List[str]]) -> Union[int, List[int]]:
+    def convert_tokens_to_ids(
+        self, tokens: Union[str, List[str]]
+    ) -> Union[int, List[int]]:
         """
         Convert token(s) to ID(s).
 
@@ -160,7 +162,7 @@ class StandaloneCharacterTokenizer:
         if truncation and len(ids) > target_length:
             if add_special_tokens:
                 # Keep CLS at start and SEP at end
-                ids = ids[:target_length - 1] + [self.SEP_TOKEN_ID]
+                ids = ids[: target_length - 1] + [self.SEP_TOKEN_ID]
             else:
                 ids = ids[:target_length]
 
@@ -170,7 +172,7 @@ class StandaloneCharacterTokenizer:
         if padding:
             if len(ids) < target_length:
                 pad_length = target_length - len(ids)
-                if self.padding_side == 'left':
+                if self.padding_side == "left":
                     ids = [self.PAD_TOKEN_ID] * pad_length + ids
                     attention_mask = [0] * pad_length + attention_mask
                     token_type_ids = [0] * pad_length + token_type_ids
@@ -180,19 +182,20 @@ class StandaloneCharacterTokenizer:
                     token_type_ids = token_type_ids + [0] * pad_length
 
         # Return format
-        if return_tensors == 'pt':
+        if return_tensors == "pt":
             import torch
+
             return {
-                'input_ids': torch.tensor([ids]),
-                'attention_mask': torch.tensor([attention_mask]),
-                'token_type_ids': torch.tensor([token_type_ids])
+                "input_ids": torch.tensor([ids]),
+                "attention_mask": torch.tensor([attention_mask]),
+                "token_type_ids": torch.tensor([token_type_ids]),
             }
         else:
             # Always return dict format (matching transformers behavior)
             return {
-                'input_ids': ids,
-                'attention_mask': attention_mask,
-                'token_type_ids': token_type_ids
+                "input_ids": ids,
+                "attention_mask": attention_mask,
+                "token_type_ids": token_type_ids,
             }
 
     def decode(self, token_ids: List[int], skip_special_tokens: bool = True) -> str:
@@ -209,7 +212,15 @@ class StandaloneCharacterTokenizer:
         tokens = self.convert_ids_to_tokens(token_ids)
 
         if skip_special_tokens:
-            special_tokens = {"[CLS]", "[SEP]", "[BOS]", "[MASK]", "[PAD]", "[RESERVED]", "[UNK]"}
+            special_tokens = {
+                "[CLS]",
+                "[SEP]",
+                "[BOS]",
+                "[MASK]",
+                "[PAD]",
+                "[RESERVED]",
+                "[UNK]",
+            }
             tokens = [t for t in tokens if t not in special_tokens]
 
         return "".join(tokens)
@@ -251,14 +262,19 @@ class StandaloneCharacterTokenizer:
 
             if padding:
                 # Pad batch to same length
-                target_length = max_length if max_length is not None else self.model_max_length
+                target_length = (
+                    max_length if max_length is not None else self.model_max_length
+                )
 
                 # When padding="max_length", always pad to target_length
                 # When padding=True, pad to longest sequence in batch
                 if padding == "max_length":
                     max_len = target_length
                 else:
-                    max_len = max(len(r) if isinstance(r, list) else len(r['input_ids']) for r in results)
+                    max_len = max(
+                        len(r) if isinstance(r, list) else len(r["input_ids"])
+                        for r in results
+                    )
                     max_len = min(max_len, target_length) if truncation else max_len
 
                 input_ids = []
@@ -266,10 +282,10 @@ class StandaloneCharacterTokenizer:
                 token_type_ids_list = []
 
                 for r in results:
-                    ids = r if isinstance(r, list) else r['input_ids']
+                    ids = r if isinstance(r, list) else r["input_ids"]
                     if len(ids) < max_len:
                         pad_length = max_len - len(ids)
-                        if self.padding_side == 'left':
+                        if self.padding_side == "left":
                             ids = [self.PAD_TOKEN_ID] * pad_length + ids
                             mask = [0] * pad_length + [1] * (max_len - pad_length)
                             token_types = [0] * max_len
@@ -285,18 +301,19 @@ class StandaloneCharacterTokenizer:
                     attention_masks.append(mask)
                     token_type_ids_list.append(token_types)
 
-                if return_tensors == 'pt':
+                if return_tensors == "pt":
                     import torch
+
                     return {
-                        'input_ids': torch.tensor(input_ids),
-                        'attention_mask': torch.tensor(attention_masks),
-                        'token_type_ids': torch.tensor(token_type_ids_list)
+                        "input_ids": torch.tensor(input_ids),
+                        "attention_mask": torch.tensor(attention_masks),
+                        "token_type_ids": torch.tensor(token_type_ids_list),
                     }
                 else:
                     return {
-                        'input_ids': input_ids,
-                        'attention_mask': attention_masks,
-                        'token_type_ids': token_type_ids_list
+                        "input_ids": input_ids,
+                        "attention_mask": attention_masks,
+                        "token_type_ids": token_type_ids_list,
                     }
             else:
                 return results
@@ -333,7 +350,9 @@ class StandaloneCharacterTokenizer:
             json.dump(cfg, f, indent=4)
 
     @classmethod
-    def from_pretrained(cls, save_directory: Union[str, os.PathLike], **kwargs) -> "StandaloneCharacterTokenizer":
+    def from_pretrained(
+        cls, save_directory: Union[str, os.PathLike], **kwargs
+    ) -> "StandaloneCharacterTokenizer":
         """Load tokenizer from saved configuration."""
         cfg_file = Path(save_directory) / "tokenizer_config.json"
 
