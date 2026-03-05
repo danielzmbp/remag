@@ -95,10 +95,7 @@ def main(args):
     # Generate gene mappings for greedy clustering
     logger.info("Generating gene mappings for greedy clustering...")
     try:
-        from .miniprot_utils import (
-            estimate_organisms_from_all_contigs,
-            get_gene_mappings_cache_path,
-        )
+        from .miniprot_utils import estimate_organisms_from_all_contigs
 
         # Check if cache exists
         cache_path = get_gene_mappings_cache_path(args)
@@ -151,8 +148,6 @@ def main(args):
             clusters_df = check_core_gene_duplications_from_cache(
                 clusters_df, gene_mappings_cache, args
             )
-            # Store cache in args for refinement
-            args._gene_mappings_cache = gene_mappings_cache
         except Exception as e:
             logger.warning(f"Cache-based duplication check failed: {e}")
             logger.warning("Falling back to full miniprot run")

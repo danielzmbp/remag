@@ -4,6 +4,7 @@ Utility functions for REMAG
 
 import gzip
 import os
+import re
 import sys
 from typing import Dict, List, Union
 
@@ -71,9 +72,6 @@ def fasta_iter(fasta_file):
                 seq_lines.append(line)
         if header:
             yield header, "".join(seq_lines)
-
-
-import re
 
 
 def extract_base_contig_name(fragment_header: str) -> str:
