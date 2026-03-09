@@ -334,17 +334,17 @@ MIT License - see LICENSE file for details.
 
 If you use REMAG in your research, please cite:
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.16443991.svg)](https://doi.org/10.5281/zenodo.16443991)
-
 ```bibtex
-@software{gomez_perez_2025_remag,
-  author       = {Gómez-Pérez, Daniel},
-  title        = {REMAG: Recovering high-quality Eukaryotic genomes from complex metagenomes},
-  year         = 2025,
-  publisher    = {Zenodo},
-  doi          = {10.5281/zenodo.16443991},
-  url          = {https://doi.org/10.5281/zenodo.16443991}
+@article {G{\'o}mez-P{\'e}rez2026.03.05.709928,
+	author = {G{\'o}mez-P{\'e}rez, Daniel and Raguideau, S{\'e}bastien and Warring, Sally and James, Robert and Hildebrand, Falk and Quince, Christopher},
+	title = {REMAG: recovery of eukaryotic genomes from metagenomic data using contrastive learning},
+	elocation-id = {2026.03.05.709928},
+	year = {2026},
+	doi = {10.64898/2026.03.05.709928},
+	publisher = {Cold Spring Harbor Laboratory},
+	abstract = {Metagenome-assembled genomes (MAGs) are central to exploring microbial communities. Yet, despite the relevance of protists and fungi to diverse ecosystems, eukaryotic MAG recovery lags behind that of prokaryotes. A major bottleneck is that most state-of-the-art binning pipelines exclusively rely on prokaryotic single-copy core gene reference databases and are optimized for smaller genomes. To address this gap, we present REMAG (Recovery of Eukaryotic MAGs), a tool designed to recover high-quality eukaryotic genomes suited for long-read metagenomic data. REMAG leverages fine-tuned HyenaDNA genomic foundation models to efficiently filter eukaryotic contigs. It then employs a dual-encoder Siamese network trained with Barlow Twins contrastive loss to learn a shared embedding space by integrating contig composition and differential coverage. Finally, high-quality bins are extracted using greedy iterative Leiden clustering optimized with eukaryotic single-copy core gene constraints. In benchmarks based on simulated mixed prokaryotic/eukaryotic communities and real datasets of varying sizes and origin, we demonstrate REMAG{\textquoteright}s ability to recover more near-complete eukaryotic genomes than existing state-of-the-art tools, which often produce highly fragmented eukaryotic bins. REMAG provides an automated eukaryotic binning method that scales effectively with the increasing size and sequencing depth of metagenomic datasets.Competing Interest StatementThe authors have declared no competing interest.},
+	URL = {https://www.biorxiv.org/content/early/2026/03/08/2026.03.05.709928},
+	eprint = {https://www.biorxiv.org/content/early/2026/03/08/2026.03.05.709928.full.pdf},
+	journal = {bioRxiv}
 }
 ```
-
-Note: The DOI 10.5281/zenodo.16443991 represents all versions and will always resolve to the latest release. A manuscript describing REMAG is in preparation.
