@@ -45,11 +45,13 @@ def main(args):
     if not skip_bacterial_filter:
         logger.info("Filtering non-eukaryotic contigs using HyenaDNA classifier...")
         hyenadna_batch_size = getattr(args, "hyenadna_batch_size", 1024)
+        save_filtered_contigs = getattr(args, "save_filtered_contigs", False)
         input_fasta = filter_bacterial_contigs(
             args.fasta,
             args.output,
             min_contig_length=args.min_contig_length,
             hyenadna_batch_size=hyenadna_batch_size,
+            save_filtered_contigs=save_filtered_contigs,
         )
     else:
         logger.info("Skipping eukaryotic filtering as requested")
