@@ -1,11 +1,8 @@
 """Unit tests for clustering module."""
 
-import os
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 import numpy as np
-import pandas as pd
-import pytest
 from sklearn.metrics.pairwise import cosine_similarity
 
 from remag.clustering import (
@@ -102,124 +99,11 @@ class TestClusteringManager:
         manager = ClusteringManager(mock_args)
         assert manager.args == mock_args
         assert hasattr(manager, "graph_manager")
-
-
-class TestChimeraDetection:
-    """Test chimera detection functionality."""
-
-    def test_permutation_anova_identical_groups(self):
-        """Test that identical groups are not detected as chimeric."""
-        from remag.clustering import _permutation_anova_chimera_test
-
-        # Create identical embeddings for both halves
-        embedding = np.array([[0.5, 0.5, 0.0]])
-        h1_embeddings = np.tile(embedding, (5, 1))
-        h2_embeddings = np.tile(embedding, (5, 1))
-
-        is_chimeric, results = _permutation_anova_chimera_test(
-            h1_embeddings, h2_embeddings, n_permutations=100
-        )
-
-        assert not is_chimeric
-        assert results["p_value"] > 0.05
-        # Distances should be very similar (approximately zero)
-        assert (
-            abs(results["mean_intra_distance"] - results["mean_inter_distance"]) < 0.1
-        )
-
-    def test_permutation_anova_clearly_different_groups(self):
-        """Test that clearly different groups are detected as chimeric."""
-        from remag.clustering import _permutation_anova_chimera_test
-
-        # Create very different embeddings for each half with small variations within groups
-        np.random.seed(42)
-        h1_base = np.array([1, 0, 0])
-        h2_base = np.array([0, 1, 0])
-
-        # Add small random variations to avoid identical embeddings within groups
-        h1_embeddings = np.array(
-            [h1_base + np.random.normal(0, 0.01, 3) for _ in range(10)]
-        )
-        h2_embeddings = np.array(
-            [h2_base + np.random.normal(0, 0.01, 3) for _ in range(10)]
-        )
-
-        # Normalize to keep them close to unit vectors
-        h1_embeddings = h1_embeddings / np.linalg.norm(
-            h1_embeddings, axis=1, keepdims=True
-        )
-        h2_embeddings = h2_embeddings / np.linalg.norm(
-            h2_embeddings, axis=1, keepdims=True
-        )
-
-        is_chimeric, results = _permutation_anova_chimera_test(
-            h1_embeddings, h2_embeddings, n_permutations=100
-        )
-
-        assert is_chimeric
-        assert results["p_value"] < 0.05
-        assert results["mean_inter_distance"] > results["mean_intra_distance"]
-
-    def test_permutation_anova_edge_cases(self):
-        """Test edge cases like single embeddings."""
-        from remag.clustering import _permutation_anova_chimera_test
-
-        # Single embedding in each group
-        h1 = np.array([[0.5, 0.5]])
-        h2 = np.array([[0.3, 0.7]])
-
-        is_chimeric, results = _permutation_anova_chimera_test(h1, h2)
-
-        # Should handle single embeddings gracefully
-        assert not results["test_performed"]  # Should skip test
-        assert results["n_intra_pairs"] == 0  # No intra-group pairs possible
-
-    def test_permutation_anova_empty_groups(self):
-        """Test handling of empty groups."""
-        from remag.clustering import _permutation_anova_chimera_test
-
-        h1 = np.array([]).reshape(0, 2)
-        h2 = np.array([[0.5, 0.5]])
-
-        is_chimeric, results = _permutation_anova_chimera_test(h1, h2)
-
-        # Should handle empty groups gracefully
-        assert not is_chimeric
-        assert not results["test_performed"]
-
-
 class TestPerformanceOptimizations:
     """Test performance-related functionality and optimizations."""
 
-    def test_chimera_detection_performance_with_large_groups(self):
-        """Test chimera detection performance with larger groups."""
-        import time
-
-        from remag.clustering import _permutation_anova_chimera_test
-
-        # Create moderately large groups to test performance
-        np.random.seed(42)
-        h1_embeddings = np.random.randn(50, 64)
-        h2_embeddings = np.random.randn(50, 64)
-
-        start_time = time.time()
-        is_chimeric, results = _permutation_anova_chimera_test(
-            h1_embeddings, h2_embeddings, n_permutations=100
-        )
-        duration = time.time() - start_time
-
-        # Should complete within reasonable time
-        assert duration < 10.0  # 10 seconds max for this size
-
-        # Should produce valid results
-        assert isinstance(is_chimeric, bool)
-        assert "p_value" in results
-        assert "mean_intra_distance" in results
-        assert "mean_inter_distance" in results
-
     def test_vectorized_distance_calculation_accuracy(self):
-        """Test that vectorized distance calculation gives correct results."""
-        # This test will be useful when we optimize the quadratic complexity
+        """Test that vectorized cosine-distance logic gives correct results."""
         np.random.seed(42)
         embeddings = np.random.randn(10, 5)
         embeddings = embeddings / np.linalg.norm(embeddings, axis=1, keepdims=True)

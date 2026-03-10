@@ -270,7 +270,6 @@ REMAG produces several output files:
 - `*_hyenadna_classification.tsv`: HyenaDNA eukaryotic classification results (tab-separated)
 - `gene_contig_mappings.json`: Cached gene-to-contig mappings for faster processing
 - `core_gene_duplication_results.json`: Core gene duplication analysis
-- `chimera_detection_results.json`: Chimera detection results for large contigs
 - `knn_graph_edges.csv`: k-NN graph edge list used for Leiden clustering
 - `knn_graph_stats.json`: k-NN graph construction statistics
 - `temp_miniprot/`: Temporary directory for miniprot alignments (removed unless --keep-intermediate)

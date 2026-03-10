@@ -121,7 +121,6 @@ click.rich_click.OPTION_GROUPS = {
                 "--skip-rescue",
                 "--rescue-max-duplication-increase",
                 "--rescue-max-total-duplication",
-                "--skip-chimera-detection",
             ],
         },
     ]
@@ -402,12 +401,6 @@ def validate_coverage_options(ctx, param, value):
     help="Number of random fragments per contig for data augmentation.",
 )
 @click.option(
-    "--skip-chimera-detection",
-    is_flag=True,
-    default=True,
-    help="Skip chimeric contig detection and splitting for large contigs (default: skip).",
-)
-@click.option(
     "--greedy-resolutions",
     type=SpaceSeparatedFloats(),
     default="0.1 0.5 1.0 2.0 5.0",
@@ -480,7 +473,6 @@ def main_cli(
     rescue_max_duplication_increase,
     rescue_max_total_duplication,
     num_augmentations,
-    skip_chimera_detection,
     greedy_resolutions,
     leiden_k_neighbors,
     leiden_similarity_threshold,
@@ -630,7 +622,6 @@ def main_cli(
         rescue_max_duplication_increase=rescue_max_duplication_increase,
         rescue_max_total_duplication=rescue_max_total_duplication,
         num_augmentations=num_augmentations,
-        skip_chimera_detection=skip_chimera_detection,
         greedy_resolutions=greedy_resolutions,
         leiden_k_neighbors=effective_k,
         leiden_similarity_threshold=leiden_similarity_threshold,
