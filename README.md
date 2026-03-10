@@ -1,22 +1,22 @@
 # REMAG
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.16443991.svg)](https://doi.org/10.5281/zenodo.16443991)
+[![Preprint DOI](https://img.shields.io/badge/Preprint%20DOI-10.64898%2F2026.03.05.709928-blue)](https://doi.org/10.64898/2026.03.05.709928)
 
 **RE**covery of eukaryotic genomes using contrastive learning. A specialized metagenomic binning tool designed for recovering high-quality eukaryotic genomes from mixed prokaryotic-eukaryotic samples.
 
 ## Quick Start
 
-### Option 1: Using Conda (Recommended - handles all dependencies)
+### Option 1: Using Conda (recommended)
 ```bash
-# Create environment and install everything
+# Create environment and install REMAG with its external dependency
 conda create -n remag -c bioconda -c conda-forge remag
 conda activate remag
 
-# Run REMAG (output directory optional - defaults to remag_output)
+# Run REMAG
 remag contigs.fasta -c alignments.bam
 ```
 
-### Option 2: Using Docker (No local installation needed)
+### Option 2: Using Docker
 ```bash
 docker run --rm -v $(pwd):/data danielzmbp/remag:latest \
   /data/contigs.fasta -c /data/alignments.bam -o /data/output
@@ -28,59 +28,79 @@ docker run --rm -v $(pwd):/data danielzmbp/remag:latest \
 conda create -n remag python=3.9
 conda activate remag
 
-# Install dependencies and REMAG
+# Install the external dependency, then REMAG
 conda install -c bioconda miniprot
 pip install remag
 
-# Run REMAG
 remag contigs.fasta -c alignments.bam
 ```
 
 ## Installation
 
-### Recommended: Conda Installation
+### Conda
 
-This is the easiest method as conda handles all dependencies automatically:
+This is the easiest installation path because the conda package pulls in `miniprot` automatically.
 
 ```bash
-# Create a new environment with all dependencies
 conda create -n remag -c bioconda -c conda-forge remag
 conda activate remag
-
-# Verify installation
 remag --help
 ```
 
-Note: `miniprot` is pulled in automatically as a dependency of the conda package; no separate installation is required when installing `remag` via conda.
+### PyPI
 
-### Alternative: PyPI Installation
-
-If you prefer pip, you'll need to install the external dependency separately:
+If you install from PyPI, install `miniprot` separately first:
 
 ```bash
-# Step 1: Create and activate environment
 conda create -n remag python=3.9
 conda activate remag
-
-# Step 2: Install external dependency
 conda install -c bioconda miniprot
-
-# Step 3: Install REMAG from PyPI
 pip install remag
 ```
 
-### Advanced Conda Setup
-
-For additional features:
+### Optional plotting dependencies
 
 ```bash
-# Basic installation
-conda create -n remag -c bioconda -c conda-forge remag
-conda activate remag
-
-# Add optional plotting capabilities
 conda install -c conda-forge matplotlib umap-learn
 ```
+
+### GPU acceleration
+
+REMAG uses PyTorch and will use GPU acceleration automatically when a supported backend is available. No extra REMAG flag is required.
+
+#### Conda with NVIDIA CUDA
+
+If you want a CUDA-enabled PyTorch build, install REMAG first and then replace the CPU PyTorch package with the CUDA-enabled one that matches your system:
+
+```bash
+conda create -n remag -c bioconda -c conda-forge remag
+conda activate remag
+conda install -c pytorch -c nvidia pytorch pytorch-cuda=12.1
+```
+
+Adjust the CUDA version to match your driver and platform.
+
+#### Apple Silicon
+
+On Apple Silicon, PyTorch can use Metal (`mps`) automatically when available. In most cases no extra REMAG-specific setup is needed beyond installing a current PyTorch build.
+
+#### PyPI installs
+
+If you install REMAG with `pip`, install the PyTorch build you want first, then install REMAG:
+
+```bash
+conda create -n remag python=3.9
+conda activate remag
+conda install -c bioconda miniprot
+
+# Install the desired PyTorch build first
+pip install torch
+
+# Then install REMAG
+pip install remag
+```
+
+For NVIDIA systems, use the PyTorch install command from the official PyTorch selector so the wheel matches your CUDA runtime.
 
 ### Using Docker
 
@@ -129,32 +149,19 @@ singularity run remag.sif contigs.fasta -c alignments.bam
 ### From source
 
 ```bash
-# Create and activate conda environment
 conda create -n remag python=3.9
 conda activate remag
 
-# Clone and install
 git clone https://github.com/danielzmbp/remag.git
 cd remag
+conda install -c bioconda miniprot
 pip install .
 ```
 
 ### Development installation
 
-For contributors and developers:
-
 ```bash
-# Install with development dependencies
 pip install -e ".[dev]"
-```
-
-### Optional Features Installation
-
-For visualization capabilities:
-
-```bash
-# Install with plotting dependencies
-pip install "remag[plotting]"
 ```
 
 
