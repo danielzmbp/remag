@@ -144,3 +144,56 @@ class TestCliDefaults:
         # Assert user-specified values are used
         assert args.base_learning_rate == user_lr
         assert args.barlow_lambda == user_lambda
+
+    def test_user_specified_default_learning_rate_is_respected(
+        self, mock_run_remag, temp_fasta, tmp_path
+    ):
+        """Test that an explicitly provided default-valued learning rate is not rewritten."""
+        temp_bam1 = tmp_path / "sample1.bam"
+        temp_bam1.touch()
+        temp_bam2 = tmp_path / "sample2.bam"
+        temp_bam2.touch()
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main_cli,
+            [
+                temp_fasta,
+                "--coverage",
+                str(temp_bam1),
+                "--coverage",
+                str(temp_bam2),
+                "--output",
+                "remag_output",
+                "--base-learning-rate",
+                "0.005",
+            ],
+        )
+        assert result.exit_code == 0, f"CLI command failed: {result.exception}"
+
+        args = mock_run_remag.call_args[0][0]
+
+        assert args.base_learning_rate == 0.005
+
+    def test_single_cell_mode_uses_larger_default_knn(
+        self, mock_run_remag, temp_fasta, temp_bam
+    ):
+        """Test single-cell mode applies the documented larger default k-NN size."""
+        runner = CliRunner()
+        result = runner.invoke(
+            main_cli,
+            [
+                temp_fasta,
+                "--coverage",
+                temp_bam,
+                "--mode",
+                "single-cell",
+                "--output",
+                "remag_output",
+            ],
+        )
+        assert result.exit_code == 0, f"CLI command failed: {result.exception}"
+
+        args = mock_run_remag.call_args[0][0]
+
+        assert args.leiden_k_neighbors == 30

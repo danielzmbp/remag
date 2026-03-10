@@ -6,6 +6,7 @@ import argparse
 import glob
 import os
 import sys
+from click.core import ParameterSource
 from importlib.metadata import version
 
 import rich_click as click
@@ -302,7 +303,7 @@ def validate_coverage_options(ctx, param, value):
     default=None,
     show_default=False,
     help="Lambda parameter for Barlow Twins loss (redundancy reduction term). "
-    "Default (auto): 0.003 for single/no coverage, 0.005 for multi-sample/coassembly.",
+    "Default (auto): 0.003 for single/no coverage, 0.02 for multi-sample/coassembly.",
 )
 @click.option(
     "-m",
@@ -413,7 +414,7 @@ def validate_coverage_options(ctx, param, value):
     default=None,
     show_default=False,
     help="Number of nearest neighbors for k-NN graph construction in Leiden clustering. "
-    "If not set, defaults to 15 (metagenomics) or 25 (single-cell mode).",
+    "If not set, defaults to 15 (metagenomics) or 30 (single-cell mode).",
 )
 @click.option(
     "--leiden-similarity-threshold",
@@ -561,10 +562,13 @@ def main_cli(
             )
 
     # Set default base learning rate based on number of samples if not provided
-    # Only apply if user did not explicitly set it via --base-learning-rate
-    if (
-        coverage_count > 1 and base_learning_rate == 5e-3
-    ):  # Check if it's the default value
+    ctx = click.get_current_context()
+    base_lr_source = (
+        ctx.get_parameter_source("base_learning_rate")
+        if ctx is not None
+        else ParameterSource.DEFAULT
+    )
+    if coverage_count > 1 and base_lr_source == ParameterSource.DEFAULT:
         base_learning_rate = 0.0005
         click.echo(
             "Coassembly detected: Auto base learning rate set to 0.0005.", err=True
