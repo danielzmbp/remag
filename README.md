@@ -232,26 +232,19 @@ REMAG uses a sophisticated multi-stage pipeline specifically designed for eukary
 
 ## Options
 
-Use `remag -h` for quick reference or `remag --help` for full documentation.
+Use `remag -h` for a quick reference or `remag --help` for the full CLI documentation.
 
-### Essential Options
+Commonly used options:
 
-```
-  FASTA_ARG                       Input FASTA file (positional argument). Can also use -f/--fasta
-  -f, --fasta PATH                Input FASTA file with contigs to bin. Can be gzipped.
-  -c, --coverage PATH             Coverage files for calculation. Supports BAM, CRAM (indexed), and TSV formats.
-                                  Auto-detects format by extension. Supports space-separated paths and glob patterns
-                                  (e.g., "*.bam", "*.cram", "*.tsv"). Use quotes around glob patterns.
-  -o, --output PATH               Output directory for results. [default: remag_output in FASTA directory]
-  -t, --threads INTEGER           Number of CPU cores to use for parallel processing.  [default: 8]
-  -v, --verbose                   Enable verbose logging.
-  -k, --keep-intermediate         Keep intermediate files (embeddings, features, model, etc.).
-  -h, --help                      Show quick reference or full help.
-```
+- `-c, --coverage`: one or more BAM, CRAM, or TSV coverage inputs
+- `-o, --output`: output directory; defaults to `remag_output` next to the input FASTA
+- `-k, --keep-intermediate`: retain embeddings, features, model weights, and other intermediate files
+- `--filter-only`: stop after eukaryotic filtering and write filtered FASTA output
+- `-m, --mode`: select presets such as `metagenomics` or `single-cell`
+- `--save-filtered-contigs`: also write the contigs removed by the eukaryotic filter
 
-### Advanced Options
+For the complete list of neural-network, clustering, filtering, and rescue options, run:
 
-For complete list of advanced options (neural network parameters, clustering settings, refinement options, etc.), run:
 ```bash
 remag --help
 ```
@@ -265,7 +258,7 @@ REMAG produces several output files:
 - `bins.csv`: Final contig-to-bin assignments
 - `embeddings.csv`: Contig embeddings from the neural network
 - `remag.log`: Detailed log file
-- `*_eukaryotic_filtered.fasta`: Filtered FASTA file with only eukaryotic contigs retained (when eukaryotic filtering is enabled)
+- `*_eukaryotic_filtered.fasta`: Filtered FASTA file with only eukaryotic contigs retained when eukaryotic filtering is enabled
 
 ### Additional files (with `-k` / `--keep-intermediate` option):
 - `siamese_model.pt`: Trained Siamese neural network model
@@ -281,12 +274,15 @@ REMAG produces several output files:
 - `knn_graph_stats.json`: k-NN graph construction statistics
 - `temp_miniprot/`: Temporary directory for miniprot alignments (removed unless --keep-intermediate)
 
+### Additional filtering output:
+- `*_non_eukaryotic.fasta`: Contigs removed by the HyenaDNA filter when `--save-filtered-contigs` is used
+
 ### Visualization (optional, requires plotting dependencies):
 To generate UMAP visualization plots:
 
 ```bash
 # Install plotting dependencies if not already installed
-pip install remag[plotting]
+pip install "remag[plotting]"
 
 # Generate UMAP visualization from embeddings
 python scripts/plot_features.py --features output_directory/embeddings.csv --clusters output_directory/bins.csv --output output_directory

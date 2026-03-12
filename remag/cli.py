@@ -428,7 +428,7 @@ def validate_coverage_options(ctx, param, value):
     "--keep-intermediate",
     is_flag=True,
     default=False,
-    help="Keep intermediate files (embeddings, features, model, etc.). By default, only bins.csv and bins/ folder are kept.",
+    help="Keep intermediate files such as features, model weights, and graph artifacts. By default, only core outputs are kept.",
 )
 @click.option(
     "--coverage-batch-size",
@@ -504,7 +504,7 @@ def main_cli(
 
     - `bins/` - Directory containing binned FASTA files (one per genome)
     - `bins.csv` - Cluster assignments for all contigs
-    - `embeddings.csv` - Learned contig embeddings (if --keep-intermediate)
+    - `embeddings.csv` - Learned contig embeddings
     """
     # Handle fasta input: accept either positional argument or --fasta flag
     if fasta is None and fasta_arg is None:
