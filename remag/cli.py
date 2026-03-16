@@ -16,6 +16,42 @@ from .core import main as run_remag
 __version__ = version("remag")
 
 
+def normalize_coverage_args(args):
+    """Expand `-c/--coverage` followed by multiple paths into repeated options."""
+    normalized_args = []
+    i = 0
+
+    while i < len(args):
+        token = args[i]
+
+        if token not in {"-c", "--coverage"}:
+            normalized_args.append(token)
+            i += 1
+            continue
+
+        normalized_args.append(token)
+        i += 1
+
+        if i >= len(args) or args[i].startswith("-"):
+            continue
+
+        normalized_args.append(args[i])
+        i += 1
+
+        while i < len(args) and not args[i].startswith("-"):
+            normalized_args.extend([token, args[i]])
+            i += 1
+
+    return normalized_args
+
+
+class CoverageAwareCommand(click.Command):
+    """Click command that normalizes multi-value coverage arguments."""
+
+    def parse_args(self, ctx, args):
+        return super().parse_args(ctx, normalize_coverage_args(args))
+
+
 class SpaceSeparatedPaths(click.ParamType):
     """Custom click type that accepts space-separated file paths."""
 
@@ -230,7 +266,7 @@ def validate_coverage_options(ctx, param, value):
     return flattened_files
 
 
-@click.command(name="remag")
+@click.command(name="remag", cls=CoverageAwareCommand)
 @click.option(
     "--help",
     "-h",
