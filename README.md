@@ -178,8 +178,11 @@ remag contigs.fasta -c alignments.bam
 # With explicit output directory
 remag contigs.fasta -c alignments.bam -o output_directory
 
-# Multiple samples using glob patterns
-remag contigs.fasta -c "samples/*.bam"
+# Multiple samples using repeated flags
+remag contigs.fasta -c sample1.bam -c sample2.bam
+
+# Multiple samples using shell-expanded globs
+remag contigs.fasta -c samples/*.bam
 
 # Using explicit -f flag (both styles work)
 remag -f contigs.fasta -c alignments.bam

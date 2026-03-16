@@ -83,3 +83,37 @@ def test_single_sample_default(mock_run_remag, temp_fasta, multiple_bams):
     args = mock_run_remag.call_args[0][0]
 
     assert args.min_contig_length == 1000
+
+
+def test_multiple_coverage_values_after_single_flag(
+    mock_run_remag, temp_fasta, multiple_bams
+):
+    runner = CliRunner()
+
+    result = runner.invoke(
+        main_cli,
+        [temp_fasta, "-c", multiple_bams[0], multiple_bams[1], "--filter-only"],
+    )
+
+    assert result.exit_code == 0, result.output
+    args = mock_run_remag.call_args[0][0]
+
+    assert args.bam == multiple_bams
+    assert args.tsv is None
+
+
+def test_glob_expanded_coverage_values_after_single_flag(
+    mock_run_remag, temp_fasta, multiple_bams
+):
+    runner = CliRunner()
+
+    result = runner.invoke(
+        main_cli,
+        [temp_fasta, "--coverage", *multiple_bams, "--filter-only"],
+    )
+
+    assert result.exit_code == 0, result.output
+    args = mock_run_remag.call_args[0][0]
+
+    assert args.bam == multiple_bams
+    assert args.tsv is None
