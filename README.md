@@ -187,6 +187,9 @@ remag contigs.fasta -c samples/*.bam
 # Using explicit -f flag (both styles work)
 remag -f contigs.fasta -c alignments.bam
 
+# Using precomputed coverage tables (one TSV per sample)
+remag contigs.fasta -c sample1.tsv -c sample2.tsv
+
 # Keep intermediate files with -k shorthand
 remag contigs.fasta -c alignments.bam -k
 
@@ -202,6 +205,24 @@ remag contigs.fasta -c alignments.bam -m single-cell
 ```bash
 python -m remag contigs.fasta -c alignments.bam
 ```
+
+### Coverage TSV format
+
+Precomputed coverage TSVs are supported as an alternative to BAM/CRAM. Use one TSV per sample.
+
+- Column 1: contig ID
+- Last column: coverage value for that contig
+- No header row
+
+Example:
+
+```tsv
+contig_1	12.4
+contig_2	3.8
+contig_3	0.0
+```
+
+TSV input provides contig-level coverage only. REMAG cannot infer fragment-specific coverage for augmented fragments from a TSV, so every fragment from the same contig gets the same coverage value. Use BAM/CRAM if you want fragment-level augmented coverage features. Do not mix TSV inputs with BAM/CRAM inputs in the same run.
 
 ### Getting help
 
