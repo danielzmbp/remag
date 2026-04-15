@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-04-15
+
+### Fixed
+- Forward `--save-filtered-contigs` through the core pipeline so requested non-eukaryotic FASTA output is actually written.
+- Accept shell-expanded coverage inputs reliably and align CLI defaults with the documented behavior.
+
+### Changed
+- Clarified installation guidance, CLI options, and output documentation.
+
+## [0.4.0] - 2026-03-05
+
+### Added
+- Bin rescue strategy to merge fragmented bins under explicit duplication guardrails.
+- `short-reads` / `sr` mode and CLI controls for rescue duplication limits.
+- Reproducibility-oriented logging of the exact command line used for each run.
+- Additional regression coverage for CLI defaults, rescue limits, and issue reproduction.
+
+### Changed
+- Replaced adaptive resolution selection with greedy Leiden clustering and removed the old refinement workflow.
+- Updated clustering and rescue heuristics, including contamination-aware scoring, revised duplication thresholds, and adjusted default resolution sweeps.
+- Refreshed the README to match the current pipeline and streamlined the Bioconda release flow to generate a recipe artifact for manual submission.
+
+### Fixed
+- `--filter-only` now exits after the filtering stage instead of being silently ignored.
+- Duplicate alignment filenames are disambiguated using parent directories.
+- Rescue-loop duplication handling and debug logging were cleaned up to avoid duplicate merges and excessive log spam.
+
 ## [0.3.4] - 2025-12-01
 
 ### Added
@@ -308,7 +335,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Various bug fixes and improvements
 
-[Unreleased]: https://github.com/danielzmbp/remag/compare/v0.3.4...HEAD
+[Unreleased]: https://github.com/danielzmbp/remag/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/danielzmbp/remag/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/danielzmbp/remag/compare/v0.3.4...v0.4.0
 [0.3.4]: https://github.com/danielzmbp/remag/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/danielzmbp/remag/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/danielzmbp/remag/compare/v0.3.0...v0.3.2
