@@ -1,4 +1,20 @@
 # Multi-stage build for REMAG
+FROM python:3.9-slim AS miniprot-builder
+
+# Build miniprot from source because it is required at runtime and is not
+# available in the base image package repositories.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    ca-certificates \
+    git \
+    zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /tmp
+
+RUN git clone --depth 1 https://github.com/lh3/miniprot.git && \
+    make -C miniprot
+
 FROM python:3.9-slim AS builder
 
 # Install build dependencies
@@ -28,6 +44,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libgomp1 \
     samtools \
+    zlib1g \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
@@ -35,6 +52,9 @@ RUN useradd -m -s /bin/bash remag
 
 # Copy the built wheel from builder
 COPY --from=builder /app/dist/*.whl /tmp/
+
+# Copy miniprot binary built from source
+COPY --from=miniprot-builder /tmp/miniprot/miniprot /usr/local/bin/miniprot
 
 # Install REMAG and all dependencies
 # Install PyTorch CPU version first to avoid downloading large CUDA versions
