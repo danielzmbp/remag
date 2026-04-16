@@ -4,6 +4,19 @@
 
 **RE**covery of eukaryotic genomes using contrastive learning. A specialized metagenomic binning tool designed for recovering high-quality eukaryotic genomes from mixed prokaryotic-eukaryotic samples.
 
+## Index
+
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Usage](#usage)
+- [Common Options](#common-options)
+- [How It Works](#how-it-works)
+- [Output](#output)
+- [Requirements](#requirements)
+- [Acknowledgments](#acknowledgments)
+- [License](#license)
+- [Citation](#citation)
+
 ## Installation
 
 ### Conda (recommended)
