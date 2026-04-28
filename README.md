@@ -152,7 +152,7 @@ remag contigs.fasta -c samples/*.bam
 remag contigs.fasta -c sample1.tsv -c sample2.tsv
 
 # Only run eukaryotic filtering (skip binning)
-remag contigs.fasta -c alignments.bam --filter-only
+remag contigs.fasta --filter-only
 
 # Use single-cell mode (adjusts k-NN defaults and skips eukaryotic filtering)
 remag contigs.fasta -c alignments.bam -m single-cell
@@ -191,7 +191,7 @@ TSV input provides contig-level coverage only. REMAG cannot infer fragment-speci
 - `-o, --output`: output directory; defaults to `remag_output` next to the input FASTA
 - `-k, --keep-intermediate`: retain embeddings, features, model weights, and other intermediate files
 - `--filter-only`: stop after eukaryotic filtering and write filtered FASTA output
-- `-m, --mode`: select presets such as `metagenomics` or `single-cell`
+- `-m, --mode`: select presets such as `metagenomics`, `single-cell`, or `short-reads`
 - `--save-filtered-contigs`: also write the contigs removed by the eukaryotic filter
 
 Use `remag -h` for a quick reference and `remag --help` for the full CLI, including training, clustering, filtering, and rescue options.
