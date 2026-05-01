@@ -1,5 +1,5 @@
 """
-REMAG: Recovery of eukaryotic genomes using contrastive learning
+REMAG: Recovery of Eukaryotic Metagenome-Assembled Genomes using contrastive learning
 """
 
 try:

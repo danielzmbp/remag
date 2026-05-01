@@ -71,7 +71,7 @@ def get_zenodo_deposition(token, use_sandbox=False):
 def update_metadata(deposition, version):
     """Update deposition metadata."""
     metadata = {
-        "title": f"REMAG: Recovering high-quality Eukaryotic genomes from complex metagenomes v{version.lstrip('v')}",
+        "title": f"REMAG: Recovering high-quality eukaryotic genomes from complex metagenomes v{version.lstrip('v')}",
         "upload_type": "software",
         "description": """<p>REMAG is a specialized metagenomic binning tool designed for recovering high-quality eukaryotic genomes from mixed prokaryotic-eukaryotic samples.</p>
 
