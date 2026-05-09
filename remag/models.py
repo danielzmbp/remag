@@ -6,7 +6,6 @@ import copy
 import itertools
 import os
 import random
-import re
 
 import numpy as np
 import pandas as pd
@@ -18,7 +17,7 @@ from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
 from .losses import BarlowTwinsLoss
-from .utils import get_torch_device
+from .utils import extract_base_contig_name, get_torch_device
 
 
 def seed_worker(worker_id):
@@ -726,17 +725,11 @@ class SequenceDataset(Dataset):
     def _group_indices_by_base_contig(self):
         """Group fragment indices by their original contig's base name."""
         groups = {}
+        known_headers = set(self.fragment_headers)
         for i, fragment_header in enumerate(self.fragment_headers):
-            # Match patterns: .original, .h1.N, .h2.N, .h1, .h2, or .N (where N is a number)
-            # Updated to handle both .h1/.h2 with and without fragment numbers
-            # Use non-greedy (.+?) to avoid matching the dot before the suffix
-            match = re.match(
-                r"(.+?)\.(?:h[12](?:\.(\d+))?|(\d+)|original)$", fragment_header
+            base_name = extract_base_contig_name(
+                fragment_header, known_headers=known_headers
             )
-            if match:
-                base_name = match.group(1)
-            else:
-                base_name = fragment_header
             if base_name not in groups:
                 groups[base_name] = []
             groups[base_name].append(i)
@@ -945,7 +938,7 @@ def generate_embeddings(model, features_df, args):
                 )
 
             for j, header in enumerate(batch_df.index):
-                clean_header = header.replace(".original", "")
+                clean_header = extract_base_contig_name(header)
                 embeddings[clean_header] = batch_embeddings[j].cpu().numpy()
 
                 # Save encoder embeddings if requested

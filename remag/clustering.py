@@ -12,8 +12,6 @@ import pandas as pd
 from loguru import logger
 from sklearn.neighbors import NearestNeighbors
 
-from .utils import extract_base_contig_name
-
 
 class GraphManager:
     """Handles k-NN graph construction and caching."""
@@ -507,10 +505,8 @@ def cluster_contigs(embeddings_df, fragments_dict, gene_mappings, args):
         f"bin_{label}" if label != -1 else "noise" for label in cluster_labels
     ]
 
-    # Create clusters dataframe with original contig names (without .original suffix)
-    final_original_contig_names = [
-        extract_base_contig_name(name) for name in embeddings_df.index
-    ]
+    # Embedding indices are already cleaned to original contig names by generate_embeddings.
+    final_original_contig_names = list(embeddings_df.index)
     contig_clusters_df = pd.DataFrame(
         {"contig": final_original_contig_names, "cluster": formatted_labels}
     )

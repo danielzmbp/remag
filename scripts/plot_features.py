@@ -28,13 +28,11 @@ except ImportError:
     # Fallback implementation if package structure differs
     def extract_base_contig_name(name):
         """Extract original contig name from fragment name."""
-        if ".original" in name:
-            return name.split(".original")[0]
-        elif ".h" in name:
-            # Handle .h1.1, .h2.3 etc format
-            parts = name.split(".")
-            if len(parts) >= 3 and parts[-2].startswith("h"):
-                return ".".join(parts[:-2])
+        if name.endswith(".original"):
+            return name[: -len(".original")]
+        parts = name.split(".")
+        if len(parts) >= 3 and parts[-2] in {"h1", "h2"} and parts[-1].isdigit():
+            return ".".join(parts[:-2])
         return name
 
 
@@ -111,12 +109,14 @@ def plot_umap_embeddings(
         # Create mapping from contig to cluster
         contig_to_cluster = dict(zip(clusters_df["contig"], clusters_df["cluster"]))
 
-        # Map clusters to UMAP data (handle fragment names)
+        # Map clusters to UMAP data. Prefer exact contig IDs first; only parse
+        # fragment suffixes as a fallback for fragment-level input files.
         umap_clusters = []
-        original_names = [extract_base_contig_name(name) for name in contig_names]
-
-        for original_name in original_names:
-            cluster = contig_to_cluster.get(original_name, "noise")
+        for contig_name in contig_names:
+            cluster = contig_to_cluster.get(contig_name)
+            if cluster is None:
+                original_name = extract_base_contig_name(contig_name)
+                cluster = contig_to_cluster.get(original_name, "noise")
             umap_clusters.append(cluster)
 
         umap_df["cluster"] = umap_clusters

@@ -6,7 +6,7 @@ import gzip
 import os
 import re
 import sys
-from typing import Dict, List, Union
+from typing import Container, Dict, List, Optional, Union
 
 import torch
 from loguru import logger
@@ -74,31 +74,42 @@ def fasta_iter(fasta_file):
             yield header, "".join(seq_lines)
 
 
-def extract_base_contig_name(fragment_header: str) -> str:
+def extract_base_contig_name(
+    fragment_header: str, known_headers: Optional[Container[str]] = None
+) -> str:
     """Extract the base contig name from a fragment header.
 
-    Handles various fragment header formats:
+    Handles REMAG fragment header formats:
     - contig.original -> contig
     - contig.h1.0 -> contig
     - contig.h2.1 -> contig
-    - contig.0 -> contig
+    - contig.0 -> contig, only when contig.original is present in known_headers
 
     Args:
         fragment_header: Fragment header string
+        known_headers: Optional collection of all fragment headers in the same set.
+            Plain numeric suffixes are only stripped when the matching original
+            contig header is present, avoiding SPAdes decimal coverage truncation.
 
     Returns:
         Base contig name without fragment suffixes
     """
-    # Match patterns: .original, .h1.N, .h2.N, or .N (where N is a number)
-    # First try to match the half identifier pattern: base.h1.N or base.h2.N
+    if fragment_header.endswith(".original"):
+        return fragment_header[: -len(".original")]
+
+    # Match REMAG half-fragment identifiers: base.h1.N or base.h2.N.
     match = re.match(r"(.+)\.h[12]\.\d+$", fragment_header)
     if match:
         return match.group(1)
 
-    # Then try other patterns: base.original or base.N
-    match = re.match(r"(.+)\.(?:\d+|original)$", fragment_header)
-    if match:
-        return match.group(1)
+    # Plain numeric suffixes are ambiguous because assembler headers may end in
+    # decimals, e.g. SPAdes NODE_*_cov_5.491044. Only strip them when this is a
+    # known REMAG fragment with a matching base.original header in the same set.
+    match = re.match(r"(.+)\.\d+$", fragment_header)
+    if match and known_headers is not None:
+        base_name = match.group(1)
+        if f"{base_name}.original" in known_headers:
+            return base_name
 
     # If no pattern matches, return as-is
     return fragment_header
@@ -128,8 +139,9 @@ class ContigHeaderMapper:
 
     def _build_mapping(self):
         """Build the contig name to header mapping."""
+        known_headers = set(self._fragments_dict.keys())
         for header in self._fragments_dict.keys():
-            contig_name = extract_base_contig_name(header)
+            contig_name = extract_base_contig_name(header, known_headers=known_headers)
             # In case of duplicates, keep the first one (consistent with original behavior)
             if contig_name not in self._contig_to_header_map:
                 self._contig_to_header_map[contig_name] = header
