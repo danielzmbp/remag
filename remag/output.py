@@ -56,8 +56,8 @@ def save_clusters_as_fasta(clusters_df, fragments_dict, args):
             for header in contig_headers:
                 seq = fragments_dict[header]["sequence"]
                 f.write(f">{header}\n")
-                for i in range(0, len(seq), 60):
-                    f.write(f"{seq[i: i+60]}\n")
+                lines = [seq[i: i+60] for i in range(0, len(seq), 60)]
+                f.write("\n".join(lines) + "\n")
 
     total_contigs_in_bins = sum(
         len(contigs) for contigs in filtered_cluster_contigs.values()
