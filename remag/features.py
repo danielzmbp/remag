@@ -204,23 +204,27 @@ def filter_bacterial_contigs(
                 # Write eukaryotic sequences immediately to temp file
                 if prediction == "eukaryote" and euk_prob >= confidence_threshold:
                     fasta_out.write(f">{header}\n")
-                    for i in range(0, len(seq_upper), 60):
-                        fasta_out.write(f"{seq_upper[i:i+60]}\n")
+                    chunks = [
+                        seq_upper[i : i + 60] for i in range(0, len(seq_upper), 60)
+                    ]
+                    fasta_out.write("\n".join(chunks) + "\n")
                     n_eukaryotic += 1
                 else:
                     n_filtered += 1
                     # Save non-eukaryotic sequences if requested
                     if filtered_out_file:
                         filtered_out_file.write(f">{header}\n")
-                        for i in range(0, len(seq_upper), 60):
-                            filtered_out_file.write(f"{seq_upper[i:i+60]}\n")
+                        chunks = [
+                            seq_upper[i : i + 60] for i in range(0, len(seq_upper), 60)
+                        ]
+                        filtered_out_file.write("\n".join(chunks) + "\n")
 
             except Exception as e:
                 logger.error(f"Classification error for {header}: {e}")
                 # On error, keep sequence to be safe
                 fasta_out.write(f">{header}\n")
-                for i in range(0, len(seq_upper), 60):
-                    fasta_out.write(f"{seq_upper[i:i+60]}\n")
+                chunks = [seq_upper[i : i + 60] for i in range(0, len(seq_upper), 60)]
+                fasta_out.write("\n".join(chunks) + "\n")
                 n_eukaryotic += 1
 
     # Close the filtered out file if it was opened
@@ -886,9 +890,7 @@ def _process_contig_coverage_worker(args):
     Returns:
         Tuple of (fragment_coverage, fragment_coverage_std, [])
     """
-    (bam_contig_name, contig_data_list, total_coverage_per_base, bam_contig_length) = (
-        args
-    )
+    bam_contig_name, contig_data_list, total_coverage_per_base, bam_contig_length = args
     fragment_coverage = {}
     fragment_coverage_std = {}
 
