@@ -7,7 +7,6 @@ import json
 import os
 
 import numpy as np
-import pandas as pd
 from loguru import logger
 from sklearn.metrics.pairwise import cosine_similarity
 
