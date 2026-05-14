@@ -13,7 +13,6 @@ Original file is located at
 
 import math
 from functools import partial
-from typing import Optional
 
 # @title Imports
 # for HyenaDNA specifically
