@@ -204,23 +204,23 @@ def filter_bacterial_contigs(
                 # Write eukaryotic sequences immediately to temp file
                 if prediction == "eukaryote" and euk_prob >= confidence_threshold:
                     fasta_out.write(f">{header}\n")
-                    for i in range(0, len(seq_upper), 60):
-                        fasta_out.write(f"{seq_upper[i:i+60]}\n")
+                    if seq_upper:
+                        fasta_out.write('\n'.join(seq_upper[i:i+60] for i in range(0, len(seq_upper), 60)) + "\n")
                     n_eukaryotic += 1
                 else:
                     n_filtered += 1
                     # Save non-eukaryotic sequences if requested
                     if filtered_out_file:
                         filtered_out_file.write(f">{header}\n")
-                        for i in range(0, len(seq_upper), 60):
-                            filtered_out_file.write(f"{seq_upper[i:i+60]}\n")
+                        if seq_upper:
+                            filtered_out_file.write('\n'.join(seq_upper[i:i+60] for i in range(0, len(seq_upper), 60)) + "\n")
 
             except Exception as e:
                 logger.error(f"Classification error for {header}: {e}")
                 # On error, keep sequence to be safe
                 fasta_out.write(f">{header}\n")
-                for i in range(0, len(seq_upper), 60):
-                    fasta_out.write(f"{seq_upper[i:i+60]}\n")
+                if seq_upper:
+                    fasta_out.write('\n'.join(seq_upper[i:i+60] for i in range(0, len(seq_upper), 60)) + "\n")
                 n_eukaryotic += 1
 
     # Close the filtered out file if it was opened
