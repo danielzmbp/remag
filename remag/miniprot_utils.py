@@ -49,7 +49,7 @@ def estimate_organisms_from_all_contigs(
             # Extract gene counts from cached mappings
             gene_counts = {}
             for contig_name, genes in gene_mappings.items():
-                for gene_family in genes.keys():
+                for gene_family in genes:
                     gene_counts[gene_family] = gene_counts.get(gene_family, 0) + 1
 
             logger.info(
@@ -196,7 +196,7 @@ def estimate_organisms_from_all_contigs(
 
         # Count occurrences of each gene family from gene_mappings
         for contig_name, genes in gene_mappings.items():
-            for gene_family in genes.keys():
+            for gene_family in genes:
                 gene_counts[gene_family] = gene_counts.get(gene_family, 0) + 1
 
         logger.info(f"Found {len(gene_counts)} core genes across all contigs")
@@ -281,7 +281,7 @@ def parse_and_cache_paf_files(
     # Global mapping: contig -> gene_family -> alignment_info
     global_gene_mappings = {}
 
-    for cluster_id in filtered_clusters.keys():
+    for cluster_id in filtered_clusters:
         paf_file = os.path.join(temp_dir, f"{cluster_id}.paf")
 
         if not os.path.exists(paf_file) or os.path.getsize(paf_file) == 0:
@@ -394,7 +394,7 @@ def check_core_gene_duplications_from_cache(clusters_df, gene_mappings_cache, ar
         contig_genes = {}
         for contig_name in contig_names:
             if contig_name in gene_mappings_cache:
-                contig_genes[contig_name] = set(gene_mappings_cache[contig_name].keys())
+                contig_genes[contig_name] = set(gene_mappings_cache[contig_name])
 
         # Count total occurrences of each gene family across the cluster
         gene_counts = {}
