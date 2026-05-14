@@ -12,12 +12,12 @@ from .utils import ContigHeaderMapper
 def save_clusters_as_fasta(clusters_df, fragments_dict, args):
     """
     Write cluster bins as FASTA files under the `<output>/bins` directory.
-    
+
     Parameters:
         clusters_df (pd.DataFrame): DataFrame with at least `cluster` and `contig` columns mapping contigs to cluster IDs.
         fragments_dict (dict): Mapping from FASTA header to a fragment record containing a `"sequence"` string.
         args (object): Namespace-like object with `output` (base output directory) and `min_bin_size` (minimum total bases per bin) attributes.
-    
+
     Returns:
         valid_bins (set): Set of cluster IDs that were saved as FASTA files (excludes the `"noise"` cluster).
     """
@@ -66,7 +66,7 @@ def save_clusters_as_fasta(clusters_df, fragments_dict, args):
             for header in contig_headers:
                 seq = fragments_dict[header]["sequence"]
                 f.write(f">{header}\n")
-                lines = [seq[i: i+60] for i in range(0, len(seq), 60)]
+                lines = [seq[i : i + 60] for i in range(0, len(seq), 60)]
                 f.write("\n".join(lines) + "\n")
 
     total_contigs_in_bins = sum(

@@ -1,13 +1,13 @@
 import pandas as pd
+
 from remag.utils import group_contigs_by_cluster
 
 
 def test_group_contigs_by_cluster_normal():
     """Test normal grouping with multiple clusters and contigs."""
-    df = pd.DataFrame({
-        "contig": ["c1", "c2", "c3", "c4", "c5"],
-        "cluster": [1, 1, 2, 2, 2]
-    })
+    df = pd.DataFrame(
+        {"contig": ["c1", "c2", "c3", "c4", "c5"], "cluster": [1, 1, 2, 2, 2]}
+    )
 
     result = group_contigs_by_cluster(df)
 
@@ -28,10 +28,7 @@ def test_group_contigs_by_cluster_empty():
 
 def test_group_contigs_by_cluster_single():
     """Test grouping where each cluster has only one contig."""
-    df = pd.DataFrame({
-        "contig": ["c1", "c2", "c3"],
-        "cluster": [1, 2, 3]
-    })
+    df = pd.DataFrame({"contig": ["c1", "c2", "c3"], "cluster": [1, 2, 3]})
 
     result = group_contigs_by_cluster(df)
 
@@ -43,10 +40,7 @@ def test_group_contigs_by_cluster_single():
 
 def test_group_contigs_by_cluster_string_ids():
     """Test grouping with string cluster IDs instead of integers."""
-    df = pd.DataFrame({
-        "contig": ["c1", "c2", "c3"],
-        "cluster": ["A", "B", "A"]
-    })
+    df = pd.DataFrame({"contig": ["c1", "c2", "c3"], "cluster": ["A", "B", "A"]})
 
     result = group_contigs_by_cluster(df)
 
