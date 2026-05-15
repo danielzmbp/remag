@@ -37,6 +37,10 @@ def test_extract_base_contig_name_strips_remag_suffixes_from_spades_header():
 def test_plain_numeric_suffix_requires_fragment_context():
     assert extract_base_contig_name(f"{SPADES_HEADER}.0") == f"{SPADES_HEADER}.0"
 
+    # Missing .original in known_headers
+    known_headers = {f"{SPADES_HEADER}.0"}
+    assert extract_base_contig_name(f"{SPADES_HEADER}.0", known_headers=known_headers) == f"{SPADES_HEADER}.0"
+
 
 def test_contig_header_mapper_preserves_spades_decimal_header():
     fragments = {
