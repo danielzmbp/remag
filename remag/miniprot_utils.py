@@ -203,9 +203,9 @@ def estimate_organisms_from_all_contigs(
 
         # Log statistics
         if gene_counts:
-            counts_list = list(gene_counts.values())
-            max_count = max(counts_list)
-            median_count = sorted(counts_list)[len(counts_list) // 2]
+            counts_list = sorted(gene_counts.values())
+            max_count = counts_list[-1]
+            median_count = counts_list[len(counts_list) // 2]
             logger.debug(
                 f"Core gene occurrence statistics: max={max_count}, median={median_count}"
             )
