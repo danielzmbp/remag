@@ -24,7 +24,7 @@ def get_bin_scg_stats(bin_contigs, gene_mappings_cache):
     for c in bin_contigs:
         if c in gene_mappings_cache:
             # gene_mappings_cache[c] is a dict of {gene_id: info}
-            for gene_id in gene_mappings_cache[c].keys():
+            for gene_id in gene_mappings_cache[c]:
                 bin_genes[gene_id] = bin_genes.get(gene_id, 0) + 1
 
     present = len(bin_genes)
