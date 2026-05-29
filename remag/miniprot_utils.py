@@ -21,6 +21,19 @@ def check_miniprot_available():
     return shutil.which("miniprot") is not None
 
 
+def _build_miniprot_cmd(fasta_path, db_path, cores):
+    """Build the miniprot command list."""
+    return [
+        "miniprot",
+        "-I",
+        "-t",
+        str(cores),
+        "--outs=0.95",
+        fasta_path,
+        db_path,
+    ]
+
+
 def estimate_organisms_from_all_contigs(
     fragments_dict, args, target_coverage_threshold=0.60, identity_threshold=0.40
 ):
@@ -92,15 +105,7 @@ def estimate_organisms_from_all_contigs(
         miniprot_output = os.path.join(temp_dir, "all_contigs.paf")
         miniprot_stderr = os.path.join(temp_dir, "all_contigs.stderr")
 
-        cmd_list = [
-            "miniprot",
-            "-I",
-            "-t",
-            str(args.cores),
-            "--outs=0.95",
-            all_contigs_fasta,
-            db_path,
-        ]
+        cmd_list = _build_miniprot_cmd(all_contigs_fasta, db_path, args.cores)
 
         if args.verbose:
             logger.debug(f"Running miniprot command: {' '.join(cmd_list)}")
@@ -544,15 +549,7 @@ def check_core_gene_duplications(
             db_to_use = db_path  # Use the compressed file directly
 
             # Build secure command list (no shell injection possible)
-            cmd_list = [
-                "miniprot",
-                "-I",
-                "-t",
-                str(args.cores),
-                "--outs=0.95",
-                bin_fasta,
-                db_to_use,
-            ]
+            cmd_list = _build_miniprot_cmd(bin_fasta, db_to_use, args.cores)
 
             if args.verbose:
                 logger.debug(f"Running miniprot command: {' '.join(cmd_list)}")
