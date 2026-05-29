@@ -31,7 +31,7 @@ def get_bin_scg_stats(bin_contigs, gene_mappings_cache):
     if present == 0:
         return 0.0, 0.0
 
-    duplicated = len([g for g, count in bin_genes.items() if count > 1])
+    duplicated = len([c for c in bin_genes.values() if c > 1])
     duplication_rate = (duplicated / present) * 100.0
     return duplication_rate, present
 
