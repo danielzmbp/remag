@@ -139,8 +139,8 @@ class ContigHeaderMapper:
 
     def _build_mapping(self):
         """Build the contig name to header mapping."""
-        known_headers = set(self._fragments_dict.keys())
-        for header in self._fragments_dict.keys():
+        known_headers = set(self._fragments_dict)
+        for header in self._fragments_dict:
             contig_name = extract_base_contig_name(header, known_headers=known_headers)
             # In case of duplicates, keep the first one (consistent with original behavior)
             if contig_name not in self._contig_to_header_map:
