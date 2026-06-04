@@ -29,10 +29,12 @@ def generate_feature_mapping(kmer_len):
 
     kmers = ["".join(kmer) for kmer in itertools.product("ATGC", repeat=kmer_len)]
 
+    trans_table = str.maketrans(BASE_COMPLEMENT)
+
     for kmer in kmers:
         if kmer not in kmer_hash:
             kmer_hash[kmer] = counter
-            rev_compl = kmer.translate(str.maketrans(BASE_COMPLEMENT))[::-1]
+            rev_compl = kmer.translate(trans_table)[::-1]
             kmer_hash[rev_compl] = counter
             counter += 1
     return kmer_hash, counter
