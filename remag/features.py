@@ -1150,7 +1150,7 @@ def calculate_fragment_coverage(
             # Process coverage data in batches to reduce memory usage
             # Calculate total bases to estimate memory requirements
             total_bases = sum(
-                bam_lengths.get(contig, 0) for contig in contig_fragments.keys()
+                bam_lengths.get(contig, 0) for contig in contig_fragments
             )
 
             # Use batching if total data size is large (>1GB of coverage data estimated)
@@ -1291,7 +1291,7 @@ def calculate_fragment_coverage(
     all_fragment_headers = {
         fh for data in fragments_dict.values() for fh in data["fragments"]
     }
-    missing_fragments = all_fragment_headers - set(fragment_coverage.keys())
+    missing_fragments = all_fragment_headers - fragment_coverage.keys()
 
     for missing_fh in missing_fragments:
         fragment_coverage[missing_fh] = 0.0
