@@ -101,6 +101,15 @@ def get_features_csv_path(output_dir):
     return os.path.join(output_dir, "features.csv")
 
 
+def _write_fasta_record(handle, header, sequence):
+    handle.write(f">{header}\n")
+    for i in range(0, len(sequence), 60):
+        handle.write(sequence[i : i + 60] + "\n")
+
+
+EUKARYOTE_FILTER_THRESHOLD = 0.45
+
+
 def filter_bacterial_contigs(
     fasta_file,
     output_dir,
@@ -131,6 +140,7 @@ def filter_bacterial_contigs(
         output_dir, f"{name_without_ext}_eukaryotic_filtered.fasta"
     )
     classification_results = get_classification_results_path(fasta_file, output_dir)
+    os.makedirs(output_dir, exist_ok=True)
 
     if os.path.exists(filtered_fasta):
         logger.info(f"Using existing filtered FASTA: {filtered_fasta}")
@@ -158,7 +168,7 @@ def filter_bacterial_contigs(
         return fasta_file
 
     n_total = n_eukaryotic = n_filtered = 0
-    confidence_threshold = 0.5  # Threshold for eukaryotic confidence
+    eukaryote_filter_threshold = EUKARYOTE_FILTER_THRESHOLD
 
     # Use temporary file for writing sequences immediately
     temp_fasta = filtered_fasta + ".tmp"
@@ -172,6 +182,41 @@ def filter_bacterial_contigs(
         )
         filtered_out_file = open(filtered_out_fasta + ".tmp", "w", encoding="utf-8")
 
+    def process_record_batch(records, results_file, fasta_out):
+        nonlocal n_eukaryotic, n_filtered
+
+        if not records:
+            return
+
+        sequences = [seq for _, seq in records]
+        if hasattr(classifier, "predict_contigs"):
+            predictions = classifier.predict_contigs(sequences)
+        else:
+            predictions = [classifier.predict_contig(seq) for seq in sequences]
+
+        for (header, seq_upper), result in zip(records, predictions):
+            euk_prob = result["eukaryote_prob"]
+            confidence = result["confidence"]
+            num_windows = result["num_windows"]
+            resampled = result.get("resampled", False)
+            prediction = (
+                "eukaryote"
+                if euk_prob >= eukaryote_filter_threshold
+                else "non_eukaryote"
+            )
+
+            results_file.write(
+                f"{header}\t{len(seq_upper)}\t{prediction}\t{euk_prob:.4f}\t{confidence:.4f}\t{num_windows}\t{resampled}\n"
+            )
+
+            if prediction == "eukaryote":
+                _write_fasta_record(fasta_out, header, seq_upper)
+                n_eukaryotic += 1
+            else:
+                n_filtered += 1
+                if filtered_out_file:
+                    _write_fasta_record(filtered_out_file, header, seq_upper)
+
     with open(classification_results, "w", encoding="utf-8") as results_file, open(
         temp_fasta, "w", encoding="utf-8"
     ) as fasta_out:
@@ -180,60 +225,40 @@ def filter_bacterial_contigs(
             "contig_id\tlength\tprediction\teukaryote_prob\tconfidence\tnum_windows\tresampled\n"
         )
 
-        # Process sequences one at a time
+        # Process sequences in batches so HyenaDNA windows can be batched across contigs.
         logger.info("Classifying sequences...")
+        record_batch = []
+        record_batch_size = max(1, min(4096, hyenadna_batch_size))
         for header, seq in tqdm(fasta_iter(fasta_file), desc="Classifying sequences"):
             if len(seq) < min_contig_length:
                 continue
 
             n_total += 1
             seq_upper = seq.upper()
+            record_batch.append((header, seq_upper))
+
+            if len(record_batch) < record_batch_size:
+                continue
 
             try:
-                # Get detailed prediction results using predict_contig
-                result = classifier.predict_contig(seq_upper)
-
-                prediction = result["prediction"]
-                euk_prob = result["eukaryote_prob"]
-                confidence = result["confidence"]
-                num_windows = result["num_windows"]
-                resampled = result.get("resampled", False)
-
-                results_file.write(
-                    f"{header}\t{len(seq)}\t{prediction}\t{euk_prob:.4f}\t{confidence:.4f}\t{num_windows}\t{resampled}\n"
-                )
-
-                # Write eukaryotic sequences immediately to temp file
-                if prediction == "eukaryote" and euk_prob >= confidence_threshold:
-                    fasta_out.write(f">{header}\n")
-                    if seq_upper:
-                        chunks = [
-                            seq_upper[i : i + 60] for i in range(0, len(seq_upper), 60)
-                        ]
-                        fasta_out.write("\n".join(chunks) + "\n")
-                    n_eukaryotic += 1
-                else:
-                    n_filtered += 1
-                    # Save non-eukaryotic sequences if requested
-                    if filtered_out_file:
-                        filtered_out_file.write(f">{header}\n")
-                        if seq_upper:
-                            chunks = [
-                                seq_upper[i : i + 60]
-                                for i in range(0, len(seq_upper), 60)
-                            ]
-                            filtered_out_file.write("\n".join(chunks) + "\n")
+                process_record_batch(record_batch, results_file, fasta_out)
 
             except Exception as e:
-                logger.error(f"Classification error for {header}: {e}")
-                # On error, keep sequence to be safe
-                fasta_out.write(f">{header}\n")
-                if seq_upper:
-                    chunks = [
-                        seq_upper[i : i + 60] for i in range(0, len(seq_upper), 60)
-                    ]
-                    fasta_out.write("\n".join(chunks) + "\n")
-                n_eukaryotic += 1
+                logger.error(f"Classification error for current batch: {e}")
+                for fallback_header, fallback_seq in record_batch:
+                    _write_fasta_record(fasta_out, fallback_header, fallback_seq)
+                    n_eukaryotic += 1
+            finally:
+                record_batch = []
+
+        if record_batch:
+            try:
+                process_record_batch(record_batch, results_file, fasta_out)
+            except Exception as e:
+                logger.error(f"Classification error for final batch: {e}")
+                for fallback_header, fallback_seq in record_batch:
+                    _write_fasta_record(fasta_out, fallback_header, fallback_seq)
+                    n_eukaryotic += 1
 
     # Close the filtered out file if it was opened
     if filtered_out_file:
