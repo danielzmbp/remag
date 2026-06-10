@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-06-10
+
+### Added
+- Batched HyenaDNA filtering across contigs for faster GPU and MPS inference.
+- Extra deterministic resampling for borderline two-window HyenaDNA calls.
+- Regression tests for batched HyenaDNA prediction and filtering decisions.
+- Regression coverage for `group_contigs_by_cluster`, contig-name suffix handling, `is_gzipped`, and `BarlowTwinsLoss`.
+
+### Changed
+- Use a recall-friendly HyenaDNA eukaryote filtering cutoff of 0.45 after resampling.
+- Refactored miniprot command construction to remove duplicated command-list logic.
+
+### Performance
+- Optimized FASTA sequence writing and sequence formatting paths.
+- Reduced unnecessary dictionary key-view and set allocations in utility and clustering paths.
+- Hoisted repeated translation table creation out of k-mer feature mapping loops.
+- Optimized core-gene occurrence statistics and duplicated-bin gene counting.
+- Streamlined rescue and miniprot statistics loops by avoiding redundant key lookups.
+
+### Fixed
+- Corrected HyenaDNA window-count estimation when the final full window already reaches the sequence end.
+- Ensure HyenaDNA filtering creates its output directory when called directly.
+- Removed unused imports in rescue and HyenaDNA model code.
+
 ## [0.4.3] - 2026-05-09
 
 ### Fixed
@@ -348,7 +372,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Various bug fixes and improvements
 
-[Unreleased]: https://github.com/danielzmbp/remag/compare/v0.4.3...HEAD
+[Unreleased]: https://github.com/danielzmbp/remag/compare/v0.4.4...HEAD
+[0.4.4]: https://github.com/danielzmbp/remag/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/danielzmbp/remag/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/danielzmbp/remag/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/danielzmbp/remag/compare/v0.4.0...v0.4.1
