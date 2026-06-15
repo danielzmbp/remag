@@ -49,7 +49,7 @@ def normalize_coverage_args(args):
     return normalized_args
 
 
-class CoverageAwareCommand(click.Command):
+class CoverageAwareCommand(click.RichCommand):
     """Click command that normalizes multi-value coverage arguments."""
 
     def parse_args(self, ctx, args):
@@ -112,8 +112,7 @@ class SpaceSeparatedFloats(click.ParamType):
             self.fail(f"Invalid float list: {value}", param, ctx)
 
 
-click.rich_click.USE_RICH_MARKUP = True
-click.rich_click.USE_MARKDOWN = True
+click.rich_click.TEXT_MARKUP = "markdown"
 click.rich_click.SHOW_ARGUMENTS = True
 click.rich_click.GROUP_ARGUMENTS_OPTIONS = True
 click.rich_click.STYLE_ERRORS_SUGGESTION = "magenta italic"
@@ -299,7 +298,7 @@ def validate_coverage_options(ctx, param, value):
     type=SpaceSeparatedPaths(),
     multiple=True,
     callback=validate_coverage_options,
-    help="Coverage files for calculation. Supports BAM, CRAM (indexed), and TSV formats. Each file represents one sample. Auto-detects format by extension. Supports space-separated paths and glob patterns (e.g., '*.bam', '*.cram', '*.tsv').",
+    help="Coverage files for calculation. Supports BAM, CRAM (indexed), and TSV formats. Each file represents one sample. Auto-detects format by extension. Supports space-separated paths and glob patterns (e.g., `*.bam`, `*.cram`, `*.tsv`).",
 )
 @click.option(
     "-o",
