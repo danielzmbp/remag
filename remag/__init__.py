@@ -11,10 +11,20 @@ except ImportError:
 __author__ = "Daniel Gómez-Pérez"
 __email__ = "daniel.gomez-perez@earlham.ac.uk"
 
-try:
-    from .cli import main_cli
-    from .core import main
+__all__ = ["main", "main_cli"]
 
-    __all__ = ["main", "main_cli"]
-except ImportError:
-    __all__ = []
+
+def __getattr__(name):
+    if name == "main_cli":
+        from .cli import main_cli
+
+        return main_cli
+    if name == "main":
+        from .core import main
+
+        return main
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__():
+    return sorted(list(globals()) + __all__)

@@ -11,9 +11,13 @@ from importlib.metadata import version
 
 import rich_click as click
 
-from .core import main as run_remag
-
 __version__ = version("remag")
+
+
+def run_remag(args):
+    from .core import main as core_main
+
+    return core_main(args)
 
 
 def normalize_coverage_args(args):
