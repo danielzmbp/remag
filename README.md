@@ -151,6 +151,9 @@ remag contigs.fasta -c samples/*.bam
 # Using precomputed coverage tables (one TSV per sample)
 remag contigs.fasta -c sample1.tsv -c sample2.tsv
 
+# Using interval coverage files (one COV/bedGraph per sample)
+remag contigs.fasta -c sample1.bam.cov.gz -c sample2.bam.cov.gz
+
 # Only run eukaryotic filtering (skip binning)
 remag contigs.fasta --filter-only
 
@@ -167,9 +170,13 @@ remag contigs.fasta -c alignments.bam -k
 python -m remag contigs.fasta -c alignments.bam
 ```
 
-### Coverage TSV format
+### Precomputed Coverage Formats
 
-Precomputed coverage TSVs are supported as an alternative to BAM/CRAM. Use one TSV per sample.
+Precomputed coverage files are supported as an alternative to BAM/CRAM. Use one file per sample. REMAG auto-detects the precomputed coverage layout from the file contents.
+
+#### Contig-level TSV/TXT
+
+Use this format when you have one average coverage value per contig.
 
 - Column 1: contig ID
 - Last column: coverage value for that contig
@@ -183,11 +190,34 @@ contig_2	3.8
 contig_3	0.0
 ```
 
-TSV input provides contig-level coverage only. REMAG cannot infer fragment-specific coverage for augmented fragments from a TSV, so every fragment from the same contig gets the same coverage value. Use BAM/CRAM if you want fragment-level augmented coverage features. Do not mix TSV inputs with BAM/CRAM inputs in the same run.
+Contig-level TSV/TXT input provides contig-level coverage only. REMAG cannot infer fragment-specific coverage for augmented fragments from this layout, so every fragment from the same contig gets the same coverage value.
+
+#### Interval COV/bedGraph
+
+Use this format when you have per-interval coverage, such as output with run-length encoded coverage blocks.
+
+- Column 1: contig ID
+- Column 2: interval start, 0-based inclusive
+- Column 3: interval end, 0-based exclusive
+- Column 4: coverage value for that interval
+- No header row
+
+Example:
+
+```tsv
+ctg0	0	256	1
+ctg0	256	859	2
+ctg0	859	861	1
+ctg1	0	73	6
+```
+
+Supported extensions include `.cov`, `.cov.gz`, `.bedgraph`, `.bedgraph.gz`, `.bg`, and `.bg.gz`. Missing intervals are treated as zero coverage. Interval coverage is used to compute fragment-specific mean and standard deviation coverage, so it supports REMAG's random augmentations.
+
+Do not mix BAM/CRAM inputs with precomputed coverage inputs in the same run.
 
 ## Common Options
 
-- `-c, --coverage`: one or more BAM, CRAM, or TSV coverage inputs
+- `-c, --coverage`: one or more BAM, CRAM, contig-level TSV/TXT, or interval COV/bedGraph coverage inputs
 - `-o, --output`: output directory; defaults to `remag_output` next to the input FASTA
 - `-k, --keep-intermediate`: retain embeddings, features, model weights, and other intermediate files
 - `--filter-only`: stop after eukaryotic filtering and write filtered FASTA output

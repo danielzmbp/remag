@@ -4,6 +4,7 @@ Feature extraction module for REMAG
 
 import hashlib
 import itertools
+import gzip
 import os
 import random
 from collections import OrderedDict
@@ -609,9 +610,15 @@ def get_features(
                     bam_files, cores, coverage_batch_size
                 )
             elif tsv_files:
-                expected_cols = [
-                    os.path.splitext(os.path.basename(f))[0] for f in tsv_files
-                ]
+                expected_cols = []
+                for coverage_file in tsv_files:
+                    sample_name = _coverage_sample_name(coverage_file)
+                    if _looks_like_interval_coverage(coverage_file):
+                        expected_cols.extend(
+                            [f"{sample_name}_coverage", f"{sample_name}_coverage_std"]
+                        )
+                    else:
+                        expected_cols.append(sample_name)
                 missing_cols = [col for col in expected_cols if col not in df.columns]
                 if missing_cols:
                     needs_recalc = True
@@ -1330,11 +1337,249 @@ def calculate_fragment_coverage(
     return fragment_coverage, fragment_coverage_std
 
 
+def _coverage_sample_name(coverage_file: str) -> str:
+    """Return a stable sample name for precomputed coverage files."""
+    sample_name = os.path.basename(coverage_file)
+    for suffix in (
+        ".gz",
+        ".cov",
+        ".bedgraph",
+        ".bg",
+        ".tsv",
+        ".txt",
+        ".bam",
+        ".cram",
+    ):
+        if sample_name.lower().endswith(suffix):
+            sample_name = sample_name[: -len(suffix)]
+    return sample_name
+
+
+def _open_text_coverage_file(coverage_file: str):
+    if coverage_file.lower().endswith(".gz"):
+        return gzip.open(coverage_file, "rt", encoding="utf-8")
+    return open(coverage_file, "r", encoding="utf-8")
+
+
+def _looks_like_interval_coverage(coverage_file: str) -> bool:
+    """Detect bedGraph-like coverage: contig, start, end, coverage."""
+    with _open_text_coverage_file(coverage_file) as handle:
+        for line in handle:
+            stripped = line.strip()
+            lower_line = stripped.lower()
+            if (
+                not stripped
+                or stripped.startswith("#")
+                or lower_line.startswith("track ")
+                or lower_line.startswith("browser ")
+            ):
+                continue
+
+            fields = stripped.split()
+            if len(fields) < 4:
+                return False
+
+            try:
+                start = int(fields[1])
+                end = int(fields[2])
+                float(fields[3])
+            except ValueError:
+                return False
+
+            return start >= 0 and end >= start
+
+    return False
+
+
+def _build_contig_header_lookup(fragments_dict: FragmentDict) -> Dict[str, str]:
+    """Build relaxed contig-name lookup for precomputed coverage inputs."""
+    lookup = {}
+    for original_header in fragments_dict:
+        candidates = {original_header, original_header.split()[0]}
+        if "." in original_header:
+            candidates.add(original_header.rsplit(".", 1)[0])
+
+        for candidate in candidates:
+            lookup.setdefault(candidate, original_header)
+
+    return lookup
+
+
+def _calculate_interval_file_coverage(
+    coverage_file: str, fragments_dict: FragmentDict
+) -> Tuple[pd.Series, pd.Series]:
+    """Calculate fragment mean/std coverage from interval coverage files."""
+    all_fragment_headers = [
+        fragment_header
+        for data in fragments_dict.values()
+        for fragment_header in data["fragments"]
+    ]
+    coverage_sums = {fragment_header: 0.0 for fragment_header in all_fragment_headers}
+    coverage_sq_sums = {fragment_header: 0.0 for fragment_header in all_fragment_headers}
+    fragment_lengths = {fragment_header: 0 for fragment_header in all_fragment_headers}
+
+    contig_fragments = {}
+    for original_header, data in fragments_dict.items():
+        fragment_info = data.get("fragment_info", {})
+        records = []
+
+        for fragment_header in data["fragments"]:
+            info = fragment_info.get(fragment_header)
+            if not info:
+                logger.warning(
+                    f"Missing fragment info for {fragment_header}; setting interval coverage to 0."
+                )
+                continue
+
+            start_pos = int(info["start_pos"])
+            length = int(info["length"])
+            if start_pos < 0 or length <= 0:
+                logger.warning(
+                    f"Invalid fragment coordinates for {fragment_header}; setting interval coverage to 0."
+                )
+                continue
+
+            end_pos = start_pos + length
+            records.append((fragment_header, start_pos, end_pos))
+            fragment_lengths[fragment_header] = length
+
+        contig_fragments[original_header] = records
+
+    header_lookup = _build_contig_header_lookup(fragments_dict)
+    contig_cache = {}
+    bad_line_count = 0
+
+    with _open_text_coverage_file(coverage_file) as handle:
+        for line_number, line in enumerate(handle, start=1):
+            stripped = line.strip()
+            lower_line = stripped.lower()
+            if (
+                not stripped
+                or stripped.startswith("#")
+                or lower_line.startswith("track ")
+                or lower_line.startswith("browser ")
+            ):
+                continue
+
+            fields = stripped.split()
+            if len(fields) < 4:
+                bad_line_count += 1
+                continue
+
+            try:
+                contig_name = fields[0]
+                interval_start = int(fields[1])
+                interval_end = int(fields[2])
+                coverage_value = float(fields[3])
+            except ValueError:
+                bad_line_count += 1
+                continue
+
+            if interval_start < 0 or interval_end < interval_start:
+                bad_line_count += 1
+                continue
+
+            if contig_name not in contig_cache:
+                contig_cache[contig_name] = header_lookup.get(contig_name)
+
+            original_header = contig_cache[contig_name]
+            if original_header is None:
+                continue
+
+            for fragment_header, fragment_start, fragment_end in contig_fragments[
+                original_header
+            ]:
+                overlap_start = max(interval_start, fragment_start)
+                overlap_end = min(interval_end, fragment_end)
+                overlap_length = overlap_end - overlap_start
+
+                if overlap_length <= 0:
+                    continue
+
+                coverage_sums[fragment_header] += overlap_length * coverage_value
+                coverage_sq_sums[fragment_header] += (
+                    overlap_length * coverage_value * coverage_value
+                )
+
+    if bad_line_count:
+        logger.warning(
+            f"Skipped {bad_line_count} malformed interval coverage lines in {coverage_file}."
+        )
+
+    mean_coverage = {}
+    std_coverage = {}
+    for fragment_header in all_fragment_headers:
+        length = fragment_lengths[fragment_header]
+        if length <= 0:
+            mean_coverage[fragment_header] = 0.0
+            std_coverage[fragment_header] = 0.0
+            continue
+
+        mean = coverage_sums[fragment_header] / length
+        mean_sq = coverage_sq_sums[fragment_header] / length
+        variance = max(0.0, mean_sq - mean * mean)
+        mean_coverage[fragment_header] = float(mean)
+        std_coverage[fragment_header] = float(np.sqrt(variance))
+
+    sample_name = _coverage_sample_name(coverage_file)
+    return (
+        pd.Series(mean_coverage, name=f"{sample_name}_coverage", dtype=float),
+        pd.Series(std_coverage, name=f"{sample_name}_coverage_std", dtype=float),
+    )
+
+
+def _calculate_contig_tsv_coverage(
+    tsv_file: str, fragments_dict: FragmentDict
+) -> Optional[pd.Series]:
+    """Calculate coverage from contig-level TSV/TXT files."""
+    try:
+        coverage_df = pd.read_csv(
+            tsv_file,
+            sep=r"\s+",
+            header=None,
+            comment="#",
+            compression="infer",
+        )
+        if len(coverage_df.columns) < 2:
+            logger.error(f"TSV file {tsv_file} has fewer than 2 columns")
+            return None
+
+        header_coverage = dict(zip(coverage_df[0], coverage_df.iloc[:, -1]))
+
+        fragment_coverage = {}
+        for original_header, data in fragments_dict.items():
+            coverage_value = 0.0
+
+            if original_header in header_coverage:
+                coverage_value = float(header_coverage[original_header])
+            else:
+                base_header = original_header.split()[0]
+                if base_header in header_coverage:
+                    coverage_value = float(header_coverage[base_header])
+                else:
+                    logger.warning(
+                        f"No coverage found for {original_header} in {tsv_file}. Setting to 0."
+                    )
+
+            for fragment_header in data["fragments"]:
+                fragment_coverage[fragment_header] = coverage_value
+
+        col_name = _coverage_sample_name(tsv_file)
+        return pd.Series(fragment_coverage, name=col_name, dtype=float)
+
+    except pd.errors.EmptyDataError:
+        logger.error(f"TSV file {tsv_file} is empty. Skipping.")
+    except Exception as e:
+        logger.error(f"Error processing TSV file {tsv_file}: {e}. Skipping.")
+
+    return None
+
+
 # Coverage calculation functions
 def calculate_coverage_from_tsv(
     tsv_files: List[str], fragments_dict: FragmentDict
 ) -> pd.DataFrame:
-    """Calculate coverage from TSV files."""
+    """Calculate coverage from contig-level or interval precomputed coverage files."""
     # Get all fragment headers for consistent indexing
     all_fragment_headers = [
         fragment_header
@@ -1344,51 +1589,27 @@ def calculate_coverage_from_tsv(
 
     all_coverage_series = []
 
-    for i, tsv_file in enumerate(tsv_files):
+    for tsv_file in tsv_files:
         try:
-            coverage_df = pd.read_csv(tsv_file, sep="\t", header=None)
-            if len(coverage_df.columns) < 2:
-                logger.error(f"TSV file {tsv_file} has fewer than 2 columns")
-                continue
-
-            header_coverage = dict(zip(coverage_df[0], coverage_df.iloc[:, -1]))
-
-            # Process each fragment
-            fragment_coverage = {}
-            for original_header, data in fragments_dict.items():
-                # Try to find coverage value for this contig
-                coverage_value = 0.0  # Default to 0 if not found
-
-                # Try exact match first
-                if original_header in header_coverage:
-                    coverage_value = float(header_coverage[original_header])
-                else:
-                    # Try matching after splitting on space
-                    base_header = original_header.split()[0]
-                    if base_header in header_coverage:
-                        coverage_value = float(header_coverage[base_header])
-                    else:
-                        logger.warning(
-                            f"No coverage found for {original_header} in {tsv_file}. Setting to 0."
-                        )
-
-                # Assign same coverage to all fragments from this contig
-                for fragment_header in data["fragments"]:
-                    fragment_coverage[fragment_header] = coverage_value
-
-            col_name = os.path.splitext(os.path.basename(tsv_file))[0]
-            coverage_series = pd.Series(fragment_coverage, name=col_name, dtype=float)
-            all_coverage_series.append(coverage_series)
-
-        except pd.errors.EmptyDataError:
-            logger.error(f"TSV file {tsv_file} is empty. Skipping.")
-            continue
+            if _looks_like_interval_coverage(tsv_file):
+                logger.debug(f"Detected interval coverage format for {tsv_file}")
+                mean_series, std_series = _calculate_interval_file_coverage(
+                    tsv_file, fragments_dict
+                )
+                all_coverage_series.extend([mean_series, std_series])
+            else:
+                logger.debug(f"Detected contig-level coverage format for {tsv_file}")
+                coverage_series = _calculate_contig_tsv_coverage(tsv_file, fragments_dict)
+                if coverage_series is not None:
+                    all_coverage_series.append(coverage_series)
         except Exception as e:
-            logger.error(f"Error processing TSV file {tsv_file}: {e}. Skipping.")
+            logger.error(
+                f"Error processing precomputed coverage file {tsv_file}: {e}. Skipping."
+            )
             continue
 
     if not all_coverage_series:
-        logger.warning("No coverage data could be loaded from any TSV files.")
+        logger.warning("No coverage data could be loaded from precomputed files.")
         return pd.DataFrame(index=all_fragment_headers)
 
     # Combine all coverage series into a single dataframe

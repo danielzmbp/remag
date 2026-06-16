@@ -13,6 +13,27 @@ import rich_click as click
 
 __version__ = version("remag")
 
+PRECOMPUTED_COVERAGE_SUFFIXES = (
+    ".tsv",
+    ".tsv.gz",
+    ".txt",
+    ".txt.gz",
+    ".cov",
+    ".cov.gz",
+    ".bedgraph",
+    ".bedgraph.gz",
+    ".bg",
+    ".bg.gz",
+)
+
+
+def is_alignment_coverage_file(file_path):
+    return file_path.lower().endswith((".bam", ".cram"))
+
+
+def is_precomputed_coverage_file(file_path):
+    return file_path.lower().endswith(PRECOMPUTED_COVERAGE_SUFFIXES)
+
 
 def run_remag(args):
     from .core import main as core_main
@@ -250,20 +271,19 @@ def validate_coverage_options(ctx, param, value):
     tsv_files = []
 
     for file_path in flattened_files:
-        ext = file_path.lower().split(".")[-1]
-        if ext in ["bam", "cram"]:
+        if is_alignment_coverage_file(file_path):
             bam_cram_files.append(file_path)
-        elif ext in ["tsv", "txt"]:
+        elif is_precomputed_coverage_file(file_path):
             tsv_files.append(file_path)
         else:
             raise click.BadParameter(
-                f"Unsupported coverage file format: {file_path}. Supported formats: BAM, CRAM, TSV"
+                f"Unsupported coverage file format: {file_path}. Supported formats: BAM, CRAM, TSV/TXT, COV, bedGraph"
             )
 
-    # Don't allow mixing BAM/CRAM with TSV files
+    # Don't allow mixing alignment files with precomputed coverage files
     if bam_cram_files and tsv_files:
         raise click.BadParameter(
-            "Cannot mix BAM/CRAM files with TSV files. Use either alignment files or pre-computed coverage files, not both."
+            "Cannot mix BAM/CRAM files with precomputed coverage files. Use either alignment files or precomputed coverage files, not both."
         )
 
     return flattened_files
@@ -298,7 +318,7 @@ def validate_coverage_options(ctx, param, value):
     type=SpaceSeparatedPaths(),
     multiple=True,
     callback=validate_coverage_options,
-    help="Coverage files for calculation. Supports BAM, CRAM (indexed), and TSV formats. Each file represents one sample. Auto-detects format by extension. Supports space-separated paths and glob patterns (e.g., `*.bam`, `*.cram`, `*.tsv`).",
+    help="Coverage files for calculation. Supports BAM/CRAM alignment files, contig-level TSV/TXT coverage, and interval COV/bedGraph coverage. Each file represents one sample. Supports space-separated paths and glob patterns (e.g., `*.bam`, `*.cram`, `*.tsv`, `*.cov.gz`).",
 )
 @click.option(
     "-o",
@@ -580,10 +600,9 @@ def main_cli(
 
     if coverage:
         for file_path in coverage:
-            ext = file_path.lower().split(".")[-1]
-            if ext in ["bam", "cram"]:
+            if is_alignment_coverage_file(file_path):
                 bam_cram_files.append(file_path)
-            elif ext in ["tsv", "txt"]:
+            elif is_precomputed_coverage_file(file_path):
                 tsv_files.append(file_path)
 
     # Set default Barlow Twins lambda based on number of samples if not provided
