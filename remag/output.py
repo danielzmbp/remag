@@ -40,12 +40,14 @@ def save_clusters_as_fasta(clusters_df, fragments_dict, args):
         .to_dict()
     )
 
-    # Filter clusters by size
+    # Filter clusters by size, storing computed size for later logging
     filtered_cluster_contigs = {}
+    filtered_cluster_sizes = {}
     for cluster_id, contig_headers in cluster_contig_dict.items():
         total_size = sum(len(fragments_dict[h]["sequence"]) for h in contig_headers)
         if total_size >= args.min_bin_size:
             filtered_cluster_contigs[cluster_id] = contig_headers
+            filtered_cluster_sizes[cluster_id] = total_size
 
     # Write FASTA files
     logger.info("Bin composition:")
@@ -53,13 +55,11 @@ def save_clusters_as_fasta(clusters_df, fragments_dict, args):
         if cluster_id == "noise":
             continue
 
-        total_length = sum(len(fragments_dict[h]["sequence"]) for h in contig_headers)
-
         # Create simple filename
         bin_file = os.path.join(bins_dir, f"{cluster_id}.fa")
 
         logger.info(
-            f"  {cluster_id}: {len(contig_headers)} contigs, {total_length:,} bp"
+            f"  {cluster_id}: {len(contig_headers)} contigs, {filtered_cluster_sizes[cluster_id]:,} bp"
         )
 
         with open(bin_file, "w") as f:

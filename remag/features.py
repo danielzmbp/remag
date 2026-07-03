@@ -776,13 +776,9 @@ def get_features(
         }
         for header, data in fragments_dict.items()
     }
-    # Save features and fragments only if keeping intermediate files
+    pd.to_pickle(compact_dict, fragments_path, protocol=4)
     if getattr(args, "keep_intermediate", False):
-        pd.to_pickle(compact_dict, fragments_path, protocol=4)
         df.to_csv(features_csv_path)
-    else:
-        # Still save fragments dict for bin generation, but not features
-        pd.to_pickle(compact_dict, fragments_path, protocol=4)
 
     return df, fragments_dict
 
@@ -1073,26 +1069,22 @@ def _calculate_fragment_stats_vectorized(coverage_array, fragment_coords):
 
     # For larger numbers of fragments, use advanced indexing for speedup
     try:
-        all_indices = []
-        fragment_starts = []
-        fragment_lengths = []
+        fragment_lengths = [max(0, end - start) for start, end in fragment_coords]
+        fragment_lengths_arr = np.array(fragment_lengths, dtype=np.intp)
 
-        for start, end in fragment_coords:
-            length = end - start
-            if length > 0:
-                all_indices.extend(range(start, end))
-                fragment_starts.append(len(all_indices) - length)
-                fragment_lengths.append(length)
-            else:
-                fragment_starts.append(0)
-                fragment_lengths.append(0)
+        valid_coords = [(s, e) for s, e in fragment_coords if e > s]
+        if valid_coords:
+            all_indices = np.concatenate(
+                [np.arange(s, e, dtype=np.intp) for s, e in valid_coords]
+            )
+        else:
+            all_indices = np.empty(0, dtype=np.intp)
 
-        if all_indices:
+        if all_indices.size > 0:
             # Extract all fragment data at once using advanced indexing
             all_fragment_data = coverage_array[all_indices]
 
             # Prepare arrays for reduceat
-            fragment_lengths_arr = np.array(fragment_lengths)
             cumulative_indices_arr = np.cumsum([0] + fragment_lengths[:-1])
 
             # Only process non-empty fragments
@@ -1316,7 +1308,7 @@ def calculate_fragment_coverage(
                     logger.error(
                         f"BAM file {bam_file} has NO mapped reads - cannot calculate coverage"
                     )
-        except:
+        except Exception:
             logger.error(f"Could not read BAM file stats for {bam_file}")
 
         return {}, {}

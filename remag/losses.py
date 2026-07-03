@@ -27,6 +27,7 @@ class BarlowTwinsLoss(nn.Module):
         super(BarlowTwinsLoss, self).__init__()
         self.lambda_param = lambda_param
         self.eps = eps
+        self._off_diagonal_mask = None
 
     def forward(self, output1, output2, base_ids=None, return_stats=False):
         """
@@ -49,9 +50,15 @@ class BarlowTwinsLoss(nn.Module):
         invariance_loss = torch.pow(torch.diagonal(cross_corr) - 1.0, 2).sum()
 
         # Compute redundancy reduction loss (off-diagonal terms should be close to 0)
-        off_diagonal_mask = ~torch.eye(
-            projection_dim, dtype=torch.bool, device=output1.device
-        )
+        if (
+            self._off_diagonal_mask is None
+            or self._off_diagonal_mask.shape[0] != projection_dim
+            or self._off_diagonal_mask.device != output1.device
+        ):
+            self._off_diagonal_mask = ~torch.eye(
+                projection_dim, dtype=torch.bool, device=output1.device
+            )
+        off_diagonal_mask = self._off_diagonal_mask
         redundancy_loss = torch.pow(cross_corr[off_diagonal_mask], 2).sum()
 
         # Total loss
