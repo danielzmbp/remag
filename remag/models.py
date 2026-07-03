@@ -425,8 +425,6 @@ class EnhancedFusionLayer(nn.Module):
                 f"Fusion input shapes - kmer: {kmer_features.shape}, coverage: {coverage_features.shape}"
             )
 
-        batch_size = kmer_features.size(0)
-
         # Project to common dimension
         kmer_proj = self.kmer_proj(kmer_features)  # [B, embed_dim]
         coverage_proj = self.coverage_proj(coverage_features)  # [B, embed_dim]
@@ -437,13 +435,13 @@ class EnhancedFusionLayer(nn.Module):
 
         # Bidirectional cross-attention
         # K-mer attending to coverage
-        kmer_attended, kmer_attn_weights = self.kmer_to_coverage_attn(
+        kmer_attended, _ = self.kmer_to_coverage_attn(
             kmer_seq, coverage_seq, coverage_seq
         )
         kmer_attended = kmer_attended.squeeze(1)  # [B, embed_dim]
 
         # Coverage attending to k-mer
-        coverage_attended, coverage_attn_weights = self.coverage_to_kmer_attn(
+        coverage_attended, _ = self.coverage_to_kmer_attn(
             coverage_seq, kmer_seq, kmer_seq
         )
         coverage_attended = coverage_attended.squeeze(1)  # [B, embed_dim]
@@ -815,8 +813,8 @@ def train_siamese_network(features_df, args):
     # Check if dataloader is empty (dataset too small)
     if len(dataloader) == 0:
         logger.warning(
-            f"Dataset is very small. Creating untrained model. "
-            f"This typically happens with very small datasets."
+            "Dataset is very small. Creating untrained model. "
+            "This typically happens with very small datasets."
         )
         torch.save(model.state_dict(), model_path)
         return model

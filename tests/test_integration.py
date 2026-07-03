@@ -8,20 +8,19 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from remag.clustering import ClusteringManager, GraphManager
+from remag.clustering import ClusteringManager, _construct_knn_graph
 
 
 class TestClusteringIntegration:
     """Integration tests for the clustering pipeline."""
 
     def test_graph_manager_construction(self, sample_embeddings_df):
-        """Test that GraphManager can construct graphs from embeddings."""
-        # Create GraphManager with test parameters
-        graph_manager = GraphManager(k=5, similarity_threshold=0.1, n_jobs=1)
-
+        """Test that a k-NN graph can be constructed from embeddings."""
         # Test graph construction
         embeddings = sample_embeddings_df.values
-        graph = graph_manager.construct_graph(embeddings)
+        graph = _construct_knn_graph(
+            embeddings, k=5, similarity_threshold=0.1, n_jobs=1
+        )
 
         # Basic sanity checks
         assert graph.vcount() == len(sample_embeddings_df)
@@ -120,18 +119,21 @@ class TestGraphCaching:
         mock_args.output = temp_dir
         mock_args.keep_intermediate = True
 
-        graph_manager = GraphManager(k=5, similarity_threshold=0.1)
         embeddings = sample_embeddings_df.values
 
         # First call should create the graph and save cache
-        graph1 = graph_manager.construct_graph(embeddings, mock_args)
+        graph1 = _construct_knn_graph(
+            embeddings, k=5, similarity_threshold=0.1, args=mock_args
+        )
 
         # Check that cache files were created
         cache_files = [f for f in os.listdir(temp_dir) if "graph" in f.lower()]
         # Note: May not create cache files in this test scenario, but should not crash
 
         # Second call with same parameters should use cache (if implemented)
-        graph2 = graph_manager.construct_graph(embeddings, mock_args)
+        graph2 = _construct_knn_graph(
+            embeddings, k=5, similarity_threshold=0.1, args=mock_args
+        )
 
         # Graphs should be equivalent
         assert graph1.vcount() == graph2.vcount()
@@ -142,15 +144,15 @@ class TestGraphCaching:
         mock_args.output = temp_dir
         mock_args.keep_intermediate = True
 
-        # Create two different GraphManagers
-        graph_manager1 = GraphManager(k=5, similarity_threshold=0.1)
-        graph_manager2 = GraphManager(k=10, similarity_threshold=0.2)
-
         embeddings = sample_embeddings_df.values
 
         # Different parameters should create different graphs
-        graph1 = graph_manager1.construct_graph(embeddings, mock_args)
-        graph2 = graph_manager2.construct_graph(embeddings, mock_args)
+        graph1 = _construct_knn_graph(
+            embeddings, k=5, similarity_threshold=0.1, args=mock_args
+        )
+        graph2 = _construct_knn_graph(
+            embeddings, k=10, similarity_threshold=0.2, args=mock_args
+        )
 
         # Should not crash and should handle parameter differences
         assert graph1.vcount() == graph2.vcount()  # Same input size

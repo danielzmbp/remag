@@ -21,16 +21,6 @@ class GraphManager:
         self.similarity_threshold = similarity_threshold
         self.n_jobs = n_jobs
 
-    def construct_graph(self, embeddings, args=None):
-        """Construct k-NN graph from embeddings."""
-        return _construct_knn_graph(
-            embeddings,
-            k=self.k,
-            similarity_threshold=self.similarity_threshold,
-            n_jobs=self.n_jobs,
-            args=args,
-        )
-
 
 class ClusteringManager:
     """Main clustering orchestrator."""

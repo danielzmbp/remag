@@ -157,41 +157,6 @@ class ContigHeaderMapper:
         """
         return self._contig_to_header_map.get(contig_name)
 
-    def get_mapping(self) -> Dict[str, str]:
-        """Get the complete contig to header mapping.
-
-        Returns:
-            Dictionary mapping contig names to headers
-        """
-        return self._contig_to_header_map.copy()
-
-    def has_contig(self, contig_name: str) -> bool:
-        """Check if a contig name exists in the mapping.
-
-        Args:
-            contig_name: The base contig name to check
-
-        Returns:
-            True if the contig exists in the mapping
-        """
-        return contig_name in self._contig_to_header_map
-
-
-def group_contigs_by_cluster(clusters_df):
-    """Group contigs by their cluster assignments.
-
-    Replaces the repeated pattern of manually building cluster_contig_counts
-    dictionaries throughout the codebase.
-
-    Args:
-        clusters_df: DataFrame with 'contig' and 'cluster' columns
-
-    Returns:
-        Dictionary mapping cluster IDs to sets of contig names
-    """
-    cluster_groups = clusters_df.groupby("cluster")["contig"].apply(set).to_dict()
-    return cluster_groups
-
 
 def initialize_duplication_columns(clusters_df):
     """Initialize core gene duplication columns in clusters DataFrame.

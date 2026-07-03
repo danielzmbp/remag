@@ -148,9 +148,6 @@ def estimate_organisms_from_all_contigs(
                             query_length = int(parts[1])
                             query_start = int(parts[2])
                             query_end = int(parts[3])
-                            target_length = int(parts[6])
-                            target_start = int(parts[7])
-                            target_end = int(parts[8])
                             matching_bases = int(parts[9])
                             alignment_length = int(parts[10])
 
@@ -305,9 +302,6 @@ def parse_and_cache_paf_files(
                         query_start = int(parts[2])
                         query_end = int(parts[3])
                         target_name = parts[5]  # Contig name
-                        target_length = int(parts[6])
-                        target_start = int(parts[7])
-                        target_end = int(parts[8])
                         matching_bases = int(parts[9])
                         alignment_length = int(parts[10])
 
@@ -595,9 +589,6 @@ def check_core_gene_duplications(
                                         query_start = int(parts[2])
                                         query_end = int(parts[3])
                                         target_name = parts[5]  # Contig name
-                                        target_length = int(parts[6])
-                                        target_start = int(parts[7])
-                                        target_end = int(parts[8])
                                         matching_bases = int(parts[9])
                                         alignment_length = int(parts[10])
 

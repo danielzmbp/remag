@@ -51,7 +51,7 @@ def test_contig_header_mapper_preserves_spades_decimal_header():
     mapper = ContigHeaderMapper(fragments)
 
     assert mapper.get_header(SPADES_HEADER) == f"{SPADES_HEADER}.original"
-    assert not mapper.has_contig("NODE_13_length_77980_cov_5")
+    assert mapper.get_header("NODE_13_length_77980_cov_5") is None
 
 
 def test_sequence_dataset_groups_spades_fragments_by_full_decimal_header():
