@@ -294,9 +294,10 @@ def _construct_knn_graph(
 
     # Adjust k if we have fewer samples than k+1
     if n_samples <= k:
+        original_k = k
         k = n_samples - 1
         logger.warning(
-            f"Adjusted k from {k + 1} to {k} due to limited samples ({n_samples})"
+            f"Adjusted k from {original_k} to {k} due to limited samples ({n_samples})"
         )
 
     # Check if graph already exists and can be loaded
