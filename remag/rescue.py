@@ -15,6 +15,19 @@ from .miniprot_utils import get_gene_mappings_cache_path
 MAX_MERGE_DUPLICATION_PERCENT = 10.0
 
 
+def _weighted_centroid(members, embeddings_df, contig_lengths):
+    """Return the length-weighted centroid of the given contigs' embeddings.
+
+    All ``members`` must be present in ``embeddings_df.index``.
+    """
+    vecs = embeddings_df.loc[members].values
+    weights = np.array(
+        [contig_lengths.get(c, 1000) for c in members], dtype=float
+    ).reshape(-1, 1)
+    weights = weights / weights.sum()
+    return np.sum(vecs * weights, axis=0)
+
+
 def get_bin_scg_stats(bin_contigs, gene_mappings_cache):
     """Calculate SCG duplication % for a list of contigs."""
     if not bin_contigs:
@@ -97,14 +110,9 @@ def rescue_fragmented_bins(
         bin_sizes[b] = size
 
         # Calculate weighted centroid
-        vecs = embeddings_df.loc[valid_members].values
-        weights = np.array(
-            [contig_lengths.get(c, 1000) for c in valid_members]
-        ).reshape(-1, 1)
-        weights = weights / weights.sum()
-        centroid = np.sum(vecs * weights, axis=0)
-
-        bin_centroids[b] = centroid
+        bin_centroids[b] = _weighted_centroid(
+            valid_members, embeddings_df, contig_lengths
+        )
 
     # Sort bins by size (smallest first) so we merge small into large
     # Filter out bins that had no valid embeddings (not in bin_centroids)
@@ -226,13 +234,9 @@ def rescue_fragmented_bins(
         updated_bin_members[b] = list(members)
 
         # Calculate weighted centroid
-        vecs = embeddings_df.loc[valid_members].values
-        weights = np.array(
-            [contig_lengths.get(c, 1000) for c in valid_members]
-        ).reshape(-1, 1)
-        weights = weights / weights.sum()
-        centroid = np.sum(vecs * weights, axis=0)
-        updated_centroids[b] = centroid
+        updated_centroids[b] = _weighted_centroid(
+            valid_members, embeddings_df, contig_lengths
+        )
 
     # Identify noise contigs
     noise_contigs = clusters_df[clusters_df["cluster"] == "noise"]["contig"].values
