@@ -29,12 +29,11 @@ class BarlowTwinsLoss(nn.Module):
         self.eps = eps
         self._off_diagonal_mask = None
 
-    def forward(self, output1, output2, base_ids=None, return_stats=False):
+    def forward(self, output1, output2, return_stats=False):
         """
         Args:
             output1: a tensor of shape (batch_size, projection_dim)
             output2: a tensor of shape (batch_size, projection_dim)
-            base_ids: unused in Barlow Twins but kept for compatibility
             return_stats: if True, return (loss, stats_dict) instead of just loss
         """
         batch_size, projection_dim = output1.shape

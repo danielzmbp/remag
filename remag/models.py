@@ -187,11 +187,10 @@ class TrainingManager:
 
         for batch_idx, batch_data in enumerate(dataloader):
             # Unpack batch data
-            features1, features2, base_ids = batch_data
-            features1, features2, base_ids = (
+            features1, features2 = batch_data
+            features1, features2 = (
                 features1.to(self.device),
                 features2.to(self.device),
-                base_ids.to(self.device),
             )
 
             optimizer.zero_grad()
@@ -202,11 +201,9 @@ class TrainingManager:
             # Compute Barlow Twins loss
             is_last_batch = batch_idx == len(dataloader) - 1
             if is_last_batch:
-                loss, matrix_stats = criterion(
-                    output1, output2, base_ids, return_stats=True
-                )
+                loss, matrix_stats = criterion(output1, output2, return_stats=True)
             else:
-                loss = criterion(output1, output2, base_ids)
+                loss = criterion(output1, output2)
 
             loss.backward()
 
@@ -684,15 +681,6 @@ class SequenceDataset(Dataset):
         # Group fragment indices by base contig name
         self.contig_to_fragment_indices = self._group_indices_by_base_contig()
 
-        self.base_name_to_id = {
-            name: i for i, name in enumerate(self.contig_to_fragment_indices.keys())
-        }
-        self.index_to_base_id = {}
-        for base_name, fragment_indices in self.contig_to_fragment_indices.items():
-            base_id = self.base_name_to_id[base_name]
-            for frag_idx in fragment_indices:
-                self.index_to_base_id[frag_idx] = base_id
-
         original_count = len(self.contig_to_fragment_indices)
         self.contig_to_fragment_indices = {
             base_name: indices
@@ -754,9 +742,8 @@ class SequenceDataset(Dataset):
         idx1, idx2 = self.training_pairs[idx]
         tensor1 = torch.from_numpy(self._features[idx1])
         tensor2 = torch.from_numpy(self._features[idx2])
-        base_id = torch.tensor(self.index_to_base_id[idx1], dtype=torch.long)
 
-        return tensor1, tensor2, base_id
+        return tensor1, tensor2
 
 
 def train_siamese_network(features_df, args):
