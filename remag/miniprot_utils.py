@@ -34,6 +34,75 @@ def _build_miniprot_cmd(fasta_path, db_path, cores):
     ]
 
 
+def _parse_paf_gene_mappings(
+    paf_path,
+    target_coverage_threshold,
+    identity_threshold,
+    gene_mappings=None,
+):
+    """Parse a miniprot PAF file into gene-to-contig mappings.
+
+    Extracts the best-scoring alignment per (contig, gene family) that passes the
+    coverage and identity thresholds. When ``gene_mappings`` is provided it is
+    updated in place, so several PAF files can be merged into one mapping.
+
+    Returns:
+        dict: {contig_name: {gene_family: {"score", "coverage", "identity"}}}
+    """
+    if gene_mappings is None:
+        gene_mappings = {}
+
+    if not os.path.exists(paf_path) or os.path.getsize(paf_path) == 0:
+        return gene_mappings
+
+    with open(paf_path, "r") as paf_file:
+        for line in paf_file:
+            if line.startswith("#") or not line.strip():
+                continue
+
+            parts = line.strip().split("\t")
+            if len(parts) < 11:
+                continue
+
+            try:
+                query_name = parts[0]  # Protein name
+                query_length = int(parts[1])
+                query_start = int(parts[2])
+                query_end = int(parts[3])
+                target_name = parts[5]  # Contig name
+                matching_bases = int(parts[9])
+                alignment_length = int(parts[10])
+            except (ValueError, IndexError):
+                continue
+
+            # Extract gene family code from BUSCO-style protein name
+            # (e.g. "28947at2759" from "28947at2759_6832_0:00088a")
+            gene_family_code = query_name.split()[0].split("_")[0]
+
+            query_coverage = (
+                (query_end - query_start) / query_length if query_length > 0 else 0
+            )
+            identity = matching_bases / alignment_length if alignment_length > 0 else 0
+
+            if (
+                query_coverage < target_coverage_threshold
+                or identity < identity_threshold
+            ):
+                continue
+
+            score = query_coverage * identity
+            contig_genes = gene_mappings.setdefault(target_name, {})
+            existing = contig_genes.get(gene_family_code)
+            if existing is None or score > existing["score"]:
+                contig_genes[gene_family_code] = {
+                    "score": score,
+                    "coverage": query_coverage,
+                    "identity": identity,
+                }
+
+    return gene_mappings
+
+
 def estimate_organisms_from_all_contigs(
     fragments_dict, args, target_coverage_threshold=0.60, identity_threshold=0.40
 ):
@@ -130,74 +199,13 @@ def estimate_organisms_from_all_contigs(
                     logger.error(f"miniprot error: {f.read().strip()}")
             return {}
 
-        # Parse miniprot output to count gene occurrences and build cache in single pass
+        # Parse miniprot output into gene mappings, then count gene occurrences
+        gene_mappings = _parse_paf_gene_mappings(
+            miniprot_output, target_coverage_threshold, identity_threshold
+        )
+
         gene_counts = {}  # {gene_family: count}
-        gene_mappings = {}  # {contig_name: {gene_family: {score, coverage, identity}}}
-
-        if os.path.exists(miniprot_output) and os.path.getsize(miniprot_output) > 0:
-            with open(miniprot_output, "r") as paf_file:
-                for line in paf_file:
-                    if line.startswith("#") or not line.strip():
-                        continue
-
-                    parts = line.strip().split("\t")
-                    if len(parts) >= 11:
-                        try:
-                            query_name = parts[0]  # Protein name
-                            target_name = parts[5]  # Contig name
-                            query_length = int(parts[1])
-                            query_start = int(parts[2])
-                            query_end = int(parts[3])
-                            matching_bases = int(parts[9])
-                            alignment_length = int(parts[10])
-
-                            # Extract gene family code (BUSCO format: {gene_id}at{taxid}_{species}_{seq}:{code})
-                            full_gene_id = query_name.split()[0]
-                            # Extract the gene family ID (e.g., "28947at2759" from "28947at2759_6832_0:00088a")
-                            gene_family_code = full_gene_id.split("_")[0]
-
-                            # Calculate quality metrics
-                            query_coverage = (
-                                (query_end - query_start) / query_length
-                                if query_length > 0
-                                else 0
-                            )
-                            identity = (
-                                matching_bases / alignment_length
-                                if alignment_length > 0
-                                else 0
-                            )
-
-                            # Only consider high-quality alignments
-                            if (
-                                query_coverage >= target_coverage_threshold
-                                and identity >= identity_threshold
-                            ):
-                                score = query_coverage * identity
-
-                                # Initialize contig entry in gene_mappings if needed
-                                if target_name not in gene_mappings:
-                                    gene_mappings[target_name] = {}
-
-                                # Keep best alignment per contig-gene pair
-                                if (
-                                    gene_family_code not in gene_mappings[target_name]
-                                    or score
-                                    > gene_mappings[target_name][gene_family_code][
-                                        "score"
-                                    ]
-                                ):
-                                    gene_mappings[target_name][gene_family_code] = {
-                                        "score": score,
-                                        "coverage": query_coverage,
-                                        "identity": identity,
-                                    }
-
-                        except (ValueError, IndexError):
-                            continue
-
-        # Count occurrences of each gene family from gene_mappings
-        for contig_name, genes in gene_mappings.items():
+        for genes in gene_mappings.values():
             for gene_family in genes:
                 gene_counts[gene_family] = gene_counts.get(gene_family, 0) + 1
 
@@ -285,72 +293,12 @@ def parse_and_cache_paf_files(
 
     for cluster_id in filtered_clusters:
         paf_file = os.path.join(temp_dir, f"{cluster_id}.paf")
-
-        if not os.path.exists(paf_file) or os.path.getsize(paf_file) == 0:
-            continue
-
-        with open(paf_file, "r") as f:
-            for line in f:
-                if line.startswith("#") or not line.strip():
-                    continue
-
-                parts = line.strip().split("\t")
-                if len(parts) >= 11:
-                    try:
-                        query_name = parts[0]  # Protein name
-                        query_length = int(parts[1])
-                        query_start = int(parts[2])
-                        query_end = int(parts[3])
-                        target_name = parts[5]  # Contig name
-                        matching_bases = int(parts[9])
-                        alignment_length = int(parts[10])
-
-                        # Extract gene family code from protein name (query)
-                        # BUSCO format: {gene_id}at{taxid}_{species}_{seq}:{code}
-                        full_gene_id = query_name.split()[0]
-                        # Extract the gene family ID (e.g., "28947at2759" from "28947at2759_6832_0:00088a")
-                        gene_family_code = full_gene_id.split("_")[0]
-
-                        # Calculate quality metrics
-                        query_coverage = (
-                            (query_end - query_start) / query_length
-                            if query_length > 0
-                            else 0
-                        )
-                        identity = (
-                            matching_bases / alignment_length
-                            if alignment_length > 0
-                            else 0
-                        )
-
-                        # Only consider high-quality alignments
-                        if (
-                            query_coverage >= target_coverage_threshold
-                            and identity >= identity_threshold
-                        ):
-                            score = query_coverage * identity
-
-                            # Initialize contig entry if needed
-                            if target_name not in global_gene_mappings:
-                                global_gene_mappings[target_name] = {}
-
-                            # Keep only the best alignment per contig-gene pair
-                            if (
-                                gene_family_code
-                                not in global_gene_mappings[target_name]
-                                or score
-                                > global_gene_mappings[target_name][gene_family_code][
-                                    "score"
-                                ]
-                            ):
-                                global_gene_mappings[target_name][gene_family_code] = {
-                                    "score": score,
-                                    "coverage": query_coverage,
-                                    "identity": identity,
-                                }
-
-                    except (ValueError, IndexError):
-                        continue
+        _parse_paf_gene_mappings(
+            paf_file,
+            target_coverage_threshold,
+            identity_threshold,
+            global_gene_mappings,
+        )
 
     # Save cache if keeping intermediate files
     if getattr(args, "keep_intermediate", False):
@@ -563,84 +511,15 @@ def check_core_gene_duplications(
                     )
                     result = process.returncode
                 if result == 0:
-                    # Parse miniprot output
-                    best_alignments = (
-                        {}
-                    )  # {(contig, gene_family): {score, coverage, identity}}
-
-                    if (
-                        os.path.exists(miniprot_output)
-                        and os.path.getsize(miniprot_output) > 0
-                    ):
-                        if args.verbose:
-                            logger.debug(
-                                f"Miniprot output file exists and has size: {os.path.getsize(miniprot_output)} bytes"
-                            )
-                        with open(miniprot_output, "r") as paf_file:
-                            for line in paf_file:
-                                if line.startswith("#") or not line.strip():
-                                    continue
-
-                                parts = line.strip().split("\t")
-                                if len(parts) >= 11:
-                                    try:
-                                        query_name = parts[0]  # Protein name
-                                        query_length = int(parts[1])
-                                        query_start = int(parts[2])
-                                        query_end = int(parts[3])
-                                        target_name = parts[5]  # Contig name
-                                        matching_bases = int(parts[9])
-                                        alignment_length = int(parts[10])
-
-                                        # Extract gene family code from protein name (query)
-                                        # BUSCO format: {gene_id}at{taxid}_{species}_{seq}:{code}
-                                        full_gene_id = query_name.split()[0]
-                                        # Extract the gene family ID (e.g., "28947at2759" from "28947at2759_6832_0:00088a")
-                                        gene_family_code = full_gene_id.split("_")[0]
-
-                                        # Calculate quality metrics
-                                        query_coverage = (
-                                            (query_end - query_start) / query_length
-                                            if query_length > 0
-                                            else 0
-                                        )
-                                        identity = (
-                                            matching_bases / alignment_length
-                                            if alignment_length > 0
-                                            else 0
-                                        )
-
-                                        # Only consider high-quality alignments with configurable thresholds
-                                        if (
-                                            query_coverage >= target_coverage_threshold
-                                            and identity >= identity_threshold
-                                        ):
-                                            score = query_coverage * identity
-                                            key = (
-                                                target_name,
-                                                gene_family_code,
-                                            )  # Use contig name as key
-
-                                            if (
-                                                key not in best_alignments
-                                                or score > best_alignments[key]["score"]
-                                            ):
-                                                best_alignments[key] = {
-                                                    "score": score,
-                                                    "coverage": query_coverage,
-                                                    "identity": identity,
-                                                    "gene_family": gene_family_code,
-                                                }
-
-                                    except (ValueError, IndexError):
-                                        continue
-
-                    # Count gene families present in each contig
-                    contig_genes = {}
-                    for (contig, gene_family), alignment in best_alignments.items():
-                        if contig not in contig_genes:
-                            contig_genes[contig] = set()
-                        contig_genes[contig].add(gene_family)
+                    # Parse miniprot output into per-contig gene families
+                    gene_mappings = _parse_paf_gene_mappings(
+                        miniprot_output,
+                        target_coverage_threshold,
+                        identity_threshold,
+                    )
+                    contig_genes = {
+                        contig: set(genes) for contig, genes in gene_mappings.items()
+                    }
 
                     # Count total occurrences of each gene family
                     gene_counts = {}
