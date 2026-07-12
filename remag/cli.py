@@ -6,10 +6,10 @@ import argparse
 import glob
 import os
 import sys
-from click.core import ParameterSource
 from importlib.metadata import version
 
 import rich_click as click
+from click.core import ParameterSource
 
 __version__ = version("remag")
 
@@ -164,7 +164,6 @@ click.rich_click.OPTION_GROUPS = {
         {
             "name": "Clustering",
             "options": [
-                "--min-cluster-size",
                 "--greedy-resolutions",
                 "--leiden-k-neighbors",
                 "--leiden-similarity-threshold",
@@ -383,13 +382,6 @@ def validate_coverage_options(ctx, param, value):
     help="Random seed for reproducible training. Same seed produces identical models with same data.",
 )
 @click.option(
-    "--min-cluster-size",
-    type=int,
-    default=2,
-    show_default=True,
-    help="Minimum number of contigs required to form a cluster/bin.",
-)
-@click.option(
     "--min-contig-length",
     type=int,
     default=None,
@@ -521,7 +513,6 @@ def main_cli(
     barlow_lambda,
     mode,
     random_seed,
-    min_cluster_size,
     min_contig_length,
     max_positive_pairs,
     threads,
@@ -672,7 +663,6 @@ def main_cli(
         barlow_lambda=barlow_lambda,
         mode=mode.lower(),
         random_seed=random_seed,
-        min_cluster_size=min_cluster_size,
         min_contig_length=min_contig_length,
         max_positive_pairs=max_positive_pairs,
         cores=threads,
