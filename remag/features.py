@@ -2,9 +2,9 @@
 Feature extraction module for REMAG
 """
 
+import gzip
 import hashlib
 import itertools
-import gzip
 import os
 import random
 from collections import OrderedDict
@@ -741,7 +741,7 @@ def get_features(
     ]
     if coverage_columns:
         # Apply log transformation to coverage features
-        df[coverage_columns] = df[coverage_columns].map(lambda x: np.log1p(x))
+        df[coverage_columns] = np.log1p(df[coverage_columns])
         logger.debug(
             f"Applied log transformation to {len(coverage_columns)} coverage features"
         )
@@ -1175,9 +1175,7 @@ def calculate_fragment_coverage(
 
             # Process coverage data in batches to reduce memory usage
             # Calculate total bases to estimate memory requirements
-            total_bases = sum(
-                bam_lengths.get(contig, 0) for contig in contig_fragments
-            )
+            total_bases = sum(bam_lengths.get(contig, 0) for contig in contig_fragments)
 
             # Use batching if total data size is large (>1GB of coverage data estimated)
             # Each base takes ~4 bytes for coverage array, so 250M bases ≈ 1GB
@@ -1407,7 +1405,9 @@ def _calculate_interval_file_coverage(
         for fragment_header in data["fragments"]
     ]
     coverage_sums = {fragment_header: 0.0 for fragment_header in all_fragment_headers}
-    coverage_sq_sums = {fragment_header: 0.0 for fragment_header in all_fragment_headers}
+    coverage_sq_sums = {
+        fragment_header: 0.0 for fragment_header in all_fragment_headers
+    }
     fragment_lengths = {fragment_header: 0 for fragment_header in all_fragment_headers}
 
     contig_fragments = {}
@@ -1591,7 +1591,9 @@ def calculate_coverage_from_tsv(
                 all_coverage_series.extend([mean_series, std_series])
             else:
                 logger.debug(f"Detected contig-level coverage format for {tsv_file}")
-                coverage_series = _calculate_contig_tsv_coverage(tsv_file, fragments_dict)
+                coverage_series = _calculate_contig_tsv_coverage(
+                    tsv_file, fragments_dict
+                )
                 if coverage_series is not None:
                     all_coverage_series.append(coverage_series)
         except Exception as e:
