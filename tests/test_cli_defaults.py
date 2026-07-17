@@ -1,14 +1,12 @@
 """Tests for REMAG CLI default behavior."""
 
-import os
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner  # Import CliRunner
 
-# Import the main CLI function and the core run function
+# Import the main CLI function
 from remag.cli import main_cli
-from remag.core import main as run_remag
 
 
 @pytest.fixture

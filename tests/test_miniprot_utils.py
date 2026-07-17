@@ -1,11 +1,8 @@
 """Tests for miniprot utilities and security fixes."""
 
-import os
 import subprocess
 import tempfile
 from unittest.mock import Mock, mock_open, patch
-
-import pytest
 
 from remag.miniprot_utils import check_miniprot_available
 
@@ -33,7 +30,7 @@ class TestMiniprot_SecurityFix:
         with patch("subprocess.run") as mock_subprocess:
             mock_subprocess.return_value = Mock(returncode=0)
 
-            with patch("builtins.open", mock_open()) as mock_file:
+            with patch("builtins.open", mock_open()):
                 # Import the function that contains our fix
                 # Create mock data
                 import pandas as pd
@@ -90,16 +87,14 @@ class TestMiniprot_SecurityFix:
             with patch("subprocess.run") as mock_subprocess:
                 mock_subprocess.return_value = Mock(returncode=0)
 
-                with patch("builtins.open", mock_open()) as mock_file, patch(
+                with patch("builtins.open", mock_open()), patch(
                     "os.path.exists", return_value=True
                 ), patch("os.path.getsize", return_value=0):
 
                     # Create a temporary directory for testing
-                    with tempfile.TemporaryDirectory() as temp_dir:
+                    with tempfile.TemporaryDirectory():
                         # Test that the malicious filename is passed as an argument
                         # (not executed as a command)
-                        test_path = os.path.join(temp_dir, malicious_name + ".fa")
-
                         # This should be safe - the malicious content is just a filename
                         # not a shell command when using subprocess.run with a list
                         if mock_subprocess.called:
@@ -116,7 +111,7 @@ class TestMiniprot_SecurityFix:
                 cmd=["miniprot"], timeout=3600
             )
 
-            with patch("builtins.open", mock_open()) as mock_file, patch(
+            with patch("builtins.open", mock_open()), patch(
                 "os.path.exists", return_value=True
             ), patch("os.path.getsize", return_value=0):
 
@@ -163,7 +158,7 @@ class TestErrorHandling:
         with patch("subprocess.run") as mock_subprocess:
             mock_subprocess.side_effect = PermissionError("Permission denied")
 
-            with patch("builtins.open", mock_open()) as mock_file:
+            with patch("builtins.open", mock_open()):
                 # Should handle permission errors gracefully
                 import pandas as pd
 

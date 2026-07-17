@@ -1,7 +1,7 @@
 """HyenaDNA-based eukaryotic sequence classifier."""
 
-name = "hyenadna_classifier"
-
 from .predictor import HyenaDNAClassifier
+
+name = "hyenadna_classifier"
 
 __all__ = ["HyenaDNAClassifier"]

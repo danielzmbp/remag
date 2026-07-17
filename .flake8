@@ -1,0 +1,17 @@
+[flake8]
+# Keep flake8 consistent with black (see [tool.black] in pyproject.toml).
+max-line-length = 88
+# E203 (whitespace before ':') and W503 (line break before binary operator)
+# conflict with black's formatting; E501 is enforced by black itself.
+extend-ignore = E203, W503, E501
+exclude =
+    .git,
+    __pycache__,
+    build,
+    dist,
+    .eggs,
+    *.egg-info,
+    .venv,
+    # Vendored/adapted third-party HyenaDNA code.
+    remag/hyenadna_classifier/hyenadna_model.py,
+    remag/hyenadna_classifier/standalone_tokenizer.py

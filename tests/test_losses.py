@@ -1,5 +1,7 @@
 import torch
+
 from remag.losses import BarlowTwinsLoss
+
 
 def test_barlow_twins_loss():
     """Test the BarlowTwinsLoss."""

@@ -1,9 +1,5 @@
 """Integration tests for REMAG clustering pipeline."""
 
-import os
-import tempfile
-from unittest.mock import Mock, patch
-
 import numpy as np
 import pandas as pd
 import pytest
@@ -126,8 +122,6 @@ class TestGraphCaching:
             embeddings, k=5, similarity_threshold=0.1, args=mock_args
         )
 
-        # Check that cache files were created
-        cache_files = [f for f in os.listdir(temp_dir) if "graph" in f.lower()]
         # Note: May not create cache files in this test scenario, but should not crash
 
         # Second call with same parameters should use cache (if implemented)

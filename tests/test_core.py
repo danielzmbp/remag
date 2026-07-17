@@ -20,7 +20,9 @@ def test_filtering_receives_save_filtered_contigs_flag(tmp_path):
         keep_intermediate=False,
     )
 
-    with patch("remag.core.filter_bacterial_contigs", return_value=args.fasta) as mock_filter:
+    with patch(
+        "remag.core.filter_bacterial_contigs", return_value=args.fasta
+    ) as mock_filter:
         main(args)
 
     mock_filter.assert_called_once_with(

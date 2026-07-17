@@ -99,6 +99,8 @@ class TestClusteringManager:
         manager = ClusteringManager(mock_args)
         assert manager.args == mock_args
         assert hasattr(manager, "graph_manager")
+
+
 class TestPerformanceOptimizations:
     """Test performance-related functionality and optimizations."""
 
@@ -162,7 +164,7 @@ class TestDataValidation:
         # Should handle inconsistent dimensions gracefully
         try:
             # This might fail during array creation, which is expected
-            graph = _construct_knn_graph(invalid_embeddings, k=1)
+            _construct_knn_graph(invalid_embeddings, k=1)
         except (ValueError, TypeError):
             # Expected to fail with clear error
             pass
@@ -174,7 +176,7 @@ class TestDataValidation:
 
         # Should handle non-numeric data gracefully
         try:
-            graph = _construct_knn_graph(invalid_embeddings, k=1)
+            _construct_knn_graph(invalid_embeddings, k=1)
         except (ValueError, TypeError):
             # Expected to fail with clear error
             pass

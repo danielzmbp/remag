@@ -66,9 +66,7 @@ def test_interval_coverage_computes_fragment_specific_mean_and_std(tmp_path):
 
     assert list(coverage_df.columns) == ["sample_coverage", "sample_coverage_std"]
     assert isclose(coverage_df.loc["ctg0.original", "sample_coverage"], 0.7)
-    assert isclose(
-        coverage_df.loc["ctg0.original", "sample_coverage_std"], sqrt(1.41)
-    )
+    assert isclose(coverage_df.loc["ctg0.original", "sample_coverage_std"], sqrt(1.41))
     assert coverage_df.loc["ctg0.0", "sample_coverage"] == 3.0
     assert coverage_df.loc["ctg0.0", "sample_coverage_std"] == 0.0
     assert coverage_df.loc["ctg0.1", "sample_coverage"] == 2.0
@@ -83,11 +81,7 @@ def test_get_features_uses_interval_coverage_for_augmented_fragments(tmp_path):
 
     coverage_file = tmp_path / "sample.cov.gz"
     with gzip.open(coverage_file, "wt", encoding="utf-8") as handle:
-        handle.write(
-            "ctg0\t0\t40\t1\n"
-            "ctg0\t40\t80\t5\n"
-            "ctg0\t80\t120\t9\n"
-        )
+        handle.write("ctg0\t0\t40\t1\n" "ctg0\t40\t80\t5\n" "ctg0\t80\t120\t9\n")
 
     features_df, _ = get_features(
         str(fasta),
@@ -135,7 +129,9 @@ def test_cli_rejects_mixed_alignment_and_precomputed_coverage(tmp_path):
         handle.write("ctg0\t0\t4\t1\n")
 
     runner = CliRunner()
-    result = runner.invoke(main_cli, [str(fasta), "-c", str(bam), "-c", str(coverage_file)])
+    result = runner.invoke(
+        main_cli, [str(fasta), "-c", str(bam), "-c", str(coverage_file)]
+    )
 
     assert result.exit_code != 0
     assert "Cannot mix BAM/CRAM files" in result.output

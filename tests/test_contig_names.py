@@ -11,7 +11,6 @@ from remag.clustering import cluster_contigs
 from remag.models import SequenceDataset, generate_embeddings
 from remag.utils import ContigHeaderMapper, extract_base_contig_name
 
-
 SPADES_HEADER = "NODE_13_length_77980_cov_5.491044"
 
 
@@ -39,7 +38,10 @@ def test_plain_numeric_suffix_requires_fragment_context():
 
     # Missing .original in known_headers
     known_headers = {f"{SPADES_HEADER}.0"}
-    assert extract_base_contig_name(f"{SPADES_HEADER}.0", known_headers=known_headers) == f"{SPADES_HEADER}.0"
+    assert (
+        extract_base_contig_name(f"{SPADES_HEADER}.0", known_headers=known_headers)
+        == f"{SPADES_HEADER}.0"
+    )
 
 
 def test_contig_header_mapper_preserves_spades_decimal_header():
