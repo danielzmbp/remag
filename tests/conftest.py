@@ -28,6 +28,8 @@ def mock_args(temp_dir):
     args.batch_size = 32
     args.embedding_dim = 64
     args.epochs = 2
+    args.barlow_lambda = 0.003
+    args.base_learning_rate = 0.005
     args.max_positive_pairs = 100
     args.keep_intermediate = False
     # Add clustering-specific parameters with actual values

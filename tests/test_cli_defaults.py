@@ -55,6 +55,37 @@ class TestCliDefaults:
         # Assert expected values
         assert args.base_learning_rate == 0.005
         assert args.barlow_lambda == 0.003
+        assert args.epochs == 100
+
+    def test_training_defaults_are_scenario_independent(
+        self, mock_run_remag, temp_fasta, tmp_path
+    ):
+        """Lambda and the epoch budget must not vary with the number of coverage files.
+
+        Both were benchmarked as single values across coassembly and single-sample
+        scenarios and all three sequencing technologies; a scenario-dependent lambda
+        was measured to be worse for coassembly, which is the case the old auto rule
+        tried to special-case.
+        """
+        runner = CliRunner()
+        invocations = [[temp_fasta, "--output", "remag_output"]]
+        for n in (1, 3):
+            bams = []
+            for i in range(n):
+                bam = tmp_path / f"cov{n}_{i}.bam"
+                bam.touch()
+                bams.append(str(bam))
+            args_list = [temp_fasta, "--output", "remag_output"]
+            for bam in bams:
+                args_list += ["--coverage", bam]
+            invocations.append(args_list)
+
+        for args_list in invocations:
+            result = runner.invoke(main_cli, args_list)
+            assert result.exit_code == 0, f"CLI command failed: {result.exception}"
+            args = mock_run_remag.call_args[0][0]
+            assert args.barlow_lambda == 0.003
+            assert args.epochs == 100
 
     def test_default_values_single_coverage(self, mock_run_remag, temp_fasta, temp_bam):
         """Test default learning rate and lambda with a single coverage file."""
@@ -102,9 +133,10 @@ class TestCliDefaults:
 
         args = mock_run_remag.call_args[0][0]
 
-        # Assert the new default values for coassembly
+        # Coassembly lowers the base learning rate but does not change lambda:
+        # 0.003 is the single default for every scenario.
         assert args.base_learning_rate == 0.0005
-        assert args.barlow_lambda == 0.02
+        assert args.barlow_lambda == 0.003
 
     def test_user_specified_values_override_defaults(
         self, mock_run_remag, temp_fasta, tmp_path

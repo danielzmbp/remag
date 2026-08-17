@@ -90,8 +90,13 @@ class LearningRateScheduler:
 
     @staticmethod
     def create_warmup_cosine_scheduler(optimizer, args):
-        """Create a warmup + cosine annealing scheduler."""
-        base_learning_rate = getattr(args, "base_learning_rate", 0.0025)
+        """Create a warmup + cosine annealing scheduler.
+
+        The cosine phase spans ``args.epochs - warmup_epochs``, so the schedule
+        rescales to whatever budget is requested: a short run is a complete
+        schedule, not a truncated long one.
+        """
+        base_learning_rate = args.base_learning_rate
         scaled_lr = (args.batch_size / 256) * base_learning_rate * 0.2
         warmup_epochs = 10
         warmup_start_lr = scaled_lr * 0.1
@@ -172,8 +177,9 @@ class TrainingManager:
             optimizer, self.args
         )
 
-        # Use BarlowTwinsLoss for contrastive learning
-        lambda_param = getattr(self.args, "barlow_lambda", 5e-3)
+        # Use BarlowTwinsLoss for contrastive learning. The CLI is the single source
+        # of truth for this value; a missing attribute is a bug, not a default.
+        lambda_param = self.args.barlow_lambda
         criterion = BarlowTwinsLoss(lambda_param=lambda_param)
         logger.info(f"Using BarlowTwinsLoss (lambda={lambda_param})")
 

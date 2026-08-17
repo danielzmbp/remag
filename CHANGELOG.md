@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `--epochs` default: 400 to 100.
+- `--barlow-lambda` default: 0.003 for all scenarios.
+
+### Removed
+- Coverage-dependent auto-selection of the Barlow Twins lambda.
+- `getattr` fallback defaults for `barlow_lambda` and `base_learning_rate` in
+  `models.py`.
+
 ## [0.4.4] - 2026-06-10
 
 ### Added

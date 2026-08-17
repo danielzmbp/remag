@@ -330,9 +330,11 @@ def validate_coverage_options(ctx, param, value):
 @click.option(
     "--epochs",
     type=int,
-    default=400,
+    default=100,
     show_default=True,
-    help="Number of training epochs for contrastive learning model.",
+    help="Number of training epochs for contrastive learning model. The learning-rate "
+    "schedule rescales to this budget (fixed 10-epoch warmup, cosine anneal over the "
+    "remainder), so shorter budgets are complete schedules rather than truncated ones.",
 )
 @click.option(
     "--batch-size",
@@ -358,10 +360,10 @@ def validate_coverage_options(ctx, param, value):
 @click.option(
     "--barlow-lambda",
     type=float,
-    default=None,
-    show_default=False,
+    default=0.003,
+    show_default=True,
     help="Lambda parameter for Barlow Twins loss (redundancy reduction term). "
-    "Default (auto): 0.003 for single/no coverage, 0.02 for multi-sample/coassembly.",
+    "Applies to all scenarios, including coassembly and multi-sample coverage.",
 )
 @click.option(
     "-m",
@@ -596,19 +598,7 @@ def main_cli(
             elif is_precomputed_coverage_file(file_path):
                 tsv_files.append(file_path)
 
-    # Set default Barlow Twins lambda based on number of samples if not provided
     coverage_count = len(bam_cram_files) if bam_cram_files else len(tsv_files)
-    if barlow_lambda is None:
-        if coverage_count > 1:
-            barlow_lambda = 0.02
-            click.echo(
-                "Auto Barlow lambda: 0.02 (multi-sample/coassembly detected)", err=True
-            )
-        else:
-            barlow_lambda = 0.003
-            click.echo(
-                "Auto Barlow lambda: 0.003 (single-sample or no coverage)", err=True
-            )
 
     # Set default base learning rate based on number of samples if not provided
     ctx = click.get_current_context()
