@@ -1,10 +1,52 @@
 """Tests for miniprot utilities and security fixes."""
 
+import json
 import subprocess
 import tempfile
+from types import SimpleNamespace
 from unittest.mock import Mock, mock_open, patch
 
-from remag.miniprot_utils import check_miniprot_available
+from remag.miniprot_utils import (
+    check_miniprot_available,
+    get_gene_mappings_cache_path,
+    load_or_generate_gene_mappings,
+)
+
+
+def test_load_or_generate_gene_mappings_reuses_cache(tmp_path):
+    args = SimpleNamespace(output=str(tmp_path), cores=2, verbose=False)
+    expected = {"contig_1": {"gene_1": {"score": 0.8}}}
+    cache_path = get_gene_mappings_cache_path(args)
+    with open(cache_path, "w", encoding="utf-8") as cache_file:
+        json.dump(expected, cache_file)
+
+    with patch("remag.miniprot_utils.subprocess.run") as run_miniprot:
+        result = load_or_generate_gene_mappings({}, args)
+
+    assert result == expected
+    run_miniprot.assert_not_called()
+
+
+def test_load_or_generate_gene_mappings_returns_new_mappings(tmp_path):
+    args = SimpleNamespace(
+        output=str(tmp_path), cores=2, verbose=False, keep_intermediate=True
+    )
+    fragments = {"contig_1": {"sequence": "ATGC"}}
+
+    def write_paf(*_args, stdout, **_kwargs):
+        stdout.write("gene_1_1\t100\t0\t80\t+\tcontig_1\t1000\t0\t100\t70\t80\n")
+        return SimpleNamespace(returncode=0)
+
+    with patch(
+        "remag.miniprot_utils.check_miniprot_available", return_value=True
+    ), patch("remag.miniprot_utils.subprocess.run", side_effect=write_paf):
+        result = load_or_generate_gene_mappings(fragments, args)
+
+    assert set(result) == {"contig_1"}
+    assert set(result["contig_1"]) == {"gene"}
+    assert (tmp_path / "temp_gene_mapping").is_dir()
+    with open(get_gene_mappings_cache_path(args), encoding="utf-8") as cache_file:
+        assert json.load(cache_file) == result
 
 
 class TestMiniprot:

@@ -103,41 +103,29 @@ def _parse_paf_gene_mappings(
     return gene_mappings
 
 
-def estimate_organisms_from_all_contigs(
+def load_or_generate_gene_mappings(
     fragments_dict, args, target_coverage_threshold=0.60, identity_threshold=0.40
 ):
-    """
-    Run miniprot on all contigs to estimate the number of organisms based on core gene duplications.
-
-    This function treats all contigs as a single group and counts how many times each
-    single-copy core gene appears. The duplication counts provide an estimate of organism diversity.
+    """Load cached gene mappings or generate them with one miniprot run.
 
     Args:
         fragments_dict: Dictionary mapping headers to sequences
         args: Arguments object containing output directory, cores, etc.
-        target_coverage_threshold: Minimum target coverage for alignments (default: 0.55)
-        identity_threshold: Minimum identity for alignments (default: 0.35)
+        target_coverage_threshold: Minimum target coverage for alignments
+        identity_threshold: Minimum identity for alignments
 
     Returns:
-        dict: {gene_family: occurrence_count} for all core genes found
+        dict: {contig_name: {gene_family: alignment details}}
     """
-    # Check for existing cache first
     cache_path = get_gene_mappings_cache_path(args)
     if os.path.exists(cache_path):
         try:
             with open(cache_path, "r") as f:
                 gene_mappings = json.load(f)
-
-            # Extract gene counts from cached mappings
-            gene_counts = {}
-            for contig_name, genes in gene_mappings.items():
-                for gene_family in genes:
-                    gene_counts[gene_family] = gene_counts.get(gene_family, 0) + 1
-
             logger.info(
-                f"Using cached miniprot results ({len(gene_mappings)} contigs, {len(gene_counts)} core genes)"
+                f"Loaded cached miniprot gene mappings for {len(gene_mappings)} contigs"
             )
-            return gene_counts
+            return gene_mappings
         except Exception as e:
             logger.warning(f"Failed to load miniprot cache, will re-run: {e}")
 
@@ -145,7 +133,7 @@ def estimate_organisms_from_all_contigs(
 
     # Check if miniprot is available
     if not check_miniprot_available():
-        logger.error("miniprot not found in PATH - cannot estimate organisms")
+        logger.error("miniprot not found in PATH - cannot generate gene mappings")
         logger.error("Install miniprot with: conda install -c bioconda miniprot")
         return {}
 
@@ -153,11 +141,11 @@ def estimate_organisms_from_all_contigs(
         os.path.dirname(os.path.abspath(__file__)), "db", "refseq_db.faa.gz"
     )
     if not os.path.exists(db_path):
-        logger.warning("Eukaryotic database not found - cannot estimate organisms")
+        logger.warning("Eukaryotic database not found - cannot generate gene mappings")
         return {}
 
     # Create temporary directory
-    temp_dir = os.path.join(args.output, "temp_organism_estimation")
+    temp_dir = os.path.join(args.output, "temp_gene_mapping")
     os.makedirs(temp_dir, exist_ok=True)
 
     try:
@@ -199,26 +187,18 @@ def estimate_organisms_from_all_contigs(
                     logger.error(f"miniprot error: {f.read().strip()}")
             return {}
 
-        # Parse miniprot output into gene mappings, then count gene occurrences
+        # Parse miniprot output into gene mappings
         gene_mappings = _parse_paf_gene_mappings(
             miniprot_output, target_coverage_threshold, identity_threshold
         )
 
-        gene_counts = {}  # {gene_family: count}
-        for genes in gene_mappings.values():
-            for gene_family in genes:
-                gene_counts[gene_family] = gene_counts.get(gene_family, 0) + 1
-
-        logger.info(f"Found {len(gene_counts)} core genes across all contigs")
-
-        # Log statistics
-        if gene_counts:
-            counts_list = sorted(gene_counts.values())
-            max_count = counts_list[-1]
-            median_count = counts_list[len(counts_list) // 2]
-            logger.debug(
-                f"Core gene occurrence statistics: max={max_count}, median={median_count}"
-            )
+        gene_families = {
+            gene_family for genes in gene_mappings.values() for gene_family in genes
+        }
+        logger.info(
+            f"Mapped {len(gene_families)} core gene families across "
+            f"{len(gene_mappings)} contigs"
+        )
 
         # Save cache if we have data
         if gene_mappings:
@@ -232,10 +212,10 @@ def estimate_organisms_from_all_contigs(
             except Exception as e:
                 logger.warning(f"Failed to save gene mappings cache: {e}")
 
-        return gene_counts
+        return gene_mappings
 
     except Exception as e:
-        logger.error(f"Error during organism estimation: {e}")
+        logger.error(f"Error generating gene mappings: {e}")
         return {}
 
     finally:
@@ -244,13 +224,11 @@ def estimate_organisms_from_all_contigs(
             if os.path.exists(temp_dir):
                 try:
                     shutil.rmtree(temp_dir)
-                    logger.debug(
-                        f"Cleaned up temporary organism estimation files at: {temp_dir}"
-                    )
+                    logger.debug(f"Cleaned up temporary gene mapping files: {temp_dir}")
                 except Exception as e:
                     logger.warning(f"Failed to clean up temporary files: {e}")
         else:
-            logger.info(f"Organism estimation files preserved at: {temp_dir}")
+            logger.info(f"Gene mapping files preserved at: {temp_dir}")
 
 
 def get_core_gene_duplication_results_path(args):

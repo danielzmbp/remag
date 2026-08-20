@@ -14,7 +14,7 @@ from .features import filter_bacterial_contigs, get_features
 from .miniprot_utils import (
     check_core_gene_duplications,
     check_core_gene_duplications_from_cache,
-    get_gene_mappings_cache_path,
+    load_or_generate_gene_mappings,
 )
 from .models import generate_embeddings, train_siamese_network
 from .output import save_clusters_as_fasta
@@ -97,27 +97,7 @@ def main(args):
     # Generate gene mappings for greedy clustering
     logger.info("Generating gene mappings for greedy clustering...")
     try:
-        from .miniprot_utils import estimate_organisms_from_all_contigs
-
-        # Check if cache exists
-        cache_path = get_gene_mappings_cache_path(args)
-        gene_mappings = {}
-
-        if os.path.exists(cache_path):
-            logger.info(f"Loading existing gene mappings from {cache_path}")
-            with open(cache_path, "r") as f:
-                gene_mappings = json.load(f)
-        else:
-            logger.info("Running miniprot to generate gene mappings...")
-            _ = estimate_organisms_from_all_contigs(fragments_dict, args)
-
-            # Reload from the newly created file
-            if os.path.exists(cache_path):
-                with open(cache_path, "r") as f:
-                    gene_mappings = json.load(f)
-            else:
-                logger.warning("Gene mappings cache not found after miniprot run.")
-
+        gene_mappings = load_or_generate_gene_mappings(fragments_dict, args)
         logger.info(f"Loaded {len(gene_mappings)} contig gene mappings")
 
         # Store in args for later use

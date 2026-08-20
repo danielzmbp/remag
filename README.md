@@ -260,7 +260,7 @@ REMAG recovers eukaryotic bins with a multi-stage pipeline:
 - `fragments.pkl`: Fragment information used during training
 - `knn_graph_edges.csv`: k-NN graph edge list used for Leiden clustering
 - `knn_graph_stats.json`: k-NN graph construction statistics
-- `temp_organism_estimation/`: Miniprot files used to generate gene mappings
+- `temp_gene_mapping/`: Miniprot files used to generate gene mappings
 - `temp_miniprot/`: Temporary directory for miniprot alignments
 
 ### Filtering output
