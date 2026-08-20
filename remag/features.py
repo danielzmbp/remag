@@ -292,36 +292,6 @@ def filter_bacterial_contigs(
     return filtered_fasta
 
 
-class FragmentProcessor:
-    """Handles fragment generation and processing logic."""
-
-    def __init__(
-        self,
-        min_contig_length: int,
-        num_augmentations: int = 8,
-        max_overlap: float = 0.25,
-    ):
-        self.min_contig_length = min_contig_length
-        self.num_augmentations = num_augmentations
-        self.max_overlap = max_overlap
-
-    def generate_fragments(
-        self, sequence: str, header: str
-    ) -> list[tuple[str, str, int, int]]:
-        """Generate fragments for a sequence."""
-        return generate_augmented_fragments(
-            sequence,
-            header,
-            self.min_contig_length,
-            self.num_augmentations,
-            self.max_overlap,
-        )
-
-    def validate_sequence(self, sequence: str) -> bool:
-        """Check if sequence meets minimum length requirements."""
-        return len(sequence) >= self.min_contig_length
-
-
 def generate_augmented_fragments(
     sequence: str,
     header: str,
@@ -525,7 +495,7 @@ def _generate_half_augmentations(
 
         # Check overlap with existing fragments
         valid_fragment = True
-        for existing_header, existing_seq, existing_start, existing_len in fragments:
+        for _, _, existing_start, existing_len in fragments:
             existing_end = existing_start + existing_len
             current_start = start_pos + global_offset
             current_end = end_pos + global_offset
@@ -646,26 +616,19 @@ def get_features(
     kmer_len = 4
     length_threshold = min_contig_length
 
-    # Generate k-mer mapping (for consistency, though we use _calculate_kmer_composition)
-    _, _ = generate_feature_mapping(kmer_len)
     fragments_dict = OrderedDict()
 
-    # Initialize fragment processor
-    fragment_processor = FragmentProcessor(length_threshold, num_augmentations)
-
     # Process sequences and generate fragments
-    sequence_count = fragment_count = filtered_count = short_fragment_count = 0
+    sequence_count = fragment_count = 0
     logger.debug(
         f"Using original contig + {num_augmentations} random fragments per contig"
     )
 
     # Collect all fragment sequences for batch processing
     all_fragments = []
-    fragment_to_contig = {}
 
     for header, seq in tqdm(fasta_iter(fasta_file), desc="Processing sequences"):
-        if not fragment_processor.validate_sequence(seq):
-            filtered_count += 1
+        if len(seq) < length_threshold:
             continue
 
         # Store original sequence and initialize fragments
@@ -676,8 +639,9 @@ def get_features(
             "fragment_info": {},
         }
 
-        # Generate fragments using processor
-        augmented_fragments = fragment_processor.generate_fragments(seq, clean_header)
+        augmented_fragments = generate_augmented_fragments(
+            seq, clean_header, length_threshold, num_augmentations
+        )
 
         for fragment_header, fragment_seq, start_pos, frag_len in augmented_fragments:
             fragments_dict[clean_header]["fragments"].append(fragment_header)
@@ -687,11 +651,9 @@ def get_features(
             }
 
             if len(fragment_seq) < length_threshold:
-                short_fragment_count += 1
                 continue
 
             all_fragments.append((fragment_header, fragment_seq))
-            fragment_to_contig[fragment_header] = clean_header
             fragment_count += 1
 
         sequence_count += 1
@@ -933,7 +895,7 @@ def _process_contig_coverage_worker(args):
     try:
         if total_coverage_per_base is None or bam_contig_length is None:
             # No coverage data available - using zero coverage
-            for original_header, data in contig_data_list:
+            for _, data in contig_data_list:
                 for fragment_header in data["fragments"]:
                     fragment_coverage[fragment_header] = 0.0
                     fragment_coverage_std[fragment_header] = 0.0
@@ -943,7 +905,7 @@ def _process_contig_coverage_worker(args):
         fragment_coords = []
         fragment_headers = []
 
-        for original_header, data in contig_data_list:
+        for _, data in contig_data_list:
             fragment_info = data.get("fragment_info", {})
 
             for fragment_header in data["fragments"]:
@@ -1029,7 +991,7 @@ def _process_contig_coverage_worker(args):
     except Exception as e:
         logger.error(f"Error processing contig {bam_contig_name}: {e}")
         # Set all fragments to zero coverage on any error
-        for original_header, data in contig_data_list:
+        for _, data in contig_data_list:
             for fragment_header in data["fragments"]:
                 fragment_coverage[fragment_header] = 0.0
                 fragment_coverage_std[fragment_header] = 0.0
@@ -1442,7 +1404,7 @@ def _calculate_interval_file_coverage(
     bad_line_count = 0
 
     with _open_text_coverage_file(coverage_file) as handle:
-        for line_number, line in enumerate(handle, start=1):
+        for line in handle:
             stripped = line.strip()
             lower_line = stripped.lower()
             if (
