@@ -24,8 +24,7 @@ def run_python(code):
 
 
 def test_import_remag_is_lightweight():
-    output = run_python(
-        """
+    script = """
 import json
 import sys
 import remag
@@ -43,15 +42,14 @@ modules = [
 ]
 print(json.dumps({name: name in sys.modules for name in modules}))
 """
-    )
+    output = run_python(script)
     loaded = json.loads(output)
 
     assert loaded == {name: False for name in loaded}
 
 
 def test_package_main_cli_export_does_not_import_core():
-    output = run_python(
-        """
+    script = """
 import json
 import sys
 from remag import main_cli
@@ -63,7 +61,7 @@ print(json.dumps({
     "torch": "torch" in sys.modules,
 }))
 """
-    )
+    output = run_python(script)
     loaded = json.loads(output)
 
     assert loaded == {
