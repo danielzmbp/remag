@@ -6,12 +6,11 @@ import argparse
 import glob
 import os
 import sys
-from importlib.metadata import version
 
 import rich_click as click
 from click.core import ParameterSource
 
-__version__ = version("remag")
+from . import __version__
 
 PRECOMPUTED_COVERAGE_SUFFIXES = (
     ".tsv",

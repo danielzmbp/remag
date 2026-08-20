@@ -2,11 +2,13 @@
 REMAG: Recovery of Eukaryotic Metagenome-Assembled Genomes using contrastive learning
 """
 
+from importlib.metadata import PackageNotFoundError, version
+
 try:
-    from ._version import __version__
-except ImportError:
-    # Fallback for Bioconda/conda installations without git
-    __version__ = "0.4.3"
+    __version__ = version("remag")
+except PackageNotFoundError:
+    # The package metadata is unavailable when importing directly from a source tree.
+    __version__ = "0+unknown"
 
 __author__ = "Daniel Gómez-Pérez"
 __email__ = "daniel.gomez-perez@earlham.ac.uk"
