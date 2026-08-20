@@ -7,14 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.5] - 2026-08-20
+
+### Added
+- Support for interval COV/bedGraph coverage inputs, including compressed files
+  and fragment-specific mean and standard deviation features.
+- Continuous integration on Python 3.9 and 3.11 with tests, formatting, and lint
+  checks.
+- Automated Zenodo version publishing with current project metadata.
+
 ### Changed
 - `--epochs` default: 400 to 100.
 - `--barlow-lambda` default: 0.003 for all scenarios.
+- CLI startup now uses lazy imports while retaining Rich help output.
+- Package versions now come from installed distribution metadata and are checked
+  against release tags.
+- Simplified gene-mapping, feature-generation, rescue, and miniprot parsing paths;
+  renamed the retained mapping directory to `temp_gene_mapping`.
+- Updated the Docker build to Python 3.11, pinned miniprot 0.18, and current
+  multi-platform publishing actions.
+- Clarified core and intermediate output documentation.
+
+### Fixed
+- Use vectorized coverage transformation compatible with older pandas releases.
+- Correct adjusted-k and final bin-count log messages.
 
 ### Removed
 - Coverage-dependent auto-selection of the Barlow Twins lambda.
 - `getattr` fallback defaults for `barlow_lambda` and `base_learning_rate` in
   `models.py`.
+- Unused `--min-cluster-size` option.
+- Obsolete standalone raw-coverage script.
+- Redundant repository-local Bioconda release automation; upstream Bioconda
+  updates remain unchanged.
 
 ## [0.4.4] - 2026-06-10
 
@@ -381,7 +406,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Various bug fixes and improvements
 
-[Unreleased]: https://github.com/danielzmbp/remag/compare/v0.4.4...HEAD
+[Unreleased]: https://github.com/danielzmbp/remag/compare/v0.4.5...HEAD
+[0.4.5]: https://github.com/danielzmbp/remag/compare/v0.4.4...v0.4.5
 [0.4.4]: https://github.com/danielzmbp/remag/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/danielzmbp/remag/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/danielzmbp/remag/compare/v0.4.1...v0.4.2
