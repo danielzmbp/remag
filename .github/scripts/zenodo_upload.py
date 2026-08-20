@@ -1,257 +1,211 @@
 #!/usr/bin/env python3
-"""
-Upload release to Zenodo and get DOI
-"""
+"""Publish a REMAG release as a new version of its Zenodo record."""
+
 import json
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
+from packaging.version import InvalidVersion, Version
 
 ZENODO_URL = "https://zenodo.org/api"
-SANDBOX_URL = "https://sandbox.zenodo.org/api"  # For testing
+SANDBOX_URL = "https://sandbox.zenodo.org/api"
+DEFAULT_RECORD_ID = "16762341"
+REQUEST_TIMEOUT = 60
+UPLOAD_TIMEOUT = 600
 
 
-def get_zenodo_deposition(token, use_sandbox=False):
-    """Create or get existing deposition."""
-    base_url = SANDBOX_URL if use_sandbox else ZENODO_URL
-    headers = {"Authorization": f"Bearer {token}"}
+class ZenodoError(RuntimeError):
+    """Raised when Zenodo cannot complete a release operation."""
 
-    # Check if we have a previous deposition ID stored
-    deposition_file = Path(".zenodo_deposition_id")
-    if deposition_file.exists():
-        deposition_id = deposition_file.read_text().strip()
-        # Get the deposition
-        r = requests.get(
-            f"{base_url}/deposit/depositions/{deposition_id}", headers=headers
-        )
-        if r.status_code == 200:
-            deposition = r.json()
-            # If it's published, create a new version
-            if deposition.get("state") == "done":
-                print(f"Creating new version of deposition {deposition_id}")
-                r = requests.post(
-                    f"{base_url}/deposit/depositions/{deposition_id}/actions/newversion",
-                    headers=headers,
+
+class ZenodoClient:
+    """Small client for the Zenodo records and deposit APIs."""
+
+    def __init__(self, token, use_sandbox=False, session=None):
+        self.base_url = SANDBOX_URL if use_sandbox else ZENODO_URL
+        self.session = session or requests.Session()
+        self.session.headers.update({"Authorization": f"Bearer {token}"})
+
+    def _request(self, method, url, expected_statuses=(200,), **kwargs):
+        timeout = kwargs.pop("timeout", REQUEST_TIMEOUT)
+        response = self.session.request(method, url, timeout=timeout, **kwargs)
+        if response.status_code not in expected_statuses:
+            detail = response.text.strip()[:500]
+            raise ZenodoError(
+                f"Zenodo {method} {url} returned {response.status_code}: {detail}"
+            )
+        return response
+
+    def latest_record(self, seed_record_id):
+        """Resolve any record in the version chain to the latest public record."""
+        seed = self._request("GET", f"{self.base_url}/records/{seed_record_id}").json()
+        latest_url = seed.get("links", {}).get("latest")
+        if not latest_url:
+            raise ZenodoError(
+                f"Zenodo record {seed_record_id} has no latest-version link"
+            )
+        return self._request("GET", latest_url).json()
+
+    def new_version_draft(self, latest_record):
+        """Create or retrieve the draft following the latest published record."""
+        record_id = latest_record["id"]
+        deposition_url = f"{self.base_url}/deposit/depositions/{record_id}"
+        deposition = self._request("GET", deposition_url).json()
+        if deposition.get("state") != "done":
+            raise ZenodoError(
+                f"Latest Zenodo deposition {record_id} is not published "
+                f"(state={deposition.get('state')!r})"
+            )
+
+        response = self._request(
+            "POST",
+            f"{deposition_url}/actions/newversion",
+            expected_statuses=(200, 201),
+        ).json()
+        draft_url = response.get("links", {}).get("latest_draft")
+        if not draft_url:
+            raise ZenodoError("Zenodo did not return a latest-draft link")
+        return self._request("GET", draft_url).json()
+
+    def update_metadata(self, deposition_id, metadata):
+        return self._request(
+            "PUT",
+            f"{self.base_url}/deposit/depositions/{deposition_id}",
+            json={"metadata": metadata},
+        ).json()
+
+    def replace_files(self, deposition, release_files):
+        deposition_id = deposition["id"]
+        for file_info in deposition.get("files", []):
+            filename = file_info.get("filename", file_info.get("key", "unknown"))
+            print(f"Removing inherited file: {filename}")
+            self._request(
+                "DELETE",
+                f"{self.base_url}/deposit/depositions/{deposition_id}/files/"
+                f"{file_info['id']}",
+                expected_statuses=(204, 404),
+            )
+
+        bucket_url = deposition.get("links", {}).get("bucket")
+        if not bucket_url:
+            raise ZenodoError(f"Zenodo deposition {deposition_id} has no file bucket")
+
+        for file_path in release_files:
+            print(f"Uploading {file_path.name}")
+            with file_path.open("rb") as release_file:
+                self._request(
+                    "PUT",
+                    f"{bucket_url}/{file_path.name}",
+                    expected_statuses=(200, 201),
+                    data=release_file,
+                    timeout=UPLOAD_TIMEOUT,
                 )
-                if r.status_code != 201:
-                    print(f"Failed to create new version: {r.status_code} - {r.text}")
-                    # Fallback: create completely new deposition
-                    print("Falling back to creating new deposition...")
-                    r = requests.post(
-                        f"{base_url}/deposit/depositions", headers=headers, json={}
-                    )
-                    r.raise_for_status()
-                    deposition = r.json()
-                    deposition_file.write_text(str(deposition["id"]))
-                    return deposition
-                r.raise_for_status()
-                # Get the new draft
-                new_version_url = r.json()["links"]["latest_draft"]
-                r = requests.get(new_version_url, headers=headers)
-                r.raise_for_status()
-                new_deposition = r.json()
-                # Update stored ID to the new draft ID
-                deposition_file.write_text(str(new_deposition["id"]))
-                return new_deposition
-            return deposition
 
-    # Create new deposition
-    r = requests.post(f"{base_url}/deposit/depositions", headers=headers, json={})
-    r.raise_for_status()
-    deposition = r.json()
-
-    # Save deposition ID for future releases
-    deposition_file.write_text(str(deposition["id"]))
-
-    return deposition
+    def publish(self, deposition_id):
+        return self._request(
+            "POST",
+            f"{self.base_url}/deposit/depositions/{deposition_id}/actions/publish",
+            expected_statuses=(200, 202),
+        ).json()
 
 
-def update_metadata(deposition, version):
-    """Update deposition metadata."""
-    metadata = {
-        "title": f"REMAG: Recovering high-quality eukaryotic genomes from complex metagenomes v{version.lstrip('v')}",
-        "upload_type": "software",
-        "description": """<p>REMAG is a specialized metagenomic binning tool designed for recovering high-quality eukaryotic genomes from mixed prokaryotic-eukaryotic samples.</p>
+def normalize_version(tag):
+    """Return a package version from a GitHub tag or ref."""
+    version = tag.removeprefix("refs/tags/").removeprefix("v").strip()
+    if not version:
+        raise ZenodoError("No release version was provided")
+    try:
+        Version(version)
+    except InvalidVersion as error:
+        raise ZenodoError(f"Invalid release version {version!r}") from error
+    return version
 
-<p><strong>Key Features:</strong></p>
-<ul>
-<li>Bacterial filtering using 4CAC XGBoost classifier</li>
-<li>Contrastive learning with Siamese neural networks</li>
-<li>HDBSCAN clustering for genome binning</li>
-<li>Quality assessment using eukaryotic core genes</li>
-<li>Iterative refinement for contamination removal</li>
-</ul>
 
-<p><strong>What's new in this version:</strong></p>
-<p>See the release notes on GitHub for detailed changes.</p>""",
-        "creators": [
-            {
-                "name": "Gómez-Pérez, Daniel",
-                "affiliation": "Earlham Institute",
-                "orcid": "0000-0002-9938-9444",
-            }
-        ],
-        "keywords": [
-            "metagenomics",
-            "binning",
-            "eukaryotes",
-            "machine learning",
-            "contrastive learning",
-            "bioinformatics",
-        ],
-        "license": "MIT",
-        "related_identifiers": [
-            {
-                "relation": "isSupplementTo",
-                "identifier": "https://github.com/danielzmbp/remag",
-                "resource_type": "software",
-            }
-        ],
-        "access_right": "open",
-        "version": version.lstrip("v"),
-    }
+def distribution_files(dist_path=Path("dist")):
+    """Validate and return the wheel and source distribution for the release."""
+    files = sorted(path for path in dist_path.iterdir() if path.is_file())
+    wheels = [path for path in files if path.suffix == ".whl"]
+    source_distributions = [path for path in files if path.name.endswith(".tar.gz")]
+    if len(files) != 2 or len(wheels) != 1 or len(source_distributions) != 1:
+        raise ZenodoError(
+            "Expected dist/ to contain exactly one wheel and one .tar.gz source "
+            f"distribution; found {[path.name for path in files]}"
+        )
+    return files
 
+
+def build_metadata(version, metadata_path=Path(".zenodo.json")):
+    """Load shared metadata and add fields specific to this release."""
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["title"] = f"{metadata['title']} v{version}"
+    metadata["version"] = version
+    metadata["publication_date"] = datetime.now(timezone.utc).date().isoformat()
     return metadata
 
 
-def upload_files(deposition, token, use_sandbox=False):
-    """Upload distribution files to Zenodo."""
-    base_url = SANDBOX_URL if use_sandbox else ZENODO_URL
-    headers = {"Authorization": f"Bearer {token}"}
-
-    # First, delete any existing files if this is a new version
-    if "files" in deposition and deposition["files"]:
-        for file_info in deposition["files"]:
-            print(f"Removing old file: {file_info['filename']}")
-            r = requests.delete(
-                f"{base_url}/deposit/depositions/{deposition['id']}/files/{file_info['id']}",
-                headers=headers,
-            )
-            # Don't fail if file deletion fails (might already be deleted)
-            if r.status_code not in [204, 404]:
-                print(
-                    f"Warning: Could not delete file {file_info['filename']}: {r.status_code}"
-                )
-
-    # Upload all files in dist/
-    dist_path = Path("dist")
-    if not dist_path.exists():
-        print("No dist/ directory found")
-        return
-
-    for file_path in dist_path.glob("*"):
-        if file_path.is_file():
-            print(f"Uploading {file_path.name}...")
-
-            with open(file_path, "rb") as f:
-                # Try the bucket upload method first (for new versions)
-                if "links" in deposition and "bucket" in deposition["links"]:
-                    bucket_url = deposition["links"]["bucket"]
-                    print(f"Trying bucket upload to: {bucket_url}/{file_path.name}")
-                    r = requests.put(
-                        f"{bucket_url}/{file_path.name}", headers=headers, data=f
-                    )
-                    if r.status_code in [200, 201]:
-                        print(f"Successfully uploaded {file_path.name} via bucket")
-                        continue
-                    else:
-                        print(f"Bucket upload failed: {r.status_code} - {r.text}")
-
-                # Fallback to traditional file upload
-                f.seek(0)  # Reset file pointer
-                files = {"file": (file_path.name, f)}
-                r = requests.post(
-                    f"{base_url}/deposit/depositions/{deposition['id']}/files",
-                    headers=headers,
-                    files=files,
-                )
-                if r.status_code != 201:
-                    print(f"Upload failed with status {r.status_code}")
-                    print(f"Response: {r.text}")
-                    print(
-                        f"URL: {base_url}/deposit/depositions/{deposition['id']}/files"
-                    )
-                r.raise_for_status()
+def published_version(record):
+    version = record.get("metadata", {}).get("version")
+    return normalize_version(str(version)) if version else None
 
 
-def publish_deposition(deposition, token, use_sandbox=False):
-    """Publish the deposition to get DOI."""
-    base_url = SANDBOX_URL if use_sandbox else ZENODO_URL
-    headers = {"Authorization": f"Bearer {token}"}
-
-    r = requests.post(
-        f"{base_url}/deposit/depositions/{deposition['id']}/actions/publish",
-        headers=headers,
-    )
-    if r.status_code != 202:
-        print(f"Publish failed with status {r.status_code}")
-        print(f"Response: {r.text}")
-    r.raise_for_status()
-
-    return r.json()
+def ensure_release_is_newer(version, latest_record):
+    """Return False for a safe rerun and reject an older release."""
+    latest_version = published_version(latest_record)
+    if latest_version == version:
+        return False
+    if latest_version and Version(version) <= Version(latest_version):
+        raise ZenodoError(
+            f"Release {version} is not newer than Zenodo's latest version "
+            f"{latest_version}"
+        )
+    return True
 
 
 def main():
-    """Main function."""
     token = os.environ.get("ZENODO_TOKEN")
     if not token:
-        print("ZENODO_TOKEN not set")
-        sys.exit(1)
+        raise ZenodoError("ZENODO_TOKEN is not set")
 
-    version = os.environ.get("GITHUB_REF", "").replace("refs/tags/", "")
-    if not version:
-        print("No version tag found")
-        sys.exit(1)
-
+    tag = os.environ.get("GITHUB_REF_NAME") or os.environ.get("GITHUB_REF", "")
+    version = normalize_version(tag)
     use_sandbox = os.environ.get("ZENODO_SANDBOX", "false").lower() == "true"
+    record_id = os.environ.get("ZENODO_RECORD_ID", DEFAULT_RECORD_ID)
+    if use_sandbox and "ZENODO_RECORD_ID" not in os.environ:
+        raise ZenodoError("ZENODO_RECORD_ID must be set when using the sandbox")
 
-    try:
-        # Get or create deposition
-        print("Getting Zenodo deposition...")
-        deposition = get_zenodo_deposition(token, use_sandbox)
-        print(f"Using deposition ID: {deposition['id']}")
-        print(f"Deposition state: {deposition.get('state', 'unknown')}")
-        print(f"Available links: {list(deposition.get('links', {}).keys())}")
-        if "bucket" in deposition.get("links", {}):
-            print(f"Bucket URL: {deposition['links']['bucket']}")
+    files = distribution_files()
+    metadata = build_metadata(version)
+    client = ZenodoClient(token, use_sandbox=use_sandbox)
 
-        # Update metadata
-        print("Updating metadata...")
-        metadata = update_metadata(deposition, version)
-        base_url = SANDBOX_URL if use_sandbox else ZENODO_URL
-        headers = {"Authorization": f"Bearer {token}"}
+    latest_record = client.latest_record(record_id)
+    if not ensure_release_is_newer(version, latest_record):
+        print(f"Zenodo already contains REMAG {version}; nothing to do")
+        return 0
 
-        r = requests.put(
-            f"{base_url}/deposit/depositions/{deposition['id']}",
-            headers=headers,
-            json={"metadata": metadata},
-        )
-        r.raise_for_status()
+    latest_version = published_version(latest_record) or "unknown"
+    print(
+        f"Creating REMAG {version} after Zenodo record {latest_record['id']} "
+        f"(version {latest_version})"
+    )
+    deposition = client.new_version_draft(latest_record)
+    client.update_metadata(deposition["id"], metadata)
+    client.replace_files(deposition, files)
+    published = client.publish(deposition["id"])
 
-        # Upload files
-        print("Uploading files...")
-        upload_files(deposition, token, use_sandbox)
-
-        # Publish to get DOI
-        print("Publishing deposition...")
-        published = publish_deposition(deposition, token, use_sandbox)
-
-        doi = published.get("doi", "Unknown")
-        doi_url = published.get("doi_url", "")
-
-        print(f"\nSuccess! Your release has been published to Zenodo")
-        print(f"DOI: {doi}")
-        print(f"URL: {doi_url}")
-
-        # Save DOI for badge in README
-        Path(".zenodo_doi").write_text(doi)
-
-    except Exception as e:
-        print(f"Error: {e}")
-        sys.exit(1)
+    doi = published.get("doi", "unknown")
+    doi_url = published.get("doi_url") or published.get("links", {}).get("doi", "")
+    print(f"Published REMAG {version} to Zenodo")
+    print(f"DOI: {doi}")
+    print(f"URL: {doi_url}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        raise SystemExit(main())
+    except (OSError, ValueError, requests.RequestException, ZenodoError) as error:
+        print(f"Zenodo upload failed: {error}", file=sys.stderr)
+        raise SystemExit(1)

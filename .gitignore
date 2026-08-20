@@ -37,8 +37,6 @@ docs/.doctrees/
 # Temporary files
 *.log
 .DS_Store
-.zenodo_doi
-.zenodo_deposition_id
 upload_to_zenodo.sh
 .pypirc
 

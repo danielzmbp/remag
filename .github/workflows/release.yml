@@ -1,7 +1,7 @@
 name: Release
 
 # Main release workflow triggered by version tags
-# Handles: PyPI, GitHub release, Bioconda recipe, Zenodo, Docker
+# Handles: PyPI, GitHub release, Zenodo, Docker
 on:
   push:
     tags:
@@ -15,28 +15,78 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
       with:
         fetch-depth: 0
     
     - name: Set up Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v7
       with:
-        python-version: '3.9'
+        python-version: '3.11'
+        cache: pip
+        cache-dependency-path: pyproject.toml
     
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install build twine
+        python -m pip install build twine ".[dev]"
+
+    - name: Run tests and code quality checks
+      run: |
+        pytest
+        flake8 remag tests
+        black --check remag tests
+        isort --check-only remag tests
     
     - name: Build package
       run: python -m build
-    
+
+    - name: Verify package version matches tag
+      run: |
+        python - <<'PY'
+        import os
+        from email.parser import Parser
+        from pathlib import Path
+        from zipfile import ZipFile
+
+        wheels = list(Path("dist").glob("*.whl"))
+        if len(wheels) != 1:
+            raise SystemExit(f"Expected one wheel in dist/, found {len(wheels)}")
+
+        with ZipFile(wheels[0]) as archive:
+            metadata_files = [
+                name
+                for name in archive.namelist()
+                if name.endswith(".dist-info/METADATA")
+            ]
+            if len(metadata_files) != 1:
+                raise SystemExit(
+                    "Expected one METADATA file in the built wheel, "
+                    f"found {len(metadata_files)}"
+                )
+            metadata = Parser().parsestr(
+                archive.read(metadata_files[0]).decode("utf-8")
+            )
+
+        package_version = metadata["Version"]
+        tag_version = os.environ["GITHUB_REF_NAME"].removeprefix("v")
+        if package_version != tag_version:
+            raise SystemExit(
+                f"Release tag {tag_version!r} does not match "
+                f"package version {package_version!r}"
+            )
+        print(f"Validated release version {package_version}")
+        PY
+
+    - name: Check package metadata
+      run: python -m twine check dist/*
+
     - name: Upload artifacts
-      uses: actions/upload-artifact@v4.3.1
+      uses: actions/upload-artifact@v7
       with:
         name: dist
         path: dist/
+        if-no-files-found: error
 
   pypi-publish:
     needs: build
@@ -46,7 +96,7 @@ jobs:
       url: https://pypi.org/p/remag
     steps:
     - name: Download artifacts
-      uses: actions/download-artifact@v4.1.7
+      uses: actions/download-artifact@v8
       with:
         name: dist
         path: dist/
@@ -61,12 +111,12 @@ jobs:
     needs: pypi-publish
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
       with:
         fetch-depth: 0
 
     - name: Download artifacts
-      uses: actions/download-artifact@v4.1.7
+      uses: actions/download-artifact@v8
       with:
         name: dist
         path: dist/
@@ -84,67 +134,37 @@ jobs:
         echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/$(git describe --tags --abbrev=0 HEAD^)...$VERSION" >> changelog.txt
     
     - name: Create GitHub Release
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v3
       with:
         body_path: changelog.txt
         files: dist/*
         generate_release_notes: true
 
-  trigger-bioconda:
-    needs: pypi-publish
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.9'
-    
-    - name: Install bioconda-utils
-      run: |
-        pip install pyyaml requests
-    
-    - name: Update Bioconda recipe
-      run: |
-        python .github/scripts/update_bioconda.py
-        echo "Recipe generated in .github/bioconda-recipe/meta.yaml"
-        echo "::notice title=Bioconda Recipe::Recipe generated! Download from workflow artifacts and submit manually to bioconda-recipes."
-    
-    - name: Upload Bioconda recipe as artifact
-      uses: actions/upload-artifact@v4.3.1
-      with:
-        name: bioconda-recipe
-        path: .github/bioconda-recipe/meta.yaml
-
   zenodo-upload:
     needs: github-release
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
     
     - name: Set up Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v7
       with:
-        python-version: '3.9'
+        python-version: '3.11'
     
     - name: Download artifacts
-      uses: actions/download-artifact@v4.1.7
+      uses: actions/download-artifact@v8
       with:
         name: dist
         path: dist/
 
     - name: Upload to Zenodo
       run: |
-        pip install requests
-        if [ -n "$ZENODO_TOKEN" ]; then
-          python .github/scripts/zenodo_upload.py
-        else
-          echo "ZENODO_TOKEN not set, skipping Zenodo upload"
-        fi
+        python -m pip install packaging requests
+        python .github/scripts/zenodo_upload.py
       env:
         ZENODO_TOKEN: ${{ secrets.ZENODO_TOKEN }}
-        GITHUB_REF: ${{ github.ref }}
+        ZENODO_RECORD_ID: ${{ vars.ZENODO_RECORD_ID || '16762341' }}
+        GITHUB_REF_NAME: ${{ github.ref_name }}
 
   docker-build:
     needs: pypi-publish

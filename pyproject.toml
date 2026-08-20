@@ -60,8 +60,10 @@ plotting = [
     "umap-learn>=0.5.0",
 ]
 dev = [
+    "packaging>=21.0",
     "pytest>=7.0.0",
     "pytest-cov>=3.0.0",
+    "requests>=2.25.0",
     "black>=22.0.0",
     "isort>=5.10.0",
     "flake8>=4.0.0",
