@@ -1,5 +1,10 @@
 # Multi-stage build for REMAG
-FROM python:3.9-slim AS miniprot-builder
+ARG PYTHON_VERSION=3.11
+ARG MINIPROT_COMMIT=671db243f964a68bd724af11cd9964d840f29c43
+
+FROM python:${PYTHON_VERSION}-slim AS miniprot-builder
+
+ARG MINIPROT_COMMIT
 
 # Build miniprot from source because it is required at runtime and is not
 # available in the base image package repositories.
@@ -12,36 +17,28 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /tmp
 
-RUN git clone --depth 1 https://github.com/lh3/miniprot.git && \
+RUN git clone --branch v0.18 --depth 1 https://github.com/lh3/miniprot.git && \
+    test "$(git -C miniprot rev-parse HEAD)" = "${MINIPROT_COMMIT}" && \
     make -C miniprot
 
-FROM python:3.9-slim AS builder
-
-# Install build dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    git \
-    && rm -rf /var/lib/apt/lists/*
+FROM python:${PYTHON_VERSION}-slim AS builder
 
 # Set working directory
 WORKDIR /app
 
-# Copy source code and git metadata for versioning
-COPY pyproject.toml README.md ./
+# Copy only the files needed to build the wheel
+COPY pyproject.toml README.md LICENSE ./
 COPY remag ./remag
-COPY .git ./.git
 
 # Build the package
-ARG VERSION
-RUN pip install --no-cache-dir build setuptools-scm && \
-    SETUPTOOLS_SCM_PRETEND_VERSION=${VERSION:-0.0.0} python -m build --wheel
+RUN pip install --no-cache-dir build && \
+    python -m build --wheel
 
 # Final stage
-FROM python:3.9-slim
+FROM python:${PYTHON_VERSION}-slim
 
-# Install runtime dependencies and build tools for packages that need compilation
+# Install external runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
     libgomp1 \
     samtools \
     zlib1g \
@@ -62,8 +59,6 @@ COPY --from=miniprot-builder /tmp/miniprot/miniprot /usr/local/bin/miniprot
 RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && \
     pip install --no-cache-dir /tmp/*.whl && \
     rm -rf /tmp/*.whl && \
-    apt-get purge -y build-essential && \
-    apt-get autoremove -y && \
     rm -rf /var/lib/apt/lists/*
 
 # Switch to non-root user

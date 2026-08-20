@@ -1,6 +1,5 @@
-# Git files (keep .git for setuptools-scm but exclude large files)
-.git/objects/pack
-.git/objects/info
+# Version control and CI metadata
+.git
 .gitignore
 .github
 
