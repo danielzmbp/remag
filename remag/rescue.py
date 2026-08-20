@@ -206,7 +206,7 @@ def rescue_fragmented_bins(
     else:
         logger.info("Rescue complete: No safe merges found.")
 
-    # 4. Singleton Rescue (NEW)
+    # 4. Singleton Rescue
     # Attempt to assign unbinned "noise" contigs to the best matching bin
     # Re-calculate valid bins and centroids after the merge step
 

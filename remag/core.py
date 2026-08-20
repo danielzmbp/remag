@@ -18,7 +18,7 @@ from .miniprot_utils import (
 )
 from .models import generate_embeddings, train_siamese_network
 from .output import save_clusters_as_fasta
-from .rescue import rescue_fragmented_bins  # Import the new rescue function
+from .rescue import rescue_fragmented_bins
 from .utils import setup_logging
 
 
@@ -166,8 +166,8 @@ def main(args):
     else:
         logger.info("Skipping rescue step")
 
-    # Save updated bins.csv with refined cluster assignments (excluding noise)
-    logger.info("Saving final bins.csv with refined cluster assignments...")
+    # Save updated bins.csv with final cluster assignments (excluding noise)
+    logger.info("Saving final bins.csv with cluster assignments...")
     bins_csv_path = os.path.join(args.output, "bins.csv")
     final_bins_df = clusters_df[clusters_df["cluster"] != "noise"].copy()
     # Keep only the first two columns: contig and cluster

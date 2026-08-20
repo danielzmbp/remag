@@ -427,7 +427,7 @@ def validate_coverage_options(ctx, param, value):
 @click.option(
     "--skip-rescue",
     is_flag=True,
-    help="Skip post-refinement bin rescue strategy (merging fragmented bins).",
+    help="Skip bin rescue (merging fragmented bins).",
 )
 @click.option(
     "--rescue-max-duplication-increase",

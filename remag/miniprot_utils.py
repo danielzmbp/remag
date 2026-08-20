@@ -1,9 +1,4 @@
-"""
-Miniprot utilities for core gene duplication checking.
-
-This module consolidates the core gene duplication checking functionality
-that was previously duplicated between quality.py and refinement.py.
-"""
+"""Miniprot utilities for gene mapping and core-gene duplication checks."""
 
 import json
 import os
@@ -252,7 +247,7 @@ def parse_and_cache_paf_files(
     Parse PAF files from miniprot output and cache gene-to-contig mappings.
 
     This function extracts all gene-to-contig mappings from PAF files and stores
-    them in a format that can be reused during refinement without re-running miniprot.
+    them in a format that can be reused during rescue without re-running miniprot.
 
     Args:
         temp_dir: Directory containing PAF files
@@ -293,8 +288,7 @@ def check_core_gene_duplications_from_cache(clusters_df, gene_mappings_cache, ar
     """
     Check for duplicated core genes using cached gene-to-contig mappings.
 
-    This function reuses existing gene mappings instead of re-running miniprot,
-    making it much faster for refinement steps.
+    This function reuses existing gene mappings instead of re-running miniprot.
 
     Args:
         clusters_df: DataFrame with cluster assignments
@@ -368,7 +362,7 @@ def check_core_gene_duplications_from_cache(clusters_df, gene_mappings_cache, ar
         f"Checked {total_bins_checked} bins using cache: {bins_with_duplications} have duplicated core genes"
     )
 
-    # Always save duplication results so refinement can load them later
+    # Save duplication results as a pipeline output
     results_path = get_core_gene_duplication_results_path(args)
     try:
         with open(results_path, "w") as f:
@@ -390,15 +384,12 @@ def check_core_gene_duplications(
     """
     Check for duplicated core genes using miniprot.
 
-    This function consolidates the logic previously duplicated between
-    quality.py and refinement.py with configurable thresholds.
-
     Args:
         clusters_df: DataFrame with cluster assignments
         fragments_dict: Dictionary mapping headers to sequences
         args: Arguments object containing output directory, cores, etc.
-        target_coverage_threshold: Minimum target coverage (default: 0.55)
-        identity_threshold: Minimum identity (default: 0.35)
+        target_coverage_threshold: Minimum target coverage (default: 0.60)
+        identity_threshold: Minimum identity (default: 0.40)
 
     Returns:
         DataFrame: Updated clusters_df with duplication information
@@ -556,7 +547,7 @@ def check_core_gene_duplications(
                     "single_copy_genes_count": 0,
                 }
 
-        # Parse and cache gene mappings for potential reuse during refinement
+        # Parse and cache gene mappings for rescue
         gene_mappings_cache = parse_and_cache_paf_files(
             temp_dir,
             filtered_clusters,
@@ -565,9 +556,8 @@ def check_core_gene_duplications(
             identity_threshold,
         )
 
-        # Store cache and duplication results in args for immediate use during refinement
+        # Store mappings for immediate use during rescue
         args._gene_mappings_cache = gene_mappings_cache
-        args._duplication_results = duplication_results
 
     finally:
         # Clean up temp_miniprot folder unless keeping intermediate files
@@ -604,7 +594,7 @@ def check_core_gene_duplications(
         f"Checked {total_bins_checked} bins: {bins_with_duplications} have duplicated core genes"
     )
 
-    # Always save duplication results so later steps (e.g., refinement) can load them
+    # Save duplication results as a pipeline output
     results_path = get_core_gene_duplication_results_path(args)
     try:
         with open(results_path, "w") as f:
