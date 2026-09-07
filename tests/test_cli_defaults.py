@@ -205,25 +205,73 @@ class TestCliDefaults:
 
         assert args.base_learning_rate == 0.005
 
-    def test_single_cell_mode_uses_larger_default_knn(
-        self, mock_run_remag, temp_fasta, temp_bam
+    @pytest.mark.parametrize("coverage_count", [0, 1, 2])
+    @pytest.mark.parametrize("extension", ["bam", "tsv"])
+    def test_standard_defaults_follow_coverage_count(
+        self, mock_run_remag, temp_fasta, tmp_path, coverage_count, extension
     ):
-        """Test single-cell mode applies the documented larger default k-NN size."""
-        runner = CliRunner()
-        result = runner.invoke(
-            main_cli,
-            [
-                temp_fasta,
-                "--coverage",
-                temp_bam,
-                "--mode",
-                "single-cell",
-                "--output",
-                "remag_output",
-            ],
-        )
-        assert result.exit_code == 0, f"CLI command failed: {result.exception}"
+        """All input layouts use the standard graph and filtering defaults."""
+        command = [temp_fasta, "--output", str(tmp_path / "out")]
+        for index in range(coverage_count):
+            coverage = tmp_path / f"sample{index}.{extension}"
+            coverage.touch()
+            command.extend(["--coverage", str(coverage)])
 
-        args = mock_run_remag.call_args[0][0]
+        result = CliRunner().invoke(main_cli, command)
+        assert result.exit_code == 0, result.output
+        args = mock_run_remag.call_args.args[0]
+        assert args.leiden_k_neighbors == 15
+        assert args.skip_bacterial_filter is False
+        assert args.min_contig_length == (4096 if coverage_count > 1 else 1000)
+        assert args.base_learning_rate == (0.0005 if coverage_count > 1 else 0.005)
+        assert not hasattr(args, "mode")
 
+    @pytest.mark.parametrize("coverage_count,min_length", [(0, 4096), (2, 1000)])
+    def test_explicit_graph_filter_and_length_settings_override_defaults(
+        self, mock_run_remag, temp_fasta, tmp_path, coverage_count, min_length
+    ):
+        """Explicit settings can reproduce previous presets without a mode flag."""
+        command = [
+            temp_fasta,
+            "--output",
+            str(tmp_path / "out"),
+            "--min-contig-length",
+            str(min_length),
+            "--leiden-k-neighbors",
+            "30",
+            "--skip-bacterial-filter",
+        ]
+        for index in range(coverage_count):
+            coverage = tmp_path / f"sample{index}.bam"
+            coverage.touch()
+            command.extend(["--coverage", str(coverage)])
+
+        result = CliRunner().invoke(main_cli, command)
+        assert result.exit_code == 0, result.output
+        args = mock_run_remag.call_args.args[0]
+        assert args.min_contig_length == min_length
         assert args.leiden_k_neighbors == 30
+        assert args.skip_bacterial_filter is True
+
+    @pytest.mark.parametrize("flag", ["-m", "--mode"])
+    @pytest.mark.parametrize(
+        "mode", ["metagenomics", "single-cell", "short-reads", "sr"]
+    )
+    def test_removed_modes_fail_before_starting_workflow(
+        self, mock_run_remag, temp_fasta, flag, mode
+    ):
+        """Old mode commands must fail instead of silently changing behavior."""
+        result = CliRunner().invoke(main_cli, [temp_fasta, flag, mode])
+        assert result.exit_code == 2, result.output
+        assert "No such option" in result.output
+        assert flag in result.output
+        mock_run_remag.assert_not_called()
+
+    @pytest.mark.parametrize("flag", ["-h", "--help"])
+    def test_help_does_not_advertise_modes(self, flag):
+        with patch("sys.argv", ["remag", flag]):
+            result = CliRunner().invoke(main_cli, [flag])
+        assert result.exit_code == 0, result.output
+        assert "--mode" not in result.output
+        assert "single-cell" not in result.output
+        assert "short-reads" not in result.output

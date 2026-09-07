@@ -167,9 +167,6 @@ remag contigs.fasta -c sample1.bam.cov.gz -c sample2.bam.cov.gz
 # Only run eukaryotic filtering (skip binning)
 remag contigs.fasta --filter-only
 
-# Use single-cell mode (adjusts k-NN defaults and skips eukaryotic filtering)
-remag contigs.fasta -c alignments.bam -m single-cell
-
 # Keep intermediate files
 remag contigs.fasta -c alignments.bam -k
 
@@ -253,22 +250,13 @@ Do not mix BAM/CRAM inputs with precomputed coverage inputs in the same run.
 - `-k, --keep-intermediate`: retain features, model weights, encoder embeddings, and other optional intermediate files; `embeddings.csv` is saved without this flag
 - `--force`: remove existing REMAG outputs and recompute results
 - `--filter-only`: stop after eukaryotic filtering and write filtered FASTA output
-- `-m, --mode`: select presets such as `metagenomics`, `single-cell`, or `short-reads`
 - `--save-filtered-contigs`: also write classified contigs rejected by the eukaryotic filter
 - `--skip-bacterial-filter`: disable the HyenaDNA filter
 - `--min-bin-size`: minimum bin size written to FASTA; defaults to 500,000 bp
 
 Use `remag -h` for a quick reference and `remag --help` for the full CLI, including training, clustering, filtering, and rescue options.
 
-### Mode defaults
-
-| Mode | Default minimum contig length | Default k-NN neighbors | HyenaDNA filtering |
-| --- | --- | --- | --- |
-| `metagenomics` | 1,000 bp with zero or one coverage file; 4,096 bp with multiple files | 15 | Enabled |
-| `single-cell` | Same length defaults as `metagenomics` | 30 | Disabled |
-| `short-reads` / `sr` | 1,000 bp | 15 | Enabled |
-
-Explicit `--min-contig-length` and `--leiden-k-neighbors` values override these defaults. Multiple coverage files also lower the default base learning rate from `0.005` to `0.0005`; an explicitly supplied learning rate is preserved.
+The default minimum contig length is 1,000 bp with zero or one coverage file and 4,096 bp with multiple files. The k-NN graph uses 15 neighbors, and HyenaDNA filtering is enabled. Use `--min-contig-length`, `--leiden-k-neighbors`, and `--skip-bacterial-filter` to adjust these settings explicitly. Multiple coverage files lower the default base learning rate from `0.005` to `0.0005`; an explicitly supplied learning rate is preserved.
 
 ## How It Works
 
@@ -310,7 +298,7 @@ REMAG recovers eukaryotic bins with a multi-stage pipeline:
 - `*_eukaryotic_filtered.fasta`: Contigs retained by the HyenaDNA filter
 - `*_non_eukaryotic.fasta`: Rejected contigs, when `--save-filtered-contigs` is used and at least one contig is rejected
 
-`--filter-only` stops after this stage and does not produce binning outputs. Use it with filtering enabled; `--skip-bacterial-filter` and `single-cell` mode disable that stage. Contigs below the minimum length are excluded from classification and the rejected-contig FASTA.
+`--filter-only` stops after this stage and does not produce binning outputs. Use it with filtering enabled; `--skip-bacterial-filter` disables that stage. Contigs below the minimum length are excluded from classification and the rejected-contig FASTA.
 
 If no contigs pass the classifier, the current implementation falls back to the original input FASTA instead of writing a filtered FASTA. Classifier initialization failures also fall back to the input; consult `remag.log` for details.
 
