@@ -147,7 +147,7 @@ click.rich_click.OPTION_GROUPS = {
         },
         {
             "name": "General",
-            "options": ["--threads", "--verbose", "--keep-intermediate"],
+            "options": ["--threads", "--verbose", "--keep-intermediate", "--force"],
         },
         {
             "name": "Contrastive Learning",
@@ -209,6 +209,7 @@ def custom_help_callback(ctx, param, value):
             "threads",
             "verbose",
             "keep_intermediate",
+            "force",
         }
 
         # Store original docstring and replace with minimal version
@@ -483,6 +484,12 @@ def validate_coverage_options(ctx, param, value):
     help="Keep intermediate files such as features, model weights, and graph artifacts. By default, only core outputs are kept.",
 )
 @click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Remove existing REMAG outputs and recompute results.",
+)
+@click.option(
     "--coverage-batch-size",
     type=int,
     default=100000,
@@ -529,6 +536,7 @@ def main_cli(
     leiden_k_neighbors,
     leiden_similarity_threshold,
     keep_intermediate,
+    force,
     coverage_batch_size,
     hyenadna_batch_size,
     filter_only,
@@ -667,6 +675,7 @@ def main_cli(
         leiden_k_neighbors=effective_k,
         leiden_similarity_threshold=leiden_similarity_threshold,
         keep_intermediate=keep_intermediate,
+        force=force,
         coverage_batch_size=coverage_batch_size,
         hyenadna_batch_size=hyenadna_batch_size,
         filter_only=filter_only,
