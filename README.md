@@ -72,11 +72,49 @@ pip install "remag[plotting]"
 
 REMAG selects an available PyTorch backend automatically: NVIDIA CUDA, Apple Silicon Metal (`mps`), or CPU. No REMAG flag is required.
 
-For NVIDIA GPUs, use the [official PyTorch installation selector](https://pytorch.org/get-started/locally/) to install a compatible CUDA-enabled build in the same environment as REMAG. The appropriate installation command depends on your operating system and GPU setup.
+#### NVIDIA GPUs (Linux)
 
-On Apple Silicon, install a PyTorch build with MPS support. REMAG uses CPU when neither GPU backend is available.
+Create an environment with Python and miniprot, then install CUDA-enabled PyTorch before REMAG. The following example uses CUDA 12.8 wheels; choose a build compatible with your GPU and NVIDIA driver using the [official PyTorch installation selector](https://pytorch.org/get-started/locally/).
 
-The repository's Dockerfile installs CPU-only PyTorch.
+```bash
+conda create -n remag-gpu -c conda-forge -c bioconda python=3.11 pip miniprot
+conda activate remag-gpu
+python -m pip install torch --index-url https://download.pytorch.org/whl/cu128
+python -m pip install remag
+```
+
+For a source installation, replace the last command with `python -m pip install .` from the REMAG repository. Using a fresh environment avoids replacing a Conda-managed CPU PyTorch installation with pip packages. PyTorch no longer publishes new releases to its [official Conda channel](https://pytorch.org/blog/pytorch2-6/).
+
+Verify that the same environment can access the GPU:
+
+```bash
+python -c "import torch; print('PyTorch:', torch.__version__); print('CUDA build:', torch.version.cuda); print('CUDA available:', torch.cuda.is_available())"
+```
+
+`CUDA available` should be `True`. If it is `False`, check the installed PyTorch build, NVIDIA driver, and GPU visibility before running REMAG:
+
+```bash
+remag contigs.fasta -c alignments.bam -o output_directory
+```
+
+#### Apple Silicon (macOS)
+
+Install REMAG natively in an Apple Silicon Python environment to use Metal (`mps`):
+
+```bash
+conda create -n remag-mps -c conda-forge -c bioconda python=3.11 pip miniprot
+conda activate remag-mps
+python -m pip install torch remag
+python -c "import torch; print('MPS available:', torch.backends.mps.is_available())"
+```
+
+`MPS available` should be `True` on a supported macOS/PyTorch setup. REMAG uses CPU when neither CUDA nor MPS is available.
+
+#### GPU support in containers
+
+The repository's Dockerfile installs CPU-only PyTorch, and the publishing workflow builds this image. Passing `--gpus all` to it does not enable CUDA. GPU execution requires an image containing CUDA-enabled PyTorch, a compatible NVIDIA driver on the host, and a configured [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html). Such an image can be run with `docker run --gpus all ...`; the repository does not currently provide a separate CUDA build.
+
+Docker Desktop supports NVIDIA GPU access on [Windows with the WSL2 backend](https://docs.docker.com/desktop/features/gpu/). Docker containers on macOS do not expose Apple Silicon MPS; use the native installation above for GPU acceleration. Likewise, Singularity's `--nv` flag requires a CUDA-enabled image and cannot add GPU support to this CPU-only build.
 
 ## Quick Start
 
