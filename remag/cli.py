@@ -147,7 +147,7 @@ click.rich_click.OPTION_GROUPS = {
         },
         {
             "name": "General",
-            "options": ["--threads", "--verbose", "--keep-intermediate"],
+            "options": ["--threads", "--verbose", "--keep-intermediate", "--force"],
         },
         {
             "name": "Contrastive Learning",
@@ -209,6 +209,7 @@ def custom_help_callback(ctx, param, value):
             "threads",
             "verbose",
             "keep_intermediate",
+            "force",
         }
 
         # Store original docstring and replace with minimal version
@@ -365,17 +366,6 @@ def validate_coverage_options(ctx, param, value):
     "Applies to all scenarios, including coassembly and multi-sample coverage.",
 )
 @click.option(
-    "-m",
-    "--mode",
-    type=click.Choice(
-        ["metagenomics", "single-cell", "short-reads", "sr"], case_sensitive=False
-    ),
-    default="metagenomics",
-    show_default=True,
-    help="Preset mode adjusting defaults. 'metagenomics' (default) maximizes clusters; "
-    "'single-cell' uses larger k-NN and minimizes clusters; 'short-reads'/'sr' enforces 1000bp min length.",
-)
-@click.option(
     "--random-seed",
     type=int,
     default=42,
@@ -463,10 +453,9 @@ def validate_coverage_options(ctx, param, value):
 @click.option(
     "--leiden-k-neighbors",
     type=int,
-    default=None,
-    show_default=False,
-    help="Number of nearest neighbors for k-NN graph construction in Leiden clustering. "
-    "If not set, defaults to 15 (metagenomics) or 30 (single-cell mode).",
+    default=15,
+    show_default=True,
+    help="Number of nearest neighbors for k-NN graph construction in Leiden clustering.",
 )
 @click.option(
     "--leiden-similarity-threshold",
@@ -481,6 +470,12 @@ def validate_coverage_options(ctx, param, value):
     is_flag=True,
     default=False,
     help="Keep intermediate files such as features, model weights, and graph artifacts. By default, only core outputs are kept.",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Remove existing REMAG outputs and recompute results.",
 )
 @click.option(
     "--coverage-batch-size",
@@ -512,7 +507,6 @@ def main_cli(
     embedding_dim,
     base_learning_rate,
     barlow_lambda,
-    mode,
     random_seed,
     min_contig_length,
     max_positive_pairs,
@@ -529,6 +523,7 @@ def main_cli(
     leiden_k_neighbors,
     leiden_similarity_threshold,
     keep_intermediate,
+    force,
     coverage_batch_size,
     hyenadna_batch_size,
     filter_only,
@@ -614,12 +609,7 @@ def main_cli(
 
     # Set default min contig length if not provided by user
     if min_contig_length is None:
-        if mode.lower() in ["short-reads", "sr"]:
-            min_contig_length = 1000
-            click.echo(
-                "Short-reads mode: Auto-setting min contig length to 1000 bp.", err=True
-            )
-        elif coverage_count > 1:
+        if coverage_count > 1:
             min_contig_length = 4096
             click.echo(
                 "Coassembly detected: Auto-setting min contig length to 4096 bp.",
@@ -627,18 +617,6 @@ def main_cli(
             )
         else:
             min_contig_length = 1000
-
-    # Mode-specific defaults
-    effective_k = leiden_k_neighbors
-    if effective_k is None:
-        effective_k = 30 if mode.lower() == "single-cell" else 15
-    skip_bacterial_filter_mode = skip_bacterial_filter or mode.lower() == "single-cell"
-
-    if mode.lower() == "single-cell":
-        if not skip_bacterial_filter:
-            click.echo(
-                "Single-cell mode: skipping euk filter (keeping all contigs).", err=True
-            )
 
     args = argparse.Namespace(
         fasta=fasta_path,
@@ -650,23 +628,23 @@ def main_cli(
         embedding_dim=embedding_dim,
         base_learning_rate=base_learning_rate,
         barlow_lambda=barlow_lambda,
-        mode=mode.lower(),
         random_seed=random_seed,
         min_contig_length=min_contig_length,
         max_positive_pairs=max_positive_pairs,
         cores=threads,
         min_bin_size=min_bin_size,
         verbose=verbose,
-        skip_bacterial_filter=skip_bacterial_filter_mode,
+        skip_bacterial_filter=skip_bacterial_filter,
         save_filtered_contigs=save_filtered_contigs,
         skip_rescue=skip_rescue,
         rescue_max_duplication_increase=rescue_max_duplication_increase,
         rescue_max_total_duplication=rescue_max_total_duplication,
         num_augmentations=num_augmentations,
         greedy_resolutions=greedy_resolutions,
-        leiden_k_neighbors=effective_k,
+        leiden_k_neighbors=leiden_k_neighbors,
         leiden_similarity_threshold=leiden_similarity_threshold,
         keep_intermediate=keep_intermediate,
+        force=force,
         coverage_batch_size=coverage_batch_size,
         hyenadna_batch_size=hyenadna_batch_size,
         filter_only=filter_only,

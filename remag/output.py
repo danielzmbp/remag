@@ -3,10 +3,83 @@ Output module for REMAG
 """
 
 import os
+import shutil
+from pathlib import Path
 
 from loguru import logger
 
 from .utils import ContigHeaderMapper
+
+REMAG_OUTPUT_PATTERNS = (
+    "bins.csv",
+    "embeddings.csv",
+    "siamese_model.pt",
+    "kmer_embeddings.csv",
+    "coverage_embeddings.csv",
+    "params.json",
+    "features.csv",
+    "fragments.pkl",
+    "knn_graph_edges.csv",
+    "knn_graph_stats.json",
+    "gene_contig_mappings.json",
+    "core_gene_duplication_results.json",
+    "*_hyenadna_classification.tsv",
+    "*_eukaryotic_filtered.fasta",
+    "*_eukaryotic_filtered.fasta.tmp",
+    "*_non_eukaryotic.fasta",
+    "*_non_eukaryotic.fasta.tmp",
+    "bins/bin_*.fa",
+    "umap_coordinates.csv",
+    "umap_plot.pdf",
+    "remag.log",
+    "remag.*.log",
+)
+
+
+def prepare_output_directory(args):
+    """Find existing results and remove recognized outputs only when forced.
+
+    Return whether any results were found. Input protection is checked for the
+    complete deletion list before removing anything; no cache validation is done.
+    """
+    output = Path(args.output)
+    paths = {
+        path
+        for pattern in REMAG_OUTPUT_PATTERNS
+        for path in output.glob(pattern)
+        if path.is_file() or path.is_symlink()
+    }
+    for name in ("temp_gene_mapping", "temp_miniprot"):
+        path = output / name
+        if path.is_dir() or path.is_symlink():
+            paths.add(path)
+
+    if not getattr(args, "force", False):
+        return bool(paths)
+
+    inputs = [args.fasta]
+    inputs.extend(getattr(args, "bam", None) or [])
+    inputs.extend(getattr(args, "tsv", None) or [])
+    input_paths = [Path(path).resolve() for path in inputs]
+    for path in paths:
+        resolved = path.resolve()
+        if any(
+            resolved == source or resolved in source.parents for source in input_paths
+        ):
+            raise ValueError(
+                f"--force would remove an input file at {path}. "
+                "Use a different output directory or move the input first."
+            )
+
+    for path in sorted(paths):
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+
+    # Python callers may reuse an args object from a previous run.
+    vars(args).pop("_gene_mappings_cache", None)
+    return bool(paths)
 
 
 def save_clusters_as_fasta(clusters_df, fragments_dict, args):

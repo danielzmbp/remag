@@ -17,15 +17,24 @@ from .miniprot_utils import (
     load_or_generate_gene_mappings,
 )
 from .models import generate_embeddings, train_siamese_network
-from .output import save_clusters_as_fasta
+from .output import prepare_output_directory, save_clusters_as_fasta
 from .rescue import rescue_fragmented_bins
 from .utils import setup_logging
 
 
 def main(args):
     try:
+        existing_results = prepare_output_directory(args)
         setup_logging(args.output, verbose=args.verbose)
         os.makedirs(args.output, exist_ok=True)
+        if existing_results:
+            if getattr(args, "force", False):
+                logger.info("Removed existing REMAG outputs. Recomputing results.")
+            else:
+                logger.info(
+                    "Existing REMAG results found. Reusing available outputs. "
+                    "Use --force to recompute."
+                )
         # Log the exact command used
         logger.info(f"Command: {' '.join(sys.argv)}")
     except Exception as e:

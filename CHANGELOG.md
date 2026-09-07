@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- **Breaking CLI change:** Removed `-m` / `--mode` and the `metagenomics`,
+  `single-cell`, `short-reads`, and `sr` presets. Existing commands using the
+  option now fail with an unknown-option error. Remove `-m metagenomics` to keep
+  the previous default behavior. To reproduce the former `short-reads` / `sr`
+  settings, replace the option with `--min-contig-length 1000`; for `single-cell`,
+  use `--leiden-k-neighbors 30 --skip-bacterial-filter`. Preserve any explicit
+  parameter overrides in existing commands.
+
+### Changed
+- All runs default to 15 k-NN neighbors and enabled HyenaDNA filtering. Explicit
+  settings remain available. Coverage-dependent minimum contig length and base
+  learning rate defaults are unchanged.
+
 ## [0.4.5] - 2026-08-20
 
 ### Added
