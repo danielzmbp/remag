@@ -192,4 +192,8 @@ def main(args):
         f"bins.csv saved with {len(filtered_bins_df)} contigs from {len(valid_bins)} valid bins"
     )
 
+    logger.info("Updating core gene statistics for final saved bins...")
+    final_gene_mappings = getattr(args, "_gene_mappings_cache", None) or {}
+    check_core_gene_duplications_from_cache(filtered_bins_df, final_gene_mappings, args)
+
     logger.info("REMAG analysis completed successfully!")

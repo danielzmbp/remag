@@ -257,7 +257,7 @@ REMAG recovers eukaryotic bins with a multi-stage pipeline:
 - `fragments.pkl`: Fragment sequences and coordinates used by the pipeline; currently written even without `-k`
 - `remag.log`: Detailed log file
 - `gene_contig_mappings.json`: Cached gene mappings when miniprot finds accepted matches
-- `core_gene_duplication_results.json`: Core gene duplication analysis calculated before rescue; these statistics may differ from the final rescued bin memberships
+- `core_gene_duplication_results.json`: Core gene duplication analysis for the final saved bins, after rescue and minimum-size filtering
 
 ### Additional outputs with `-k` / `--keep-intermediate`
 
