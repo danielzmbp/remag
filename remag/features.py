@@ -1580,7 +1580,13 @@ def calculate_coverage_from_tsv(
 def _get_total_mapped_reads(bam_file: str) -> int:
     try:
         with pysam.AlignmentFile(bam_file, "rb") as bamfile:
-            total_mapped = bamfile.mapped
+            if bamfile.is_cram:
+                # CRAI indexes do not contain mapped-read counts.
+                total_mapped = sum(
+                    not read.is_unmapped for read in bamfile.fetch(until_eof=True)
+                )
+            else:
+                total_mapped = bamfile.mapped
             logger.debug(
                 f"Alignment file {os.path.basename(bam_file)}: {total_mapped:,} mapped reads"
             )
