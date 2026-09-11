@@ -633,6 +633,8 @@ def get_features(
 
         # Store original sequence and initialize fragments
         clean_header = str(header.split()[0])
+        if clean_header in fragments_dict:
+            raise ValueError(f"Duplicate FASTA identifier: {clean_header!r}")
         fragments_dict[clean_header] = {
             "sequence": seq,
             "fragments": [],
