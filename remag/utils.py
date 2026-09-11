@@ -155,6 +155,8 @@ class ContigHeaderMapper:
         Returns:
             The corresponding header from fragments_dict, or None if not found
         """
+        if contig_name in self._fragments_dict:
+            return contig_name
         return self._contig_to_header_map.get(contig_name)
 
 
