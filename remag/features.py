@@ -1682,22 +1682,15 @@ def calculate_coverage_from_multiple_bams(
             else:
                 # Normalize by total mapped reads (convert to reads per million, RPM)
                 normalization_factor = total_mapped_reads / 1_000_000
-                if normalization_factor <= 0:
-                    logger.warning(
-                        f"Normalization factor for {os.path.basename(bam_file)} is non-positive ({normalization_factor:.2f}); assigning zero coverage."
-                    )
-                    normalized_coverage = {fh: 0.0 for fh in all_fragment_headers}
-                    normalized_coverage_std = {fh: 0.0 for fh in all_fragment_headers}
-                else:
-                    normalized_coverage = {
-                        k: v / normalization_factor for k, v in coverage.items()
-                    }
-                    normalized_coverage_std = {
-                        k: v / normalization_factor for k, v in coverage_std.items()
-                    }
-                    logger.debug(
-                        f"Normalized coverage by {total_mapped_reads:,} mapped reads (factor: {normalization_factor:.2f})"
-                    )
+                normalized_coverage = {
+                    k: v / normalization_factor for k, v in coverage.items()
+                }
+                normalized_coverage_std = {
+                    k: v / normalization_factor for k, v in coverage_std.items()
+                }
+                logger.debug(
+                    f"Normalized coverage by {total_mapped_reads:,} mapped reads (factor: {normalization_factor:.2f})"
+                )
 
             sample_name = sample_names_map[bam_file]
             mean_col_name = f"{sample_name}_coverage"
