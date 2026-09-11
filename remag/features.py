@@ -1347,7 +1347,7 @@ def _looks_like_interval_coverage(coverage_file: str) -> bool:
 
 def _build_contig_header_lookup(fragments_dict: FragmentDict) -> Dict[str, str]:
     """Build relaxed contig-name lookup for precomputed coverage inputs."""
-    lookup = {}
+    lookup = {header: header for header in fragments_dict}
     for original_header in fragments_dict:
         candidates = {original_header, original_header.split()[0]}
         if "." in original_header:
