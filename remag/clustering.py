@@ -407,9 +407,6 @@ def _construct_knn_graph(
     g.add_edges(edges)
     g.es["weight"] = weights
 
-    # Make graph undirected by averaging edge weights
-    g = g.as_undirected(mode="mean")
-
     # Save graph if keep_intermediate is enabled
     if args and getattr(args, "keep_intermediate", False):
         # Save as edge list with weights
