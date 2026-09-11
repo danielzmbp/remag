@@ -672,6 +672,7 @@ def get_features(
 
     # Calculate coverage using appropriate calculator
     coverage_calculator = None
+    coverage_columns = []
     coverage_batch_size = getattr(args, "coverage_batch_size", 100000)
     if bam_files:
         logger.debug("Calculating coverage from alignment files...")
@@ -687,9 +688,7 @@ def get_features(
         df = pd.concat([df, coverage_df.reindex(df.index).fillna(0.0)], axis=1)
 
         # Identify fragments with zero coverage but keep them so embeddings can still use k-mer features
-        coverage_columns = [
-            col for col in coverage_df.columns if "coverage" in col.lower()
-        ]
+        coverage_columns = list(coverage_df.columns)
         if coverage_columns:
             zero_coverage_mask = (df[coverage_columns] == 0).all(axis=1)
             zero_count = int(zero_coverage_mask.sum())
@@ -700,9 +699,6 @@ def get_features(
     else:
         logger.info("No coverage data provided - using k-mer features only")
 
-    coverage_columns = [
-        col for col in df.columns if isinstance(col, str) and "coverage" in col.lower()
-    ]
     if coverage_columns:
         # Apply log transformation to coverage features
         df[coverage_columns] = np.log1p(df[coverage_columns])
