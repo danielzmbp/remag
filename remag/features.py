@@ -597,6 +597,11 @@ def get_features(
             if needs_recalc:
                 logger.info("Recalculating coverage...")
                 coverage_df = coverage_calculator.calculate_coverage(fragments_dict)
+                coverage_df = coverage_df.reindex(df.index).fillna(0.0)
+                if not coverage_df.empty:
+                    coverage_df[:] = MinMaxScaler(feature_range=(0, 1)).fit_transform(
+                        np.log1p(coverage_df)
+                    )
                 # Remove existing coverage columns and add new ones
                 df = df.drop(
                     columns=[c for c in df.columns if "coverage" in c.lower()],
