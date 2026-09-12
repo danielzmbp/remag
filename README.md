@@ -50,12 +50,6 @@ conda install -c bioconda miniprot
 pip install .
 ```
 
-### Development installation
-
-```bash
-pip install -e ".[dev]"
-```
-
 ### Docker
 
 ```bash
