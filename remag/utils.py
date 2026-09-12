@@ -56,6 +56,12 @@ def open_file(file_path, mode="r"):
     return open(file_path, mode, encoding="utf-8")
 
 
+def _write_fasta_record(handle, header, sequence):
+    handle.write(f">{header}\n")
+    for i in range(0, len(sequence), 60):
+        handle.write(sequence[i : i + 60] + "\n")
+
+
 def fasta_iter(fasta_file):
     """Iterate over sequences in a FASTA file."""
     with open_file(fasta_file, "r") as f:

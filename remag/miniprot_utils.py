@@ -8,7 +8,11 @@ import subprocess
 from loguru import logger
 from tqdm import tqdm
 
-from .utils import ContigHeaderMapper, initialize_duplication_columns
+from .utils import (
+    ContigHeaderMapper,
+    _write_fasta_record,
+    initialize_duplication_columns,
+)
 
 
 def check_miniprot_available():
@@ -148,10 +152,7 @@ def load_or_generate_gene_mappings(
         all_contigs_fasta = os.path.join(temp_dir, "all_contigs.fa")
         with open(all_contigs_fasta, "w") as f:
             for header, data in fragments_dict.items():
-                seq = data["sequence"]
-                f.write(f">{header}\n")
-                for i in range(0, len(seq), 60):
-                    f.write(f"{seq[i : i + 60]}\n")
+                _write_fasta_record(f, header, data["sequence"])
 
         # Run miniprot
         miniprot_output = os.path.join(temp_dir, "all_contigs.paf")
@@ -449,10 +450,7 @@ def check_core_gene_duplications(
             bin_fasta = os.path.join(temp_dir, f"{cluster_id}.fa")
             with open(bin_fasta, "w") as f:
                 for header in contig_headers:
-                    seq = fragments_dict[header]["sequence"]
-                    f.write(f">{header}\n")
-                    for i in range(0, len(seq), 60):
-                        f.write(f"{seq[i : i + 60]}\n")
+                    _write_fasta_record(f, header, fragments_dict[header]["sequence"])
 
             # Run miniprot
             miniprot_output = os.path.join(temp_dir, f"{cluster_id}.paf")

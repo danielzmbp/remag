@@ -8,7 +8,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from .utils import ContigHeaderMapper
+from .utils import ContigHeaderMapper, _write_fasta_record
 
 REMAG_OUTPUT_PATTERNS = (
     "bins.csv",
@@ -137,9 +137,9 @@ def save_clusters_as_fasta(clusters_df, fragments_dict, args):
         with open(bin_file, "w") as f:
             for header in contig_headers:
                 seq = fragments_dict[header]["sequence"]
-                f.write(f">{header}\n")
-                lines = [seq[i : i + 60] for i in range(0, len(seq), 60)]
-                f.write("\n".join(lines) + "\n")
+                _write_fasta_record(f, header, seq)
+                if not seq:
+                    f.write("\n")
 
     total_contigs_in_bins = sum(
         len(contigs) for contigs in filtered_cluster_contigs.values()

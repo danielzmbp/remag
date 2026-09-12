@@ -19,7 +19,7 @@ from loguru import logger
 from sklearn.preprocessing import MinMaxScaler
 from tqdm import tqdm
 
-from .utils import CoverageDict, FragmentDict, fasta_iter
+from .utils import CoverageDict, FragmentDict, _write_fasta_record, fasta_iter
 
 
 @lru_cache(maxsize=None)
@@ -100,12 +100,6 @@ def get_classification_results_path(fasta_file, output_dir):
 
 def get_features_csv_path(output_dir):
     return os.path.join(output_dir, "features.csv")
-
-
-def _write_fasta_record(handle, header, sequence):
-    handle.write(f">{header}\n")
-    for i in range(0, len(sequence), 60):
-        handle.write(sequence[i : i + 60] + "\n")
 
 
 EUKARYOTE_FILTER_THRESHOLD = 0.45
