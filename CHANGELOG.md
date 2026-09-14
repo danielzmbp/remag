@@ -7,7 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Report separate core-gene copies within a contig in final statistics and
+  identify the affected contigs and marker families. Clustering and rescue
+  still count each marker family once per contig. Older annotation caches are
+  regenerated to recover gene positions.
+- Refuse `--force` cleanup through a symlinked `bins` directory or temporary
+  directories containing symbolic links, preventing deletion of linked inputs
+  or external bin files.
+
 ### Removed
+- Removed the parameter-only `remag.clustering.GraphManager` and
+  `ClusteringManager` helper classes. Python callers should use `cluster_contigs`
+  with `leiden_k_neighbors` and `leiden_similarity_threshold` on its arguments
+  object; CLI settings and clustering behavior are unchanged.
 - **Breaking CLI change:** Removed `-m` / `--mode` and the `metagenomics`,
   `single-cell`, `short-reads`, and `sr` presets. Existing commands using the
   option now fail with an unknown-option error. Remove `-m metagenomics` to keep

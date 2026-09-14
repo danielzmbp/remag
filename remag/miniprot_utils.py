@@ -41,12 +41,14 @@ def _parse_paf_gene_mappings(
 ):
     """Parse a miniprot PAF file into gene-to-contig mappings.
 
-    Extracts the best-scoring alignment per (contig, gene family) that passes the
-    coverage and identity thresholds. When ``gene_mappings`` is provided it is
-    updated in place, so several PAF files can be merged into one mapping.
+    Retain the best alignment metrics and merge overlapping target intervals for
+    each (contig, gene family). Separate intervals represent separate copies;
+    overlapping alternatives count once, including matches on opposite strands.
+    An intron-spanning alignment is one interval. Supplied mappings are updated
+    in place so several PAF files can be merged without counting hits twice.
 
     Returns:
-        dict: {contig_name: {gene_family: {"score", "coverage", "identity"}}}
+        dict: {contig_name: {gene_family: {score, coverage, identity, loci}}}
     """
     if gene_mappings is None:
         gene_mappings = {}
@@ -69,6 +71,8 @@ def _parse_paf_gene_mappings(
                 query_start = int(parts[2])
                 query_end = int(parts[3])
                 target_name = parts[5]  # Contig name
+                target_start = int(parts[7])
+                target_end = int(parts[8])
                 matching_bases = int(parts[9])
                 alignment_length = int(parts[10])
             except (ValueError, IndexError):
@@ -84,22 +88,49 @@ def _parse_paf_gene_mappings(
             identity = matching_bases / alignment_length if alignment_length > 0 else 0
 
             if (
-                query_coverage < target_coverage_threshold
+                not 0 <= target_start < target_end
+                or query_coverage < target_coverage_threshold
                 or identity < identity_threshold
             ):
                 continue
 
             score = query_coverage * identity
             contig_genes = gene_mappings.setdefault(target_name, {})
-            existing = contig_genes.get(gene_family_code)
-            if existing is None or score > existing["score"]:
-                contig_genes[gene_family_code] = {
-                    "score": score,
-                    "coverage": query_coverage,
-                    "identity": identity,
-                }
+            existing = contig_genes.setdefault(
+                gene_family_code, {"score": -1, "loci": []}
+            )
+            intervals = sorted(existing["loci"] + [[target_start, target_end]])
+            loci = []
+            for start, end in intervals:
+                if loci and start < loci[-1][1]:
+                    loci[-1][1] = max(loci[-1][1], end)
+                else:
+                    loci.append([start, end])
+            existing["loci"] = loci
+            if score > existing["score"]:
+                existing.update(score=score, coverage=query_coverage, identity=identity)
 
     return gene_mappings
+
+
+def _get_gene_duplication_stats(contigs, gene_mappings):
+    """Report locus counts without changing the presence counts used for binning."""
+    counts = {}
+    within_contig = {}
+    for contig in contigs:
+        for gene, info in gene_mappings.get(contig, {}).items():
+            copies = len(info["loci"]) if "loci" in info else 1
+            counts[gene] = counts.get(gene, 0) + copies
+            if copies > 1:
+                within_contig.setdefault(contig, {})[gene] = copies
+    duplicated = {gene: count for gene, count in counts.items() if count > 1}
+    return {
+        "has_duplications": bool(duplicated),
+        "duplicated_genes": duplicated,
+        "total_genes_found": len(counts),
+        "single_copy_genes_count": sum(count == 1 for count in counts.values()),
+        "within_contig_duplications": within_contig,
+    }
 
 
 def load_or_generate_gene_mappings(
@@ -121,6 +152,12 @@ def load_or_generate_gene_mappings(
         try:
             with open(cache_path, "r") as f:
                 gene_mappings = json.load(f)
+            if any(
+                "loci" not in info
+                for genes in gene_mappings.values()
+                for info in genes.values()
+            ):
+                raise ValueError("Cached gene mappings lack gene positions")
             logger.info(
                 f"Loaded cached miniprot gene mappings for {len(gene_mappings)} contigs"
             )
@@ -195,8 +232,8 @@ def load_or_generate_gene_mappings(
             f"{len(gene_mappings)} contigs"
         )
 
-        # Save cache if we have data
-        if gene_mappings:
+        # Also replace an old cache when re-annotation finds no accepted matches.
+        if gene_mappings or os.path.exists(cache_path):
             cache_path = get_gene_mappings_cache_path(args)
             try:
                 with open(cache_path, "w") as f:
@@ -257,7 +294,7 @@ def parse_and_cache_paf_files(
         identity_threshold: Minimum identity for alignments
 
     Returns:
-        dict: {contig_name: {gene_family: {score, coverage, identity}}}
+        dict: {contig_name: {gene_family: {score, coverage, identity, loci}}}
     """
     logger.info("Parsing and caching gene-to-contig mappings from PAF files...")
 
@@ -309,35 +346,9 @@ def check_core_gene_duplications_from_cache(clusters_df, gene_mappings_cache, ar
         if cluster_id == "noise":
             continue
 
-        # Count gene families present in each contig in this cluster
-        contig_genes = {}
-        for contig_name in contig_names:
-            if contig_name in gene_mappings_cache:
-                contig_genes[contig_name] = set(gene_mappings_cache[contig_name])
-
-        # Count total occurrences of each gene family across the cluster
-        gene_counts = {}
-        for contig, gene_families in contig_genes.items():
-            for gene_family in gene_families:
-                if gene_family not in gene_counts:
-                    gene_counts[gene_family] = 0
-                gene_counts[gene_family] += 1
-
-        # Check for duplications
-        duplicated_genes = {
-            gene: count for gene, count in gene_counts.items() if count > 1
-        }
-        has_duplications = len(duplicated_genes) > 0
-
-        # Count single-copy genes (appear exactly once)
-        single_copy_genes_count = sum(1 for count in gene_counts.values() if count == 1)
-
-        duplication_results[cluster_id] = {
-            "has_duplications": has_duplications,
-            "duplicated_genes": duplicated_genes,
-            "total_genes_found": len(gene_counts),
-            "single_copy_genes_count": single_copy_genes_count,
-        }
+        duplication_results[cluster_id] = _get_gene_duplication_stats(
+            contig_names, gene_mappings_cache
+        )
 
     # Add duplication information to clusters_df
     clusters_df = initialize_duplication_columns(clusters_df)
@@ -479,35 +490,9 @@ def check_core_gene_duplications(
                         target_coverage_threshold,
                         identity_threshold,
                     )
-                    contig_genes = {
-                        contig: set(genes) for contig, genes in gene_mappings.items()
-                    }
-
-                    # Count total occurrences of each gene family
-                    gene_counts = {}
-                    for contig, gene_families in contig_genes.items():
-                        for gene_family in gene_families:
-                            if gene_family not in gene_counts:
-                                gene_counts[gene_family] = 0
-                            gene_counts[gene_family] += 1
-
-                    # Check for duplications
-                    duplicated_genes = {
-                        gene: count for gene, count in gene_counts.items() if count > 1
-                    }
-                    has_duplications = len(duplicated_genes) > 0
-
-                    # Count single-copy genes (appear exactly once)
-                    single_copy_genes_count = sum(
-                        1 for count in gene_counts.values() if count == 1
+                    duplication_results[cluster_id] = _get_gene_duplication_stats(
+                        gene_mappings, gene_mappings
                     )
-
-                    duplication_results[cluster_id] = {
-                        "has_duplications": has_duplications,
-                        "duplicated_genes": duplicated_genes,
-                        "total_genes_found": len(gene_counts),
-                        "single_copy_genes_count": single_copy_genes_count,
-                    }
 
                 else:
                     # Log miniprot error if available

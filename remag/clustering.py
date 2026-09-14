@@ -13,26 +13,6 @@ from loguru import logger
 from sklearn.neighbors import NearestNeighbors
 
 
-class GraphManager:
-    """Handles k-NN graph construction and caching."""
-
-    def __init__(self, k=15, similarity_threshold=0.1, n_jobs=-1):
-        self.k = k
-        self.similarity_threshold = similarity_threshold
-        self.n_jobs = n_jobs
-
-
-class ClusteringManager:
-    """Main clustering orchestrator."""
-
-    def __init__(self, args):
-        self.args = args
-        self.graph_manager = GraphManager(
-            k=getattr(args, "leiden_k_neighbors", 15),
-            similarity_threshold=getattr(args, "leiden_similarity_threshold", 0.1),
-        )
-
-
 def _calculate_bin_quality(contig_names, gene_mappings):
     """
     Calculate quality score using F1-score inspired by SemiBin2.
@@ -454,9 +434,6 @@ def cluster_contigs(embeddings_df, fragments_dict, gene_mappings, args):
         logger.info(f"Loading existing bins from {bins_path}")
         return pd.read_csv(bins_path)
 
-    # Initialize clustering manager
-    clustering_manager = ClusteringManager(args)
-
     # Embeddings are already L2 normalized when saved to CSV
     logger.debug("Using pre-normalized embeddings for clustering...")
     norm_data = embeddings_df.values
@@ -480,8 +457,8 @@ def cluster_contigs(embeddings_df, fragments_dict, gene_mappings, args):
         norm_data,
         contig_names=contig_names,
         gene_mappings=gene_mappings,
-        k=clustering_manager.graph_manager.k,
-        similarity_threshold=clustering_manager.graph_manager.similarity_threshold,
+        k=getattr(args, "leiden_k_neighbors", 15),
+        similarity_threshold=getattr(args, "leiden_similarity_threshold", 0.1),
         resolutions=greedy_resolutions,
         max_contamination=greedy_max_contamination,
         random_state=42,

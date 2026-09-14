@@ -20,7 +20,7 @@ from remag.miniprot_utils import (
 
 def test_load_or_generate_gene_mappings_reuses_cache(tmp_path):
     args = SimpleNamespace(output=str(tmp_path), cores=2, verbose=False)
-    expected = {"contig_1": {"gene_1": {"score": 0.8}}}
+    expected = {"contig_1": {"gene_1": {"score": 0.8, "loci": [[0, 300]]}}}
     cache_path = get_gene_mappings_cache_path(args)
     with open(cache_path, "w", encoding="utf-8") as cache_file:
         json.dump(expected, cache_file)

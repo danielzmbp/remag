@@ -1,10 +1,13 @@
 """Integration tests for REMAG clustering pipeline."""
 
+import json
+from types import SimpleNamespace
+
 import numpy as np
 import pandas as pd
 import pytest
 
-from remag.clustering import ClusteringManager, _construct_knn_graph
+from remag.clustering import _construct_knn_graph, cluster_contigs
 
 
 class TestClusteringIntegration:
@@ -25,13 +28,31 @@ class TestClusteringIntegration:
         # Check that graph properties are reasonable
         assert all(weight >= 0 and weight <= 1 for weight in graph.es["weight"])
 
-    def test_clustering_manager_initialization(self, mock_args):
-        """Test ClusteringManager initialization."""
-        clustering_manager = ClusteringManager(mock_args)
+    @pytest.mark.parametrize(
+        "settings, expected_k, expected_threshold",
+        [
+            ({}, 15, 0.1),
+            ({"leiden_k_neighbors": 7, "leiden_similarity_threshold": 0.42}, 7, 0.42),
+        ],
+    )
+    def test_clustering_preserves_graph_settings(
+        self, tmp_path, settings, expected_k, expected_threshold
+    ):
+        args = SimpleNamespace(output=str(tmp_path), keep_intermediate=True, **settings)
+        vectors = np.random.default_rng(42).normal(size=(20, 8))
+        vectors /= np.linalg.norm(vectors, axis=1, keepdims=True)
+        embeddings = pd.DataFrame(vectors, index=[f"c{i}" for i in range(20)])
 
-        assert clustering_manager.args == mock_args
-        assert hasattr(clustering_manager, "graph_manager")
-        assert clustering_manager.graph_manager.k == 15  # default value
+        result = cluster_contigs(embeddings, {}, {}, args)
+
+        stats = json.loads((tmp_path / "knn_graph_stats.json").read_text())
+        assert stats["k"] == expected_k
+        assert stats["similarity_threshold"] == expected_threshold
+        assert stats["n_vertices"] == len(embeddings)
+        assert result["contig"].tolist() == list(embeddings.index)
+        saved = pd.read_csv(tmp_path / "bins.csv")
+        expected = result[result["cluster"] != "noise"].reset_index(drop=True)
+        pd.testing.assert_frame_equal(saved, expected)
 
     def test_end_to_end_clustering_pipeline(
         self, sample_embeddings_df, sample_fragments_dict, mock_args, temp_dir

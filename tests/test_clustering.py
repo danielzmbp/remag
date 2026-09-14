@@ -5,30 +5,7 @@ from unittest.mock import Mock
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 
-from remag.clustering import (
-    ClusteringManager,
-    GraphManager,
-    _calculate_bin_quality,
-    _construct_knn_graph,
-)
-
-
-class TestGraphManager:
-    """Test GraphManager class."""
-
-    def test_init_default_params(self):
-        """Test GraphManager initialization with default parameters."""
-        manager = GraphManager()
-        assert manager.k == 15
-        assert manager.similarity_threshold == 0.1
-        assert manager.n_jobs == -1
-
-    def test_init_custom_params(self):
-        """Test GraphManager initialization with custom parameters."""
-        manager = GraphManager(k=10, similarity_threshold=0.2, n_jobs=4)
-        assert manager.k == 10
-        assert manager.similarity_threshold == 0.2
-        assert manager.n_jobs == 4
+from remag.clustering import _calculate_bin_quality, _construct_knn_graph
 
 
 class TestKNNGraph:
@@ -89,16 +66,6 @@ class TestKNNGraph:
 
         # Should create a graph without errors
         assert graph1.vcount() == 2
-
-
-class TestClusteringManager:
-    """Test ClusteringManager class."""
-
-    def test_clustering_manager_init(self, mock_args):
-        """Test ClusteringManager initialization."""
-        manager = ClusteringManager(mock_args)
-        assert manager.args == mock_args
-        assert hasattr(manager, "graph_manager")
 
 
 class TestPerformanceOptimizations:

@@ -43,6 +43,11 @@ def prepare_output_directory(args):
     complete deletion list before removing anything; no cache validation is done.
     """
     output = Path(args.output)
+    if getattr(args, "force", False) and (output / "bins").is_symlink():
+        raise ValueError(
+            "--force cannot clean a symlinked bins directory. "
+            "Use a different output directory."
+        )
     paths = {
         path
         for pattern in REMAG_OUTPUT_PATTERNS
@@ -62,6 +67,12 @@ def prepare_output_directory(args):
     inputs.extend(getattr(args, "tsv", None) or [])
     input_paths = [Path(path).resolve() for path in inputs]
     for path in paths:
+        if path.is_dir() and not path.is_symlink():
+            if any(child.is_symlink() for child in path.rglob("*")):
+                raise ValueError(
+                    "--force cannot clear a temporary directory containing symbolic links. "
+                    "Use a different output directory."
+                )
         resolved = path.resolve()
         if any(
             resolved == source or resolved in source.parents for source in input_paths

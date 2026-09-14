@@ -163,7 +163,7 @@ REMAG reuses available results in the output directory. When existing outputs ar
 Existing REMAG results found. Reusing available outputs. Use --force to recompute.
 ```
 
-Use `--force` to remove recognized REMAG outputs and rerun the requested workflow. This clears cached features, model weights, embeddings, gene mappings, previous bins, filtering outputs, temporary miniprot directories, and logs. Other files in the directory are left in place. If a supplied input would be removed, REMAG stops before deleting anything.
+Use `--force` to remove recognized REMAG outputs and rerun the requested workflow. This clears cached features, model weights, embeddings, gene mappings, previous bins, filtering outputs, temporary miniprot directories, and logs. Other files in the directory are left in place. If a supplied input would be removed, REMAG stops before deleting anything. `--force` also refuses a symlinked `bins` directory or temporary directories containing symbolic links; use a different output directory.
 
 Use `--force` or a different output directory when changing inputs or analysis settings. `--force --filter-only` clears previous results and runs filtering only. Saved `umap_coordinates.csv` and `umap_plot.pdf` are also cleared; regenerate plots after the run.
 
@@ -240,7 +240,7 @@ REMAG recovers eukaryotic bins with a multi-stage pipeline:
 1. **Eukaryotic filtering**: By default, REMAG filters contigs with the integrated HyenaDNA classifier. This step can be disabled with `--skip-bacterial-filter`.
 2. **Feature extraction**: REMAG combines 4-mer composition with optional multi-sample coverage data. Contigs are augmented into fragments for training when their lengths permit; contigs longer than 50 kb receive augmentations from each half.
 3. **Contrastive learning**: A Siamese network trained with Barlow Twins learns embeddings that place fragments from the same contig close together.
-4. **Core gene annotation**: `miniprot` maps eukaryotic single-copy core genes to support clustering and quality checks.
+4. **Core gene annotation**: `miniprot` maps eukaryotic single-copy core genes to support clustering and quality checks. Multiple non-overlapping matches to a marker family within a contig are reported as separate copies; clustering and rescue still count that family once per contig.
 5. **Greedy clustering and rescue**: REMAG applies greedy Leiden clustering across multiple resolutions, then merges or rescues bins when single-copy gene checks support it.
 
 ## Output
@@ -252,8 +252,8 @@ REMAG recovers eukaryotic bins with a multi-stage pipeline:
 - `embeddings.csv`: Embeddings for original contigs, including those that do not enter a saved bin
 - `fragments.pkl`: Fragment sequences and coordinates used by the pipeline; currently written even without `-k`
 - `remag.log`: Detailed log file
-- `gene_contig_mappings.json`: Cached gene mappings when miniprot finds accepted matches
-- `core_gene_duplication_results.json`: Core gene duplication analysis for the final saved bins, after rescue and minimum-size filtering
+- `gene_contig_mappings.json`: Cached gene mappings and positions; older caches without positions are regenerated when annotations are loaded
+- `core_gene_duplication_results.json`: Core gene duplication analysis for the final saved bins, after rescue and minimum-size filtering Includes `within_contig_duplications`, identifying marker families with multiple locations on the same contig.
 
 Binning stops with an error if required gene annotation fails. A successful search with no accepted matches still reports zero detected genes.
 

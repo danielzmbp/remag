@@ -107,6 +107,7 @@ def test_quality_statistics_match_final_saved_bins(tmp_path, scenario):
         expected_stats = {
             "bin_large": {
                 "has_duplications": merged,
+                "within_contig_duplications": {},
                 "duplicated_genes": {"g0": 2} if merged else {},
                 "total_genes_found": (
                     0 if scenario == "no_hits" else 27 if merged else 25
