@@ -7,14 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-- Report separate core-gene copies within a contig in final statistics and
-  identify the affected contigs and marker families. Clustering and rescue
+## [0.5.0] - 2026-09-14
+
+### Added
+- `--force` removes recognized REMAG outputs and recomputes results. Cleanup
+  refuses symlinked bin directories and temporary directories containing links.
+- Final gene statistics identify marker families with multiple non-overlapping
+  locations within a contig through `within_contig_duplications`. These extra
+  copies are reported without changing clustering or rescue decisions, which
   still count each marker family once per contig. Older annotation caches are
   regenerated to recover gene positions.
-- Refuse `--force` cleanup through a symlinked `bins` directory or temporary
-  directories containing symbolic links, preventing deletion of linked inputs
-  or external bin files.
+
+### Fixed
+- Count mapped reads directly for CRAM coverage normalization.
+- Refresh core-gene statistics after rescue and minimum-bin-size filtering so
+  the report describes the final saved bins.
+- Reject duplicate retained FASTA identifiers during feature generation and
+  preserve exact contig identifiers when resolving names and coverage.
+- Correct coverage scaling for fresh and cached features; replace cached
+  coverage columns instead of appending stale or repeated columns.
+- Stop on annotation failures instead of reporting them as an absence of genes.
+- Prevent filtering fallbacks from writing duplicate FASTA records and propagate
+  output-writing failures.
+- Reject batch sizes below two and training sets with fewer than two pairs;
+  avoid final singleton training batches.
+- Exclude each contig from its own nearest-neighbor list.
+- Allow rescue when one bin remains, using the existing similarity and
+  between-contig marker-duplication limits.
 
 ### Removed
 - Removed the parameter-only `remag.clustering.GraphManager` and
@@ -33,6 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - All runs default to 15 k-NN neighbors and enabled HyenaDNA filtering. Explicit
   settings remain available. Coverage-dependent minimum contig length and base
   learning rate defaults are unchanged.
+- Share FASTA-writing code and remove redundant graph copies and validation.
 
 ## [0.4.5] - 2026-08-20
 
