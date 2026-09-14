@@ -183,26 +183,37 @@ def filter_bacterial_contigs(
         if not records:
             return
 
-        sequences = [seq for _, seq in records]
-        if hasattr(classifier, "predict_contigs"):
-            predictions = classifier.predict_contigs(sequences)
-        else:
-            predictions = [classifier.predict_contig(seq) for seq in sequences]
+        try:
+            sequences = [seq for _, seq in records]
+            if hasattr(classifier, "predict_contigs"):
+                predictions = list(classifier.predict_contigs(sequences))
+            else:
+                predictions = [classifier.predict_contig(seq) for seq in sequences]
+            if len(predictions) != len(records):
+                raise ValueError("Classifier returned the wrong number of predictions")
 
-        for (header, seq_upper), result in zip(records, predictions):
-            euk_prob = result["eukaryote_prob"]
-            confidence = result["confidence"]
-            num_windows = result["num_windows"]
-            resampled = result.get("resampled", False)
-            prediction = (
-                "eukaryote"
-                if euk_prob >= eukaryote_filter_threshold
-                else "non_eukaryote"
-            )
+            prepared_results = []
+            for (header, seq_upper), result in zip(records, predictions):
+                euk_prob = result["eukaryote_prob"]
+                confidence = result["confidence"]
+                num_windows = result["num_windows"]
+                resampled = result.get("resampled", False)
+                prediction = (
+                    "eukaryote"
+                    if euk_prob >= eukaryote_filter_threshold
+                    else "non_eukaryote"
+                )
+                row = f"{header}\t{len(seq_upper)}\t{prediction}\t{euk_prob:.4f}\t{confidence:.4f}\t{num_windows}\t{resampled}\n"
+                prepared_results.append((prediction, row))
+        except Exception as e:
+            logger.error(f"Classification error for batch: {e}")
+            for header, sequence in records:
+                _write_fasta_record(fasta_out, header, sequence)
+                n_eukaryotic += 1
+            return
 
-            results_file.write(
-                f"{header}\t{len(seq_upper)}\t{prediction}\t{euk_prob:.4f}\t{confidence:.4f}\t{num_windows}\t{resampled}\n"
-            )
+        for (header, seq_upper), (prediction, row) in zip(records, prepared_results):
+            results_file.write(row)
 
             if prediction == "eukaryote":
                 _write_fasta_record(fasta_out, header, seq_upper)
@@ -235,25 +246,11 @@ def filter_bacterial_contigs(
             if len(record_batch) < record_batch_size:
                 continue
 
-            try:
-                process_record_batch(record_batch, results_file, fasta_out)
-
-            except Exception as e:
-                logger.error(f"Classification error for current batch: {e}")
-                for fallback_header, fallback_seq in record_batch:
-                    _write_fasta_record(fasta_out, fallback_header, fallback_seq)
-                    n_eukaryotic += 1
-            finally:
-                record_batch = []
+            process_record_batch(record_batch, results_file, fasta_out)
+            record_batch = []
 
         if record_batch:
-            try:
-                process_record_batch(record_batch, results_file, fasta_out)
-            except Exception as e:
-                logger.error(f"Classification error for final batch: {e}")
-                for fallback_header, fallback_seq in record_batch:
-                    _write_fasta_record(fasta_out, fallback_header, fallback_seq)
-                    n_eukaryotic += 1
+            process_record_batch(record_batch, results_file, fasta_out)
 
     # Close the filtered out file if it was opened
     if filtered_out_file:
