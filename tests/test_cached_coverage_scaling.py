@@ -115,3 +115,68 @@ def test_recalculated_coverage_uses_cached_feature_rows(tmp_path, cached_input):
         actual.iloc[:, :136], retained, atol=1e-12, rtol=1e-12
     )
     np.testing.assert_allclose(actual["sample"], [0.0, 1.0], atol=1e-12)
+
+
+@pytest.mark.parametrize(
+    "old_names, new_names",
+    [
+        (["sampleA.tsv"], ["sampleA.tsv", "sampleB.tsv"]),
+        (["sampleA.tsv"], ["sampleB.tsv"]),
+        (["sampleA.tsv"], ["sampleB.cov"]),
+        (["sampleA.cov"], ["sampleB.tsv"]),
+        (["sampleA_coverage.tsv"], ["sampleB.tsv"]),
+        (["sampleA.tsv"], ["empty.tsv"]),
+    ],
+    ids=[
+        "add-sample",
+        "replace-sample",
+        "plain-to-interval",
+        "interval-to-plain",
+        "coverage-name",
+        "empty-replacement",
+    ],
+)
+def test_recalculation_replaces_all_cached_coverage(
+    tmp_path, cached_input, old_names, new_names
+):
+    fasta, output, kmer_only = cached_input
+    for name in set(old_names + new_names):
+        content = "c0\t0\nc1\t9\nc2\t99\n"
+        if name.endswith(".cov"):
+            content = "c0\t0\t120\t0\nc1\t0\t120\t9\nc2\t0\t120\t99\n"
+        elif name == "empty.tsv":
+            content = ""
+        (tmp_path / name).write_text(content)
+    features(fasta, output, tsv_files=[str(tmp_path / name) for name in old_names])
+    inputs = {"tsv_files": [str(tmp_path / name) for name in new_names]}
+    fresh = features(fasta, tmp_path / "fresh", **inputs)
+
+    with patch(
+        "remag.features._calculate_kmer_composition",
+        side_effect=AssertionError("K-mers must be reused"),
+    ):
+        actual = features(fasta, output, **inputs)
+
+    assert actual.columns.is_unique
+    pd.testing.assert_frame_equal(actual, fresh, atol=1e-12, rtol=1e-12)
+    pd.testing.assert_frame_equal(
+        actual.iloc[:, :136], kmer_only, atol=1e-12, rtol=1e-12
+    )
+    saved = pd.read_csv(output / "features.csv", index_col=0)
+    pd.testing.assert_frame_equal(saved, fresh, atol=1e-12, rtol=1e-12)
+
+
+def test_recalculation_removes_columns_duplicated_by_older_runs(tmp_path, cached_input):
+    fasta, output, kmer_only = cached_input
+    cached = kmer_only.copy()
+    cached["old_sample"] = [0.0, 0.5, 1.0]
+    cached["old_sample.1"] = [0.0, 0.5, 1.0]
+    cached.to_csv(output / "features.csv")
+    coverage = tmp_path / "new_sample.tsv"
+    coverage.write_text("c0\t0\nc1\t9\nc2\t99\n")
+    inputs = {"tsv_files": [str(coverage)]}
+    fresh = features(fasta, tmp_path / "fresh", **inputs)
+
+    actual = features(fasta, output, **inputs)
+
+    pd.testing.assert_frame_equal(actual, fresh, atol=1e-12, rtol=1e-12)

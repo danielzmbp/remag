@@ -593,12 +593,8 @@ def get_features(
                     coverage_df[:] = MinMaxScaler(feature_range=(0, 1)).fit_transform(
                         np.log1p(coverage_df)
                     )
-                # Remove existing coverage columns and add new ones
-                df = df.drop(
-                    columns=[c for c in df.columns if "coverage" in c.lower()],
-                    errors="ignore",
-                )
-                df = pd.concat([df, coverage_df], axis=1)
+                # Keep the 136 k-mer columns and replace all cached coverage.
+                df = pd.concat([df.iloc[:, :136], coverage_df], axis=1)
                 if getattr(args, "keep_intermediate", False):
                     df.to_csv(features_csv_path)
 
