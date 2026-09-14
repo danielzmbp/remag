@@ -362,23 +362,23 @@ def _construct_knn_graph(
     # Use sklearn's NearestNeighbors for efficient, parallelized k-NN search
     # Since embeddings are L2-normalized, cosine similarity = dot product
     nbrs = NearestNeighbors(
-        n_neighbors=k + 1,  # +1 because it includes self
+        n_neighbors=k or 1,  # Zero-neighbor graphs are sliced below.
         metric="cosine",
         algorithm="brute",  # brute force is often fastest for high-dimensional data
         n_jobs=n_jobs,
     )
     nbrs.fit(embeddings)
 
-    # Find k-NN for all points efficiently
-    distances, indices = nbrs.kneighbors(embeddings)
+    # Query fitted points so sklearn excludes each point by identity.
+    distances, indices = nbrs.kneighbors()
 
     # Convert distances to similarities (cosine distance = 1 - cosine similarity)
     similarities = 1 - distances
 
     # Build edge list using vectorized operations
-    # Skip self-match (column 0)
-    neighbor_indices = indices[:, 1 : k + 1]
-    neighbor_similarities = similarities[:, 1 : k + 1]
+    # Keep the requested count, including the zero-neighbor case.
+    neighbor_indices = indices[:, :k]
+    neighbor_similarities = similarities[:, :k]
 
     # Create source indices array [0, 0... 1, 1...] matching the shape
     # Use broadcasting/repeating to align with flattened neighbor arrays
