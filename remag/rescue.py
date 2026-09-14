@@ -88,8 +88,8 @@ def rescue_fragmented_bins(
     valid_bins_df = clusters_df[clusters_df["cluster"] != "noise"].copy()
     all_bins = valid_bins_df["cluster"].unique()
 
-    if len(all_bins) < 2:
-        logger.info("Fewer than 2 bins. Skipping rescue.")
+    if len(all_bins) == 0:
+        logger.info("No bins. Skipping rescue.")
         return clusters_df
 
     # 3. Calculate Centroids for ALL Bins
