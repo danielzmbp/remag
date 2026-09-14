@@ -136,6 +136,9 @@ class TrainingManager:
 
     def setup_training(self, model, features_df):
         """Set up training components (dataset, dataloader, optimizer, scheduler)."""
+        if self.args.batch_size < 2:
+            raise ValueError("Training batch size must be at least 2.")
+
         # Set random seed for deterministic dataset generation
         random.seed(42)
         np.random.seed(42)
@@ -144,13 +147,16 @@ class TrainingManager:
             features_df, max_positive_pairs=self.args.max_positive_pairs
         )
 
+        if len(dataset) < 2:
+            raise ValueError("At least two positive pairs are required for training.")
+
         # Automatically adjust batch size if dataset is too small
         effective_batch_size = self.args.batch_size
-        while len(dataset) < effective_batch_size and effective_batch_size > 1:
-            effective_batch_size = effective_batch_size // 2
+        while len(dataset) < effective_batch_size:
+            effective_batch_size = max(2, effective_batch_size // 2)
             logger.warning(
-                f"Dataset size ({len(dataset)}) < Batch size ({effective_batch_size * 2}). "
-                f"Automatically reducing batch size to {effective_batch_size}."
+                f"Reducing batch size to {effective_batch_size} "
+                f"for {len(dataset)} training pairs."
             )
 
         has_enough_data = len(dataset) > effective_batch_size * 10
@@ -158,7 +164,8 @@ class TrainingManager:
         dataloader_kwargs = {
             "batch_size": effective_batch_size,
             "shuffle": True,
-            "drop_last": not has_enough_data,
+            "drop_last": not has_enough_data
+            or len(dataset) % effective_batch_size == 1,
             "worker_init_fn": seed_worker,
         }
         if self.device.type == "cuda":
