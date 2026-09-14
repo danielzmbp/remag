@@ -114,8 +114,7 @@ def main(args):
 
     except Exception as e:
         logger.error(f"Failed to generate gene mappings: {e}")
-        # Initialize empty mappings to allow clustering to proceed (though quality scores will be -100)
-        gene_mappings = {}
+        sys.exit(1)
 
     try:
         clusters_df = cluster_contigs(
@@ -133,15 +132,24 @@ def main(args):
         args._gene_mappings_cache if hasattr(args, "_gene_mappings_cache") else None
     )
 
-    # Use cached approach if available, otherwise run miniprot
-    if gene_mappings_cache is not None:
-        try:
-            clusters_df = check_core_gene_duplications_from_cache(
-                clusters_df, gene_mappings_cache, args
-            )
-        except Exception as e:
-            logger.warning(f"Cache-based duplication check failed: {e}")
-            logger.warning("Falling back to full miniprot run")
+    try:
+        # Use cached approach if available, otherwise run miniprot
+        if gene_mappings_cache is not None:
+            try:
+                clusters_df = check_core_gene_duplications_from_cache(
+                    clusters_df, gene_mappings_cache, args
+                )
+            except Exception as e:
+                logger.warning(f"Cache-based duplication check failed: {e}")
+                logger.warning("Falling back to full miniprot run")
+                clusters_df = check_core_gene_duplications(
+                    clusters_df,
+                    fragments_dict,
+                    args,
+                    target_coverage_threshold=0.55,
+                    identity_threshold=0.35,
+                )
+        else:
             clusters_df = check_core_gene_duplications(
                 clusters_df,
                 fragments_dict,
@@ -149,14 +157,9 @@ def main(args):
                 target_coverage_threshold=0.55,
                 identity_threshold=0.35,
             )
-    else:
-        clusters_df = check_core_gene_duplications(
-            clusters_df,
-            fragments_dict,
-            args,
-            target_coverage_threshold=0.55,
-            identity_threshold=0.35,
-        )
+    except Exception as e:
+        logger.error(f"Failed to check core gene duplications: {e}")
+        sys.exit(1)
 
     # --- Run rescue step ---
     if not getattr(args, "skip_rescue", False):

@@ -25,7 +25,9 @@ def test_load_or_generate_gene_mappings_reuses_cache(tmp_path):
     with open(cache_path, "w", encoding="utf-8") as cache_file:
         json.dump(expected, cache_file)
 
-    with patch("remag.miniprot_utils.subprocess.run") as run_miniprot:
+    with patch("remag.miniprot_utils.subprocess.run") as run_miniprot, patch(
+        "remag.miniprot_utils.check_miniprot_available", return_value=False
+    ):
         result = load_or_generate_gene_mappings({}, args)
 
     assert result == expected
@@ -125,14 +127,77 @@ def test_miniprot_command_arguments(miniprot_inputs, tmp_path, directory_name):
     ],
     ids=["missing-executable", "permission-denied", "timeout"],
 )
-def test_miniprot_execution_error_is_reported(miniprot_inputs, error):
+@pytest.mark.parametrize("stage", ["mapping", "duplication"])
+def test_miniprot_execution_error_is_reported(miniprot_inputs, error, stage):
     """Exercise and report each failure rather than accepting an untested path."""
     clusters, fragments, args = miniprot_inputs
     with patch("remag.miniprot_utils.subprocess.run", side_effect=error) as run, patch(
-        "remag.miniprot_utils.logger.warning"
-    ) as warning:
-        result = check_core_gene_duplications(clusters, fragments, args)
+        "remag.miniprot_utils.logger.error"
+    ) as log_error:
+        with pytest.raises(type(error)) as caught:
+            if stage == "mapping":
+                load_or_generate_gene_mappings(fragments, args)
+            else:
+                check_core_gene_duplications(clusters, fragments, args)
 
     run.assert_called_once()
-    warning.assert_any_call(f"Error running miniprot for cluster_1: {error}")
-    pd.testing.assert_frame_equal(result[["contig", "cluster"]], clusters)
+    assert caught.value is error
+    log_error.assert_any_call(
+        f"Error generating gene mappings: {error}"
+        if stage == "mapping"
+        else f"Error running miniprot for cluster_1: {error}"
+    )
+    assert not (Path(args.output) / "core_gene_duplication_results.json").exists()
+    assert not Path(get_gene_mappings_cache_path(args)).exists()
+
+
+@pytest.mark.parametrize("stage", ["mapping", "duplication"])
+@pytest.mark.parametrize(
+    "failure, message",
+    [
+        ("missing_tool", "miniprot not found"),
+        ("missing_database", "database not found"),
+        ("exit_status", "miniprot failed"),
+    ],
+)
+def test_annotation_failures_do_not_become_zero_results(
+    miniprot_inputs, monkeypatch, tmp_path, stage, failure, message
+):
+    clusters, fragments, args = miniprot_inputs
+    args.keep_intermediate = False
+    if failure == "missing_tool":
+        monkeypatch.setattr(miniprot_utils, "check_miniprot_available", lambda: False)
+    elif failure == "missing_database":
+        monkeypatch.setattr(miniprot_utils, "__file__", str(tmp_path / "module.py"))
+
+    with patch(
+        "remag.miniprot_utils.subprocess.run",
+        return_value=SimpleNamespace(returncode=2),
+    ) as run:
+        with pytest.raises(RuntimeError, match=message):
+            if stage == "mapping":
+                load_or_generate_gene_mappings(fragments, args)
+            else:
+                check_core_gene_duplications(clusters, fragments, args)
+
+    assert run.call_count == (1 if failure == "exit_status" else 0)
+    assert not (tmp_path / "core_gene_duplication_results.json").exists()
+    assert not Path(get_gene_mappings_cache_path(args)).exists()
+    assert not (tmp_path / "temp_gene_mapping").exists()
+    assert not (tmp_path / "temp_miniprot").exists()
+
+
+@pytest.mark.parametrize("stage", ["mapping", "duplication"])
+def test_successful_annotation_without_hits_is_valid(miniprot_inputs, stage):
+    clusters, fragments, args = miniprot_inputs
+    with patch(
+        "remag.miniprot_utils.subprocess.run",
+        return_value=SimpleNamespace(returncode=0),
+    ) as run:
+        if stage == "mapping":
+            assert load_or_generate_gene_mappings(fragments, args) == {}
+        else:
+            result = check_core_gene_duplications(clusters, fragments, args)
+            assert result["total_core_genes_found"].tolist() == [0]
+            assert args._gene_mappings_cache == {}
+    run.assert_called_once()

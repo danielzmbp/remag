@@ -61,7 +61,6 @@ def test_quality_statistics_match_final_saved_bins(tmp_path, scenario):
             cluster_frame, mappings, run_args
         )
 
-    mapping_error = RuntimeError("mapping generation failed")
     with (
         patch("remag.core.setup_logging"),
         patch(
@@ -72,8 +71,8 @@ def test_quality_statistics_match_final_saved_bins(tmp_path, scenario):
         patch("remag.core.generate_embeddings", return_value=embeddings),
         patch(
             "remag.core.load_or_generate_gene_mappings",
-            return_value=mappings,
-            side_effect=mapping_error if scenario == "fallback" else None,
+            # A failed cached-statistics check can still retry full annotation.
+            return_value={"large": None} if scenario == "fallback" else mappings,
         ),
         patch("remag.core.cluster_contigs", return_value=clusters.copy()),
         patch(

@@ -255,6 +255,8 @@ REMAG recovers eukaryotic bins with a multi-stage pipeline:
 - `gene_contig_mappings.json`: Cached gene mappings when miniprot finds accepted matches
 - `core_gene_duplication_results.json`: Core gene duplication analysis for the final saved bins, after rescue and minimum-size filtering
 
+Binning stops with an error if required gene annotation fails. A successful search with no accepted matches still reports zero detected genes.
+
 ### Additional outputs with `-k` / `--keep-intermediate`
 
 - `siamese_model.pt`: Trained Siamese neural network model

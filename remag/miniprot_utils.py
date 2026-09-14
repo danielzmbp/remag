@@ -134,14 +134,13 @@ def load_or_generate_gene_mappings(
     if not check_miniprot_available():
         logger.error("miniprot not found in PATH - cannot generate gene mappings")
         logger.error("Install miniprot with: conda install -c bioconda miniprot")
-        return {}
+        raise RuntimeError("miniprot not found in PATH")
 
     db_path = os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "db", "refseq_db.faa.gz"
     )
     if not os.path.exists(db_path):
-        logger.warning("Eukaryotic database not found - cannot generate gene mappings")
-        return {}
+        raise RuntimeError(f"Eukaryotic database not found: {db_path}")
 
     # Create temporary directory
     temp_dir = os.path.join(args.output, "temp_gene_mapping")
@@ -181,7 +180,7 @@ def load_or_generate_gene_mappings(
             if os.path.exists(miniprot_stderr) and os.path.getsize(miniprot_stderr) > 0:
                 with open(miniprot_stderr, "r") as f:
                     logger.error(f"miniprot error: {f.read().strip()}")
-            return {}
+            raise RuntimeError(f"miniprot failed with exit code {result}")
 
         # Parse miniprot output into gene mappings
         gene_mappings = _parse_paf_gene_mappings(
@@ -212,7 +211,7 @@ def load_or_generate_gene_mappings(
 
     except Exception as e:
         logger.error(f"Error generating gene mappings: {e}")
-        return {}
+        raise
 
     finally:
         # Clean up temp files unless keeping intermediate
@@ -399,17 +398,13 @@ def check_core_gene_duplications(
     if not check_miniprot_available():
         logger.error("miniprot not found in PATH")
         logger.error("Install miniprot with: conda install -c bioconda miniprot")
-        logger.warning("Skipping core gene duplication analysis")
-        return initialize_duplication_columns(clusters_df)
+        raise RuntimeError("miniprot not found in PATH")
 
     db_path = os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "db", "refseq_db.faa.gz"
     )
     if not os.path.exists(db_path):
-        logger.warning(
-            "Eukaryotic database not found, skipping core gene duplication check"
-        )
-        return initialize_duplication_columns(clusters_df)
+        raise RuntimeError(f"Eukaryotic database not found: {db_path}")
 
     logger.info("Checking for duplicated core genes using miniprot...")
 
@@ -527,23 +522,11 @@ def check_core_gene_duplications(
                             stderr_content = stderr_file.read().strip()
                             if stderr_content:
                                 error_msg += f" - Error: {stderr_content}"
-                    logger.warning(error_msg)
-
-                    duplication_results[cluster_id] = {
-                        "has_duplications": False,
-                        "duplicated_genes": {},
-                        "total_genes_found": 0,
-                        "single_copy_genes_count": 0,
-                    }
+                    raise RuntimeError(error_msg)
 
             except Exception as e:
-                logger.warning(f"Error running miniprot for {cluster_id}: {e}")
-                duplication_results[cluster_id] = {
-                    "has_duplications": False,
-                    "duplicated_genes": {},
-                    "total_genes_found": 0,
-                    "single_copy_genes_count": 0,
-                }
+                logger.error(f"Error running miniprot for {cluster_id}: {e}")
+                raise
 
         # Parse and cache gene mappings for rescue
         gene_mappings_cache = parse_and_cache_paf_files(
