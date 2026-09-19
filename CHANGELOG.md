@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-09-19
+
 ### Fixed
 - Reject zero or negative epochs and explicit minimum contig lengths before
   starting work; Python training calls also reject invalid epoch counts.

@@ -159,7 +159,7 @@ remag contigs.fasta -o output_directory
 
 ### Reusing or replacing results
 
-REMAG reuses available results in the output directory. When existing outputs are found, it prints:
+REMAG reuses available results when their recorded minimum contig length matches the current run. When compatible outputs are found, it prints:
 
 ```text
 Existing REMAG results found. Reusing available outputs. Use --force to recompute.
