@@ -329,7 +329,7 @@ def validate_coverage_options(ctx, param, value):
 )
 @click.option(
     "--epochs",
-    type=int,
+    type=click.IntRange(min=1),
     default=100,
     show_default=True,
     help="Number of training epochs for contrastive learning model. The learning-rate "
@@ -374,7 +374,7 @@ def validate_coverage_options(ctx, param, value):
 )
 @click.option(
     "--min-contig-length",
-    type=int,
+    type=click.IntRange(min=1),
     default=None,
     show_default=False,
     help="Minimum contig length in base pairs for binning consideration. "

@@ -766,6 +766,9 @@ def train_siamese_network(features_df, args):
         features_df: DataFrame with k-mer and coverage features
         args: Arguments object with training parameters
     """
+    if args.epochs < 1:
+        raise ValueError("Training epochs must be at least 1.")
+
     # Set random seeds for reproducible training
     seed = getattr(args, "random_seed", 42)
     set_random_seeds(seed)

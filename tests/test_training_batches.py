@@ -1,6 +1,7 @@
 """Guard training batches against singleton BatchNorm failures."""
 
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
@@ -8,6 +9,31 @@ import pytest
 import torch
 
 from remag import models
+
+
+@pytest.mark.parametrize("epochs", [0, -1])
+@pytest.mark.parametrize("cached_model", [False, True])
+def test_nonpositive_epochs_stop_before_model_creation_or_loading(
+    tmp_path, epochs, cached_model
+):
+    args = SimpleNamespace(epochs=epochs, output=str(tmp_path))
+    model_path = tmp_path / "siamese_model.pt"
+    if cached_model:
+        model_path.write_bytes(b"previous model")
+    with (
+        patch.object(models, "set_random_seeds") as seed,
+        patch.object(models, "SiameseNetwork") as network,
+        patch.object(torch, "load") as load,
+    ):
+        with pytest.raises(ValueError, match="epochs must be at least 1"):
+            models.train_siamese_network(None, args)
+    seed.assert_not_called()
+    network.assert_not_called()
+    load.assert_not_called()
+    if cached_model:
+        assert model_path.read_bytes() == b"previous model"
+    else:
+        assert not model_path.exists()
 
 
 def make_features(pair_count):

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Reject zero or negative epochs and explicit minimum contig lengths before
+  starting work; Python training calls also reject invalid epoch counts.
+
 ### Changed
 - Automatically select the minimum contig and training-fragment length from the
   input assembly before biological filtering: the median among contigs at least
