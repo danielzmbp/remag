@@ -15,7 +15,7 @@ def mock_run_remag():
 @pytest.fixture
 def temp_fasta(tmp_path):
     p = tmp_path / "contigs.fasta"
-    p.write_text(">c1\nATGC")
+    p.write_text(">c1\n" + "ATGC" * 300 + "\n")
     return str(p)
 
 
@@ -55,9 +55,11 @@ def test_force_lower_min_contig_length(mock_run_remag, temp_fasta, multiple_bams
     assert args.min_contig_length == 1000
 
 
-def test_auto_bump_defaults(mock_run_remag, temp_fasta, multiple_bams):
+def test_short_contig_default_with_multiple_samples(
+    mock_run_remag, temp_fasta, multiple_bams
+):
     """
-    Test that it still defaults to 4096 if user DOES NOT specify length.
+    Short contigs select 1000 even with multiple coverage samples.
     """
     runner = CliRunner()
 
@@ -68,12 +70,12 @@ def test_auto_bump_defaults(mock_run_remag, temp_fasta, multiple_bams):
     assert result.exit_code == 0
     args = mock_run_remag.call_args[0][0]
 
-    assert args.min_contig_length == 4096
+    assert args.min_contig_length == 1000
 
 
 def test_single_sample_default(mock_run_remag, temp_fasta, multiple_bams):
     """
-    Test that single sample defaults to 1000.
+    Short contigs select 1000 with one coverage sample too.
     """
     runner = CliRunner()
 

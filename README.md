@@ -231,7 +231,9 @@ Do not mix BAM/CRAM inputs with precomputed coverage inputs in the same run.
 
 Use `remag -h` for a quick reference and `remag --help` for the full CLI, including training, clustering, filtering, and rescue options.
 
-The default minimum contig length is 1,000 bp with zero or one coverage file and 4,096 bp with multiple files. The k-NN graph uses 15 neighbors, and HyenaDNA filtering is enabled. Use `--min-contig-length`, `--leiden-k-neighbors`, and `--skip-bacterial-filter` to adjust these settings explicitly. Multiple coverage files lower the default base learning rate from `0.005` to `0.0005`; an explicitly supplied learning rate is preserved.
+REMAG automatically chooses the minimum contig and training-fragment length from the input assembly before HyenaDNA filtering. Among contigs at least 1,000 bp long, a median below 2,500 bp selects 1,000 bp; a median of 2,500 bp or higher selects 4,096 bp. Use `--min-contig-length` to override this choice. The measured median and chosen minimum are logged, and effective settings are always saved in `params.json`. Reusing outputs requires the same recorded minimum; if it differs or older outputs lack that information, use `--force` or a new output directory.
+
+The k-NN graph uses 15 neighbors, and HyenaDNA filtering is enabled. Use `--leiden-k-neighbors` and `--skip-bacterial-filter` to adjust these settings. Multiple coverage files lower the default base learning rate from `0.005` to `0.0005`; an explicitly supplied learning rate is preserved.
 
 ## How It Works
 
@@ -244,6 +246,8 @@ REMAG recovers eukaryotic bins with a multi-stage pipeline:
 5. **Greedy clustering and rescue**: REMAG applies greedy Leiden clustering across multiple resolutions, then merges or rescues bins when single-copy gene checks support it.
 
 ## Output
+
+All runs retain `params.json` with the effective settings, including the selected minimum length. Matching reruns preserve the original record.
 
 ### Binning outputs
 
@@ -262,7 +266,6 @@ Binning stops with an error if required gene annotation fails. A successful sear
 - `siamese_model.pt`: Trained Siamese neural network model
 - `kmer_embeddings.csv`: K-mer encoder embeddings (before fusion)
 - `coverage_embeddings.csv`: Coverage encoder embeddings, when coverage features are present (before fusion)
-- `params.json`: Run parameters for reproducibility
 - `features.csv`: Extracted k-mer and coverage features
 - `knn_graph_edges.csv`: k-NN graph edge list used for Leiden clustering
 - `knn_graph_stats.json`: k-NN graph construction statistics

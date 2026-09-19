@@ -378,7 +378,9 @@ def validate_coverage_options(ctx, param, value):
     default=None,
     show_default=False,
     help="Minimum contig length in base pairs for binning consideration. "
-    "Default: 1000 for single-sample, 4096 for multi-sample/coassembly. "
+    "Also sets the minimum training-fragment length. By default, use 1000 if "
+    "the median input contig length (among contigs >=1000 bp, before filtering) "
+    "is below 2500 bp; otherwise use 4096. "
     "User-specified values override auto-detection.",
 )
 @click.option(
@@ -607,16 +609,17 @@ def main_cli(
             "Coassembly detected: Auto base learning rate set to 0.0005.", err=True
         )
 
-    # Set default min contig length if not provided by user
+    # Resolve length before filtering, cache reuse, or forced output cleanup.
+    contig_length_median = None
     if min_contig_length is None:
-        if coverage_count > 1:
-            min_contig_length = 4096
-            click.echo(
-                "Coassembly detected: Auto-setting min contig length to 4096 bp.",
-                err=True,
+        from .utils import select_min_contig_length
+
+        try:
+            min_contig_length, contig_length_median = select_min_contig_length(
+                fasta_path
             )
-        else:
-            min_contig_length = 1000
+        except (OSError, ValueError) as e:
+            raise click.ClickException(str(e)) from e
 
     args = argparse.Namespace(
         fasta=fasta_path,
@@ -630,6 +633,7 @@ def main_cli(
         barlow_lambda=barlow_lambda,
         random_seed=random_seed,
         min_contig_length=min_contig_length,
+        contig_length_median=contig_length_median,
         max_positive_pairs=max_positive_pairs,
         cores=threads,
         min_bin_size=min_bin_size,

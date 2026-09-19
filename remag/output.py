@@ -2,6 +2,7 @@
 Output module for REMAG
 """
 
+import json
 import os
 import shutil
 from pathlib import Path
@@ -91,6 +92,26 @@ def prepare_output_directory(args):
     # Python callers may reuse an args object from a previous run.
     vars(args).pop("_gene_mappings_cache", None)
     return bool(paths)
+
+
+def validate_cached_min_contig_length(output_dir, min_contig_length):
+    """Refuse to reuse results with a different or unknown length cutoff."""
+    previous = None
+    try:
+        with open(Path(output_dir) / "params.json", encoding="utf-8") as handle:
+            params = json.load(handle)
+        if isinstance(params, dict):
+            previous = params.get("min_contig_length")
+    except (OSError, ValueError):
+        pass
+    if type(previous) is not int or previous <= 0:
+        previous = "unknown"
+    if previous != min_contig_length:
+        raise ValueError(
+            f"Existing outputs have a minimum contig length of {previous}; "
+            f"this run requests {min_contig_length} bp. "
+            "Use --force to recompute or choose a new output directory."
+        )
 
 
 def save_clusters_as_fasta(clusters_df, fragments_dict, args):

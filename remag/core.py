@@ -17,7 +17,11 @@ from .miniprot_utils import (
     load_or_generate_gene_mappings,
 )
 from .models import generate_embeddings, train_siamese_network
-from .output import prepare_output_directory, save_clusters_as_fasta
+from .output import (
+    prepare_output_directory,
+    save_clusters_as_fasta,
+    validate_cached_min_contig_length,
+)
 from .rescue import rescue_fragmented_bins
 from .utils import setup_logging
 
@@ -25,6 +29,8 @@ from .utils import setup_logging
 def main(args):
     try:
         existing_results = prepare_output_directory(args)
+        if existing_results and not getattr(args, "force", False):
+            validate_cached_min_contig_length(args.output, args.min_contig_length)
         setup_logging(args.output, verbose=args.verbose)
         os.makedirs(args.output, exist_ok=True)
         if existing_results:
@@ -41,7 +47,18 @@ def main(args):
         logger.error(f"Failed to initialize output directory: {e}")
         sys.exit(1)
 
-    if getattr(args, "keep_intermediate", False):
+    contig_length_median = getattr(args, "contig_length_median", None)
+    if contig_length_median is not None:
+        logger.info(
+            f"Median input contig length (>=1,000 bp, before filtering): "
+            f"{contig_length_median:g} bp."
+        )
+    logger.info(
+        f"Minimum contig and training-fragment length: {args.min_contig_length:,} bp."
+    )
+
+    # Keep the original parameters when resuming, including older run versions.
+    if not existing_results or getattr(args, "force", False):
         params_path = os.path.join(args.output, "params.json")
         params = {"version": version("remag"), **vars(args)}
         with open(params_path, "w", encoding="utf-8") as f:

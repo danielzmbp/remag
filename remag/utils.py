@@ -6,6 +6,7 @@ import gzip
 import os
 import re
 import sys
+from statistics import median
 from typing import Container, Dict, List, Optional, Union
 
 import torch
@@ -78,6 +79,22 @@ def fasta_iter(fasta_file):
                 seq_lines.append(line)
         if header:
             yield header, "".join(seq_lines)
+
+
+def select_min_contig_length(fasta_file):
+    """Choose admission and fragment length from the unfiltered assembly."""
+    lengths = [len(seq) for _, seq in fasta_iter(fasta_file) if len(seq) >= 1000]
+    if not lengths:
+        raise ValueError("No input contigs are at least 1,000 bp long.")
+    median_length = median(lengths)
+    minimum = 1000 if median_length < 2500 else 4096
+    if max(lengths) < minimum:
+        raise ValueError(
+            f"Median contig length is {median_length:g} bp, selecting {minimum:,} bp, "
+            "but no input contigs meet that minimum. "
+            "Set --min-contig-length explicitly to use a different cutoff."
+        )
+    return minimum, median_length
 
 
 def extract_base_contig_name(

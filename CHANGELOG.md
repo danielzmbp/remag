@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Automatically select the minimum contig and training-fragment length from the
+  input assembly before biological filtering: the median among contigs at least
+  1,000 bp selects a 1,000 bp minimum when below 2,500 bp, or 4,096 bp otherwise.
+  This replaces the coverage-count default; explicit `--min-contig-length`
+  settings still take precedence.
+- Always retain effective run settings in `params.json`. Reusing outputs with a
+  different or unknown minimum contig length now requires `--force` or a fresh
+  output directory; matching reruns preserve the original parameter record.
+
 ## [0.5.0] - 2026-09-14
 
 ### Added

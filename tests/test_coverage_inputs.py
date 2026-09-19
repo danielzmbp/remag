@@ -104,7 +104,7 @@ def test_get_features_uses_interval_coverage_for_augmented_fragments(tmp_path):
 
 def test_cli_accepts_interval_coverage_as_precomputed_input(tmp_path):
     fasta = tmp_path / "contigs.fasta"
-    fasta.write_text(">ctg0\nATGC\n", encoding="utf-8")
+    fasta.write_text(">ctg0\n" + "ATGC" * 300 + "\n", encoding="utf-8")
     coverage_file = tmp_path / "sample.bam.cov.gz"
     with gzip.open(coverage_file, "wt", encoding="utf-8") as handle:
         handle.write("ctg0\t0\t4\t1\n")

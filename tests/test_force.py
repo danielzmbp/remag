@@ -1,5 +1,6 @@
 """Tests for explicit output replacement without changing cache reuse defaults."""
 
+import json
 from argparse import Namespace
 from pathlib import Path
 from unittest.mock import patch
@@ -127,10 +128,17 @@ def test_core_prepares_outputs_before_filtering(tmp_path, force, capsys):
 
     args = make_args(tmp_path, force=force)
     paths = populate_outputs(Path(args.output))
+    (Path(args.output) / "params.json").write_text(
+        json.dumps({"min_contig_length": args.min_contig_length})
+    )
 
     def check_outputs(*_args, **_kwargs):
-        # The log is reopened by setup_logging; other outputs follow force.
-        assert all(path.exists() != force for path in paths if path.name != "remag.log")
+        # New runs always save parameters; logging also reopens the log.
+        assert all(
+            path.exists() != force
+            for path in paths
+            if path.name not in {"remag.log", "params.json"}
+        )
         return args.fasta
 
     with patch("remag.core.filter_bacterial_contigs", side_effect=check_outputs):
@@ -142,7 +150,14 @@ def test_core_prepares_outputs_before_filtering(tmp_path, force, capsys):
 @pytest.mark.parametrize("force", [False, True])
 def test_cli_forwards_force(tmp_path, force):
     args = make_args(tmp_path)
-    command = [args.fasta, "--filter-only", "-o", args.output]
+    command = [
+        args.fasta,
+        "--filter-only",
+        "-o",
+        args.output,
+        "--min-contig-length",
+        "1",
+    ]
     if force:
         command.append("--force")
     with patch("remag.cli.run_remag") as run:

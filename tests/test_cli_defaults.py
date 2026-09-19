@@ -20,7 +20,7 @@ def mock_run_remag():
 def temp_fasta(tmp_path):
     """Creates a dummy FASTA file for testing."""
     fasta_path = tmp_path / "contigs.fasta"
-    fasta_path.write_text(">contig1\nATGC\n>contig2\nTGCA\n")
+    fasta_path.write_text(">contig1\n" + "ATGC" * 300 + "\n")
     return str(fasta_path)
 
 
@@ -207,7 +207,7 @@ class TestCliDefaults:
 
     @pytest.mark.parametrize("coverage_count", [0, 1, 2])
     @pytest.mark.parametrize("extension", ["bam", "tsv"])
-    def test_standard_defaults_follow_coverage_count(
+    def test_length_default_is_independent_of_coverage_count(
         self, mock_run_remag, temp_fasta, tmp_path, coverage_count, extension
     ):
         """All input layouts use the standard graph and filtering defaults."""
@@ -222,7 +222,7 @@ class TestCliDefaults:
         args = mock_run_remag.call_args.args[0]
         assert args.leiden_k_neighbors == 15
         assert args.skip_bacterial_filter is False
-        assert args.min_contig_length == (4096 if coverage_count > 1 else 1000)
+        assert args.min_contig_length == 1000
         assert args.base_learning_rate == (0.0005 if coverage_count > 1 else 0.005)
         assert not hasattr(args, "mode")
 
