@@ -92,6 +92,10 @@ class SpaceSeparatedPaths(click.ParamType):
                 all_files.extend(self.convert(item, param, ctx))
             return all_files
 
+        # A literal path can contain spaces or glob characters.
+        if os.path.isfile(value):
+            return [value]
+
         # Split on spaces to handle space-separated paths
         paths = value.split()
         validated_paths = []

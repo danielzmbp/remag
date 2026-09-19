@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Reject zero or negative epochs and explicit minimum contig lengths before
   starting work; Python training calls also reject invalid epoch counts.
+- Accept quoted coverage file paths containing spaces or literal glob characters.
 
 ### Changed
 - Automatically select the minimum contig and training-fragment length from the

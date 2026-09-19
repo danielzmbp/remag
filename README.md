@@ -147,6 +147,8 @@ remag contigs.fasta -c alignments.bam -k
 remag contigs.fasta -c alignments.bam -o output_directory --force
 ```
 
+Quote each coverage path containing spaces, for example `-c "sample 1.bam" -c "sample 2.bam"`.
+
 During feature generation, REMAG rejects repeated identifiers among retained contigs, using the first whitespace-separated token in each FASTA header.
 
 Coverage is optional. To use sequence composition alone:
