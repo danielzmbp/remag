@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Default to a 1,000 bp minimum contig and training-fragment length with exactly
+  one coverage file. Multiple coverage files and runs without coverage retain
+  the assembly-median rule; explicit `--min-contig-length` still takes precedence.
+
 ## [0.5.1] - 2026-09-19
 
 ### Fixed

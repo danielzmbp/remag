@@ -207,7 +207,7 @@ class TestCliDefaults:
 
     @pytest.mark.parametrize("coverage_count", [0, 1, 2])
     @pytest.mark.parametrize("extension", ["bam", "tsv"])
-    def test_length_default_is_independent_of_coverage_count(
+    def test_short_assembly_and_graph_defaults(
         self, mock_run_remag, temp_fasta, tmp_path, coverage_count, extension
     ):
         """All input layouts use the standard graph and filtering defaults."""

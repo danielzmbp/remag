@@ -382,9 +382,10 @@ def validate_coverage_options(ctx, param, value):
     default=None,
     show_default=False,
     help="Minimum contig length in base pairs for binning consideration. "
-    "Also sets the minimum training-fragment length. By default, use 1000 if "
-    "the median input contig length (among contigs >=1000 bp, before filtering) "
-    "is below 2500 bp; otherwise use 4096. "
+    "Also sets the minimum training-fragment length. With one coverage file, "
+    "default to 1000. Otherwise, use 1000 if the median input contig length "
+    "(among contigs >=1000 bp, before filtering) is below 2500 bp; "
+    "otherwise use 4096. "
     "User-specified values override auto-detection.",
 )
 @click.option(
@@ -620,7 +621,7 @@ def main_cli(
 
         try:
             min_contig_length, contig_length_median = select_min_contig_length(
-                fasta_path
+                fasta_path, coverage_count=coverage_count
             )
         except (OSError, ValueError) as e:
             raise click.ClickException(str(e)) from e

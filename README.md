@@ -233,7 +233,7 @@ Do not mix BAM/CRAM inputs with precomputed coverage inputs in the same run.
 
 Use `remag -h` for a quick reference and `remag --help` for the full CLI, including training, clustering, filtering, and rescue options.
 
-REMAG automatically chooses the minimum contig and training-fragment length from the input assembly before HyenaDNA filtering. Among contigs at least 1,000 bp long, a median below 2,500 bp selects 1,000 bp; a median of 2,500 bp or higher selects 4,096 bp. Use `--min-contig-length` to override this choice. The measured median and chosen minimum are logged, and effective settings are always saved in `params.json`. Reusing outputs requires the same recorded minimum; if it differs or older outputs lack that information, use `--force` or a new output directory.
+REMAG defaults to a minimum contig and training-fragment length of 1,000 bp when exactly one coverage file is supplied. With multiple coverage files or no coverage, it chooses from the input assembly before HyenaDNA filtering: among contigs at least 1,000 bp long, a median below 2,500 bp selects 1,000 bp; a median of 2,500 bp or higher selects 4,096 bp. Use `--min-contig-length` to override this choice. The measured median and chosen minimum are logged, and effective settings are always saved in `params.json`. Reusing outputs requires the same recorded minimum; if it differs or older outputs lack that information, use `--force` or a new output directory.
 
 The k-NN graph uses 15 neighbors, and HyenaDNA filtering is enabled. Use `--leiden-k-neighbors` and `--skip-bacterial-filter` to adjust these settings. Multiple coverage files lower the default base learning rate from `0.005` to `0.0005`; an explicitly supplied learning rate is preserved.
 
