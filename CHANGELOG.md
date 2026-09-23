@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Use existing cosine-similarity edge weights in Leiden clustering. Existing
+  bins are reused as before: use a fresh output directory or `--force` to recluster.
 - Default to a 1,000 bp minimum contig and training-fragment length with exactly
   one coverage file. Multiple coverage files and runs without coverage retain
   the assembly-median rule; explicit `--min-contig-length` still takes precedence.

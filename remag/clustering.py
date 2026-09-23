@@ -163,6 +163,7 @@ def _greedy_leiden_clustering(
             partition = leidenalg.find_partition(
                 current_graph,
                 leidenalg.RBConfigurationVertexPartition,
+                weights="weight",
                 resolution_parameter=res,
                 seed=random_state,
             )

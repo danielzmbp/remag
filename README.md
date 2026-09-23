@@ -245,7 +245,7 @@ REMAG recovers eukaryotic bins with a multi-stage pipeline:
 2. **Feature extraction**: REMAG combines 4-mer composition with optional multi-sample coverage data. Contigs are augmented into fragments for training when their lengths permit; contigs longer than 50 kb receive augmentations from each half.
 3. **Contrastive learning**: A Siamese network trained with Barlow Twins learns embeddings that place fragments from the same contig close together.
 4. **Core gene annotation**: `miniprot` maps eukaryotic single-copy core genes to support clustering and quality checks. Multiple non-overlapping matches to a marker family within a contig are reported as separate copies; clustering and rescue still count that family once per contig.
-5. **Greedy clustering and rescue**: REMAG applies greedy Leiden clustering across multiple resolutions, then merges or rescues bins when single-copy gene checks support it.
+5. **Greedy clustering and rescue**: REMAG applies greedy Leiden clustering using cosine-similarity edge weights across multiple resolutions, then merges or rescues bins when single-copy gene checks support it.
 
 ## Output
 
