@@ -220,6 +220,8 @@ Supported extensions include `.cov`, `.cov.gz`, `.bedgraph`, `.bedgraph.gz`, `.b
 
 Do not mix BAM/CRAM inputs with precomputed coverage inputs in the same run.
 
+BAM/CRAM coverage uses `--cores` readers and processes one alignment file at a time. More readers can improve speed but increase memory use, especially for CRAM. REMAG warns when using more than four readers; use fewer `--cores` if memory is limited. Queued work is bounded and can be reduced further with `--coverage-batch-size`. Memory or worker failures stop the run instead of producing zero coverage.
+
 ## Common Options
 
 - `-c, --coverage`: one or more BAM, CRAM, contig-level TSV/TXT, or interval COV/bedGraph coverage inputs

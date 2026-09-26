@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from remag.features import get_features
+from remag.features import CoverageError, get_features
 
 
 def features(fasta, output, bam_files=None, tsv_files=None):
@@ -180,3 +180,16 @@ def test_recalculation_removes_columns_duplicated_by_older_runs(tmp_path, cached
     actual = features(fasta, output, **inputs)
 
     pd.testing.assert_frame_equal(actual, fresh, atol=1e-12, rtol=1e-12)
+
+
+def test_failed_coverage_preserves_cache_without_regenerating(tmp_path, cached_input):
+    fasta, output, _ = cached_input
+    before = (output / "features.csv").read_bytes()
+    with (
+        patch("remag.features.pysam.AlignmentFile", side_effect=MemoryError()),
+        patch("remag.features._calculate_kmer_composition") as kmers,
+    ):
+        with pytest.raises(CoverageError, match="reduce --cores"):
+            features(fasta, output, bam_files=[str(tmp_path / "sample.bam")])
+    kmers.assert_not_called()
+    assert (output / "features.csv").read_bytes() == before

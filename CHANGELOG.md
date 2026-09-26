@@ -8,11 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Read alignment coverage in independent workers controlled by `--cores`, passing only fragment
+  metadata and returning statistics instead of transferring depth arrays. Preserve
+  coverage calculations and ordering while bounding queued work. Warn about
+  memory use above four readers; memory and worker failures stop the run
+  instead of substituting zero coverage.
 - Use existing cosine-similarity edge weights in Leiden clustering. Existing
   bins are reused as before: use a fresh output directory or `--force` to recluster.
 - Default to a 1,000 bp minimum contig and training-fragment length with exactly
   one coverage file. Multiple coverage files and runs without coverage retain
   the assembly-median rule; explicit `--min-contig-length` still takes precedence.
+
+### Fixed
+- Return zero coverage when no FASTA headers match alignment references instead
+  of failing on an empty contig batch.
 
 ## [0.5.1] - 2026-09-19
 

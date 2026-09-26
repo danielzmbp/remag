@@ -2,14 +2,17 @@
 Feature extraction module for REMAG
 """
 
+import errno
 import gzip
 import hashlib
 import itertools
 import os
 import random
-from collections import OrderedDict
+from collections import OrderedDict, deque
+from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from functools import lru_cache
-from multiprocessing import Pool
+from multiprocessing.util import Finalize
 from typing import Dict, List, Optional, Set, Tuple
 
 import numpy as np
@@ -20,6 +23,10 @@ from sklearn.preprocessing import MinMaxScaler
 from tqdm import tqdm
 
 from .utils import CoverageDict, FragmentDict, _write_fasta_record, fasta_iter
+
+
+class CoverageError(RuntimeError):
+    """Coverage failed and must not be replaced with zero-valued features."""
 
 
 @lru_cache(maxsize=None)
@@ -600,6 +607,8 @@ def get_features(
 
             return df, fragments_dict
 
+        except (CoverageError, MemoryError):
+            raise
         except Exception as e:
             logger.warning(f"Error loading existing features: {e}. Regenerating...")
 
@@ -796,7 +805,11 @@ def _validate_alignment_file(alignment_file: str) -> bool:
                 pysam.index(alignment_file)
                 logger.debug(f"BAM index created at {bai_filepath}")
                 return True
+            except MemoryError:
+                raise
             except Exception as e:
+                if getattr(e, "errno", None) == errno.ENOMEM:
+                    raise
                 logger.error(f"Error creating BAM index: {e}")
                 logger.error("Please ensure samtools is installed and in your PATH.")
                 return False
@@ -814,7 +827,11 @@ def _validate_alignment_file(alignment_file: str) -> bool:
                 pysam.index(alignment_file)
                 logger.debug(f"CRAM index created at {crai_filepath}")
                 return True
+            except MemoryError:
+                raise
             except Exception as e:
+                if getattr(e, "errno", None) == errno.ENOMEM:
+                    raise
                 logger.error(f"Error creating CRAM index: {e}")
                 logger.error("Please ensure samtools is installed and in your PATH.")
                 return False
@@ -870,7 +887,7 @@ def _map_fasta_to_bam_refs(
 def _process_contig_coverage_worker(args):
     """
     Optimized worker function to calculate coverage for fragments within a single contig.
-    Now receives pre-loaded coverage data to avoid expensive BAM file I/O per worker.
+    Receives one contig's depth array from the coverage reader.
 
     Args:
         args: Tuple of (bam_contig_name, contig_data_list, total_coverage_per_base, bam_contig_length)
@@ -954,7 +971,11 @@ def _process_contig_coverage_worker(args):
                     fragment_coverage[fragment_header] = float(means[i])
                     fragment_coverage_std[fragment_header] = float(stds[i])
 
+            except MemoryError:
+                raise
             except Exception as e:
+                if getattr(e, "errno", None) == errno.ENOMEM:
+                    raise
                 logger.warning(f"Error in vectorized coverage calculation: {e}")
                 # Fallback to individual processing
                 for i, (start, end) in enumerate(fragment_coords):
@@ -971,14 +992,22 @@ def _process_contig_coverage_worker(args):
                         else:
                             fragment_coverage[fragment_header] = 0.0
                             fragment_coverage_std[fragment_header] = 0.0
+                    except MemoryError:
+                        raise
                     except Exception as e2:
+                        if getattr(e2, "errno", None) == errno.ENOMEM:
+                            raise
                         logger.warning(
                             f"Error calculating coverage for fragment {fragment_header}: {e2}"
                         )
                         fragment_coverage[fragment_header] = 0.0
                         fragment_coverage_std[fragment_header] = 0.0
 
+    except MemoryError:
+        raise
     except Exception as e:
+        if getattr(e, "errno", None) == errno.ENOMEM:
+            raise
         logger.error(f"Error processing contig {bam_contig_name}: {e}")
         # Set all fragments to zero coverage on any error
         for _, data in contig_data_list:
@@ -1083,6 +1112,62 @@ def _calculate_fragment_stats_vectorized(coverage_array, fragment_coords):
         return means, stds
 
 
+_coverage_reader = None
+
+
+def _init_coverage_reader(bam_file):
+    """Open one independent alignment handle for the lifetime of each worker."""
+    global _coverage_reader
+    _coverage_reader = pysam.AlignmentFile(bam_file, "rb")
+    Finalize(None, _coverage_reader.close, exitpriority=10)
+
+
+def _read_contig_coverage(task, reader=None):
+    """Read depth locally and reuse the existing fragment-statistic calculation."""
+    name, records, length = task
+    reader = _coverage_reader if reader is None else reader
+    try:
+        arrays = reader.count_coverage(
+            contig=name, start=0, stop=length, quality_threshold=0
+        )
+        depth = np.sum(arrays, axis=0)
+        del arrays
+    except MemoryError:
+        raise
+    except Exception as error:
+        if getattr(error, "errno", None) == errno.ENOMEM:
+            raise
+        logger.warning(f"Error loading coverage for contig {name}: {error}")
+        depth = None
+    return _process_contig_coverage_worker((name, records, depth, length))
+
+
+def _read_coverage_chunk(tasks):
+    return [_read_contig_coverage(task) for task in tasks]
+
+
+def _parallel_coverage_results(tasks, bam_file, readers, batch_size):
+    """Keep at most two chunks per reader pending and yield in input order."""
+    chunk_size = min(16, batch_size)
+    pending_limit = min(2 * readers, max(1, batch_size // chunk_size))
+    tasks = iter(tasks)
+    with ProcessPoolExecutor(
+        max_workers=readers,
+        initializer=_init_coverage_reader,
+        initargs=(bam_file,),
+    ) as pool:
+        pending = deque()
+        while True:
+            while len(pending) < pending_limit:
+                chunk = list(itertools.islice(tasks, chunk_size))
+                if not chunk:
+                    break
+                pending.append(pool.submit(_read_coverage_chunk, chunk))
+            if not pending:
+                break
+            yield from pending.popleft().result()
+
+
 def calculate_fragment_coverage(
     bam_file: str,
     fragments_dict: FragmentDict,
@@ -1098,149 +1183,98 @@ def calculate_fragment_coverage(
         return {}, {}
 
     try:
+        if cores < 1 or coverage_batch_size < 1:
+            raise ValueError("Coverage cores and batch size must be positive.")
+
         with pysam.AlignmentFile(bam_file, "rb") as bamfile:
             bam_references = set(bamfile.references)
             bam_lengths = dict(zip(bamfile.references, bamfile.lengths))
 
-            if not bam_references:
-                logger.error("Alignment file contains no reference sequences.")
-                return {}, {}
+        if not bam_references:
+            logger.error("Alignment file contains no reference sequences.")
+            return {}, {}
 
-            # Map FASTA headers to BAM references
-            bam_ref_map, unmapped_headers = _map_fasta_to_bam_refs(
-                fragments_dict, bam_references, disable_progress=disable_progress
+        bam_ref_map, unmapped_headers = _map_fasta_to_bam_refs(
+            fragments_dict, bam_references, disable_progress=disable_progress
+        )
+        if unmapped_headers:
+            logger.warning(
+                f"{len(unmapped_headers)} FASTA headers could not be matched to BAM references."
             )
 
-            if unmapped_headers:
+        # Send fragment identifiers and coordinates, never nucleotide sequences.
+        contig_fragments = {}
+        for original_header, data in fragments_dict.items():
+            name = bam_ref_map.get(original_header)
+            if name is not None:
+                metadata = {
+                    "fragments": data["fragments"],
+                    "fragment_info": data.get("fragment_info", {}),
+                }
+                contig_fragments.setdefault(name, []).append(
+                    (original_header, metadata)
+                )
+
+        if contig_fragments:
+            readers = min(cores, len(contig_fragments), coverage_batch_size)
+            if readers > 4:
                 logger.warning(
-                    f"{len(unmapped_headers)} FASTA headers could not be matched to BAM references."
+                    f"Coverage will use {readers} alignment readers (--cores). "
+                    "Each reader uses additional memory, especially for CRAM. "
+                    "If memory is limited, rerun with fewer --cores "
+                    "(for example, --cores 4 or --cores 2)."
                 )
-
-            # Group fragments by contig
-            contig_fragments = {}
-            for original_header, data in fragments_dict.items():
-                bam_contig_name = bam_ref_map.get(original_header)
-                if bam_contig_name is not None:
-                    if bam_contig_name not in contig_fragments:
-                        contig_fragments[bam_contig_name] = []
-                    contig_fragments[bam_contig_name].append((original_header, data))
-
-            # Process coverage data in batches to reduce memory usage
-            # Calculate total bases to estimate memory requirements
-            total_bases = sum(bam_lengths.get(contig, 0) for contig in contig_fragments)
-
-            # Use batching if total data size is large (>1GB of coverage data estimated)
-            # Each base takes ~4 bytes for coverage array, so 250M bases ≈ 1GB
-            use_batching = total_bases > 250_000_000
-
-            if use_batching:
-                batch_size = coverage_batch_size
+            tasks = (
+                (name, records, bam_lengths[name])
+                for name, records in contig_fragments.items()
+            )
+            logger.debug(
+                f"Reading coverage for {len(contig_fragments)} contigs with {readers} reader(s)"
+            )
+            if readers == 1:
+                # Avoid process startup and serialization for single-reader runs.
+                with pysam.AlignmentFile(bam_file, "rb") as reader:
+                    for task in tqdm(
+                        tasks,
+                        total=len(contig_fragments),
+                        desc="Calculating coverage",
+                        disable=disable_progress,
+                    ):
+                        means, stds, _ = _read_contig_coverage(task, reader)
+                        fragment_coverage.update(means)
+                        fragment_coverage_std.update(stds)
             else:
-                batch_size = len(contig_fragments)
+                for means, stds, _ in tqdm(
+                    _parallel_coverage_results(
+                        tasks, bam_file, readers, coverage_batch_size
+                    ),
+                    total=len(contig_fragments),
+                    desc="Calculating coverage",
+                    disable=disable_progress,
+                ):
+                    fragment_coverage.update(means)
+                    fragment_coverage_std.update(stds)
 
-            contig_list = list(contig_fragments.items())
-            num_batches = (len(contig_list) + batch_size - 1) // batch_size
-
-            if use_batching:
-                logger.debug(
-                    f"Processing {len(contig_fragments)} contigs ({total_bases:,} total bases) in {num_batches} batches (batch_size={batch_size}) using {cores} cores..."
-                )
-                logger.debug(
-                    f"Estimated peak memory for coverage: ~{(batch_size * (total_bases / len(contig_fragments)) * 4 / 1e9):.2f} GB per batch"
-                )
-            else:
-                logger.debug(
-                    f"Processing {len(contig_fragments)} contigs ({total_bases:,} total bases) using {cores} cores..."
-                )
-
-            results = []
-            for batch_idx in range(num_batches):
-                start_idx = batch_idx * batch_size
-                end_idx = min(start_idx + batch_size, len(contig_list))
-                batch_contigs = contig_list[start_idx:end_idx]
-
-                logger.debug(
-                    f"Processing batch {batch_idx + 1}/{num_batches} ({len(batch_contigs)} contigs)..."
-                )
-
-                # Load coverage data only for this batch
-                coverage_data = {}
-                batch_iterator = (
-                    batch_contigs
-                    if disable_progress
-                    else tqdm(
-                        batch_contigs,
-                        desc=f"Loading coverage (batch {batch_idx + 1}/{num_batches})",
-                    )
-                )
-                for bam_contig_name, _ in batch_iterator:
-                    bam_contig_length = bam_lengths.get(bam_contig_name)
-                    if bam_contig_length is None:
-                        coverage_data[bam_contig_name] = (None, None)
-                        continue
-
-                    try:
-                        coverage_arrays = bamfile.count_coverage(
-                            contig=bam_contig_name,
-                            start=0,
-                            stop=bam_contig_length,
-                            quality_threshold=0,
-                        )
-                        total_coverage_per_base = np.sum(coverage_arrays, axis=0)
-                        coverage_data[bam_contig_name] = (
-                            total_coverage_per_base,
-                            bam_contig_length,
-                        )
-                    except Exception as e:
-                        logger.warning(
-                            f"Error loading coverage for contig {bam_contig_name}: {e}"
-                        )
-                        coverage_data[bam_contig_name] = (None, None)
-
-                # Process this batch with pre-loaded coverage data
-                worker_args = [
-                    (
-                        bam_contig_name,
-                        contig_data_list,
-                        coverage_data[bam_contig_name][0],  # total_coverage_per_base
-                        coverage_data[bam_contig_name][1],  # bam_contig_length
-                    )
-                    for bam_contig_name, contig_data_list in batch_contigs
-                ]
-
-                with Pool(processes=cores) as pool:
-                    if disable_progress:
-                        batch_results = list(
-                            pool.imap(_process_contig_coverage_worker, worker_args)
-                        )
-                    else:
-                        batch_results = list(
-                            tqdm(
-                                pool.imap(_process_contig_coverage_worker, worker_args),
-                                total=len(worker_args),
-                                desc=f"Processing fragments (batch {batch_idx + 1}/{num_batches})",
-                            )
-                        )
-
-                results.extend(batch_results)
-
-                # Explicitly delete coverage_data to free memory before next batch
-                del coverage_data
-                logger.debug(f"Completed batch {batch_idx + 1}/{num_batches}")
-
-            # Combine results
-            for res_cov, res_std, _ in results:
-                fragment_coverage.update(res_cov)
-                fragment_coverage_std.update(res_std)
-
-            # Handle unmapped headers
-            for original_header in unmapped_headers:
-                if original_header in fragments_dict:
-                    for fragment_header in fragments_dict[original_header]["fragments"]:
-                        fragment_coverage[fragment_header] = 0.0
-                        fragment_coverage_std[fragment_header] = 0.0
+        for original_header in unmapped_headers:
+            for fragment_header in fragments_dict[original_header]["fragments"]:
+                fragment_coverage[fragment_header] = 0.0
+                fragment_coverage_std[fragment_header] = 0.0
 
     except Exception as e:
+        if (
+            isinstance(e, (MemoryError, BrokenProcessPool))
+            or getattr(e, "errno", None) == errno.ENOMEM
+        ):
+            reason = (
+                "a coverage worker failed"
+                if isinstance(e, BrokenProcessPool)
+                else "out of memory"
+            )
+            raise CoverageError(
+                f"Coverage failed for {bam_file}: {reason}. "
+                "Check the worker/job logs; if memory is exhausted, "
+                "reduce --cores or allocate more RAM."
+            ) from e
         import traceback
 
         logger.error(f"Error processing alignment file {bam_file}: {e}")
@@ -1581,7 +1615,11 @@ def _get_total_mapped_reads(bam_file: str) -> int:
                 f"Alignment file {os.path.basename(bam_file)}: {total_mapped:,} mapped reads"
             )
             return total_mapped
+    except MemoryError:
+        raise
     except Exception as e:
+        if getattr(e, "errno", None) == errno.ENOMEM:
+            raise
         logger.error(f"Error calculating mapped reads for {bam_file}: {e}")
         return 1  # Avoid division by zero
 
@@ -1692,7 +1730,14 @@ def calculate_coverage_from_multiple_bams(
 
             all_coverage_series.extend([mean_series, std_series])
 
+        except CoverageError:
+            raise
         except Exception as e:
+            if isinstance(e, MemoryError) or getattr(e, "errno", None) == errno.ENOMEM:
+                raise CoverageError(
+                    f"Coverage ran out of memory for {bam_file}; "
+                    "reduce --cores or allocate more RAM."
+                ) from e
             logger.error(f"Error processing alignment file {bam_file}: {e}")
             sample_name = sample_names_map[bam_file]
             mean_col_name = f"{sample_name}_coverage"

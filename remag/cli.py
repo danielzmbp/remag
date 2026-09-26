@@ -489,7 +489,7 @@ def validate_coverage_options(ctx, param, value):
     type=int,
     default=100000,
     show_default=True,
-    help="Number of contigs to process per batch when calculating coverage from alignment files. Reduce this value if running out of memory with very large datasets.",
+    help="Maximum contigs queued for alignment coverage. Readers follow --cores, with up to 32 contigs queued per reader. Smaller values further limit queued work.",
 )
 @click.option(
     "--hyenadna-batch-size",
