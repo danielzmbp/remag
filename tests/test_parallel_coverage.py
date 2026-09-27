@@ -286,10 +286,7 @@ def test_multiple_chunks_preserve_fragment_order(tmp_path, monkeypatch, cores):
         path, records, cores=cores, disable_progress=True
     )
     assert executor.call_args.kwargs["max_workers"] == cores
-    if cores > 4:
-        assert "fewer --cores" in warning.call_args.args[0]
-    else:
-        warning.assert_not_called()
+    warning.assert_not_called()
     for original, actual in zip(expected, result):
         assert list(actual.items()) == list(original.items())
 

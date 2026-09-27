@@ -10,9 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Read alignment coverage in independent workers controlled by `--cores`, passing only fragment
   metadata and returning statistics instead of transferring depth arrays. Preserve
-  coverage calculations and ordering while bounding queued work. Warn about
-  memory use above four readers; memory and worker failures stop the run
-  instead of substituting zero coverage.
+  coverage calculations and ordering while bounding queued work. Memory and worker
+  failures stop the run instead of substituting zero coverage.
 - Use existing cosine-similarity edge weights in Leiden clustering. Existing
   bins are reused as before: use a fresh output directory or `--force` to recluster.
 - Default to a 1,000 bp minimum contig and training-fragment length with exactly

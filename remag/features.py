@@ -1217,13 +1217,6 @@ def calculate_fragment_coverage(
 
         if contig_fragments:
             readers = min(cores, len(contig_fragments), coverage_batch_size)
-            if readers > 4:
-                logger.warning(
-                    f"Coverage will use {readers} alignment readers (--cores). "
-                    "Each reader uses additional memory, especially for CRAM. "
-                    "If memory is limited, rerun with fewer --cores "
-                    "(for example, --cores 4 or --cores 2)."
-                )
             tasks = (
                 (name, records, bam_lengths[name])
                 for name, records in contig_fragments.items()
