@@ -7,7 +7,8 @@ import pandas as pd
 import pytest
 
 
-def test_filtering_receives_save_filtered_contigs_flag(tmp_path):
+@pytest.mark.parametrize("graph_minimum", [1000, 3000])
+def test_filtering_receives_save_filtered_contigs_flag(tmp_path, graph_minimum):
     """Core forwards the save-filtered-contigs request to filtering."""
     from remag.core import main
 
@@ -16,6 +17,7 @@ def test_filtering_receives_save_filtered_contigs_flag(tmp_path):
         verbose=False,
         fasta=str(tmp_path / "contigs.fasta"),
         min_contig_length=1000,
+        graph_min_contig_length=graph_minimum,
         hyenadna_batch_size=256,
         save_filtered_contigs=True,
         skip_bacterial_filter=False,
@@ -23,10 +25,18 @@ def test_filtering_receives_save_filtered_contigs_flag(tmp_path):
         keep_intermediate=False,
     )
 
-    with patch(
-        "remag.core.filter_bacterial_contigs", return_value=args.fasta
-    ) as mock_filter:
+    with (
+        patch(
+            "remag.core.filter_bacterial_contigs", return_value=args.fasta
+        ) as mock_filter,
+        patch("remag.core.get_features") as features,
+        patch("remag.core.cluster_contigs") as cluster,
+        patch("remag.core.rescue_fragmented_bins") as rescue,
+    ):
         main(args)
+        features.assert_not_called()
+        cluster.assert_not_called()
+        rescue.assert_not_called()
 
     mock_filter.assert_called_once_with(
         args.fasta,

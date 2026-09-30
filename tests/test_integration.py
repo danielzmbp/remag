@@ -43,16 +43,17 @@ class TestClusteringIntegration:
         vectors /= np.linalg.norm(vectors, axis=1, keepdims=True)
         embeddings = pd.DataFrame(vectors, index=[f"c{i}" for i in range(20)])
 
-        result = cluster_contigs(embeddings, {}, {}, args)
+        fragments = {c: {"sequence": "A" * 1000} for c in embeddings.index}
+        result = cluster_contigs(embeddings, fragments, {}, args)
 
         stats = json.loads((tmp_path / "knn_graph_stats.json").read_text())
         assert stats["k"] == expected_k
         assert stats["similarity_threshold"] == expected_threshold
         assert stats["n_vertices"] == len(embeddings)
         assert result["contig"].tolist() == list(embeddings.index)
-        saved = pd.read_csv(tmp_path / "bins.csv")
-        expected = result[result["cluster"] != "noise"].reset_index(drop=True)
-        pd.testing.assert_frame_equal(saved, expected)
+        saved = pd.read_csv(tmp_path / "pre_rescue.csv")
+        pd.testing.assert_frame_equal(saved, result)
+        assert not (tmp_path / "bins.csv").exists()
 
     def test_end_to_end_clustering_pipeline(
         self, sample_embeddings_df, sample_fragments_dict, mock_args, temp_dir
@@ -161,17 +162,11 @@ class TestGraphCaching:
 
         embeddings = sample_embeddings_df.values
 
-        # Different parameters should create different graphs
-        graph1 = _construct_knn_graph(
-            embeddings, k=5, similarity_threshold=0.1, args=mock_args
-        )
-        graph2 = _construct_knn_graph(
-            embeddings, k=10, similarity_threshold=0.2, args=mock_args
-        )
-
-        # Should not crash and should handle parameter differences
-        assert graph1.vcount() == graph2.vcount()  # Same input size
-        # But internal structure might differ
+        _construct_knn_graph(embeddings, k=5, similarity_threshold=0.1, args=mock_args)
+        with pytest.raises(ValueError, match="new output directory.*--force"):
+            _construct_knn_graph(
+                embeddings, k=10, similarity_threshold=0.2, args=mock_args
+            )
 
 
 class TestErrorRecovery:
@@ -216,16 +211,8 @@ class TestErrorRecovery:
 
         from remag.clustering import cluster_contigs
 
-        # Should handle mismatch gracefully
-        try:
-            result = cluster_contigs(
-                sample_embeddings_df, mismatched_fragments, {}, mock_args
-            )
-            assert isinstance(result, pd.DataFrame)
-            # Should still produce some clustering result
-        except (KeyError, ValueError) as e:
-            # Or should provide clear error about mismatch
-            assert "mismatch" in str(e).lower() or "not found" in str(e).lower()
+        with pytest.raises(ValueError, match="exactly match sequence identifiers"):
+            cluster_contigs(sample_embeddings_df, mismatched_fragments, {}, mock_args)
 
 
 class TestPerformanceBaseline:

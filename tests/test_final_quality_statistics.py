@@ -86,7 +86,7 @@ def test_quality_statistics_match_final_saved_bins(tmp_path, scenario):
     saved = pd.read_csv(output / "bins.csv")
     if scenario == "below_size":
         expected_members = set()
-    elif scenario in {"skip_rescue", "no_hits"}:
+    elif scenario == "skip_rescue":
         expected_members = {"large"}
     else:
         expected_members = {"small", "large", "unbinned"}

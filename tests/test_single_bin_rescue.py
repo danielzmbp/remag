@@ -66,7 +66,6 @@ def test_one_bin_rescue_preserves_similarity_and_gene_limits(
     "scenario",
     [
         "no-bins",
-        "no-gene-mappings",
         "missing-bin-embedding",
         "missing-noise-embedding",
         "no-noise",
@@ -76,14 +75,13 @@ def test_one_bin_rescue_handles_missing_inputs(rescue_input, scenario):
     clusters, embeddings, fragments, args = rescue_input
     if scenario == "no-bins":
         clusters["cluster"] = "noise"
-    elif scenario == "no-gene-mappings":
-        args._gene_mappings_cache = {}
     elif scenario == "missing-bin-embedding":
         embeddings = embeddings.drop(index="anchor")
     elif scenario == "missing-noise-embedding":
         embeddings = embeddings.drop(index="candidate")
     elif scenario == "no-noise":
         clusters = clusters.iloc[:1].copy()
+        embeddings = embeddings.loc[["anchor"]]
     expected = clusters.copy(deep=True)
 
     actual = rescue_fragmented_bins(clusters, embeddings, fragments, args)

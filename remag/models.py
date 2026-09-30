@@ -899,7 +899,13 @@ def generate_embeddings(model, features_df, args):
     # Check if embeddings file already exists
     if os.path.exists(embeddings_path):
         logger.info(f"Loading existing embeddings from {embeddings_path}")
-        return pd.read_csv(embeddings_path, index_col=0)
+        return pd.read_csv(
+            embeddings_path,
+            index_col=0,
+            dtype={0: str},
+            keep_default_na=False,
+            float_precision="round_trip",
+        )
 
     device = get_torch_device()
     logger.debug(f"Using device: {device}")
@@ -953,7 +959,8 @@ def generate_embeddings(model, features_df, args):
     embeddings_df = pd.DataFrame.from_dict(embeddings, orient="index")
 
     # Always save embeddings for downstream analysis and visualization
-    embeddings_df.to_csv(embeddings_path)
+    # Preserve the exact generated values so cache identities survive CSV reloads.
+    embeddings_df.astype(np.float64).to_csv(embeddings_path, float_format="%.17g")
     logger.info(f"Embeddings saved to {embeddings_path}")
 
     # Save encoder embeddings if requested (with -k flag)

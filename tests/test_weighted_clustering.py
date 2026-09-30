@@ -21,7 +21,7 @@ def test_similar_pairs_stay_separate_across_greedy_iterations(
     args = SimpleNamespace(output=str(tmp_path), keep_intermediate=cached)
     if cached:
         graph = _construct_knn_graph(
-            embeddings, k=5, similarity_threshold=0.0, args=args
+            embeddings, k=5, similarity_threshold=0.0, args=args, contig_names=names
         )
         assert graph.ecount() == 30
 

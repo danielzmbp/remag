@@ -110,6 +110,8 @@ def test_cluster_contigs_preserves_clean_embedding_ids(tmp_path):
     )
 
     with patch("remag.clustering._greedy_leiden_clustering", return_value=[0]):
-        clusters_df = cluster_contigs(embeddings_df, {}, {}, args)
+        clusters_df = cluster_contigs(
+            embeddings_df, {header: {"sequence": "A" * 1000}}, {}, args
+        )
 
     assert clusters_df.loc[0, "contig"] == header

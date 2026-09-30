@@ -2,7 +2,7 @@
 
 import os
 import tempfile
-from unittest.mock import Mock
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -20,11 +20,13 @@ def temp_dir():
 @pytest.fixture
 def mock_args(temp_dir):
     """Create mock arguments object for testing."""
-    args = Mock()
+    args = SimpleNamespace()
     args.cores = 4
     args.verbose = True
     args.output = temp_dir  # Use actual temp directory
     args.min_bin_size = 100000
+    args.min_contig_length = 1
+    args.graph_min_contig_length = 1
     args.batch_size = 32
     args.embedding_dim = 64
     args.epochs = 2
@@ -99,12 +101,12 @@ def sample_embeddings_df():
 def sample_fragments_dict():
     """Create sample fragments dictionary for testing."""
     fragments = {}
-    for i in range(10):
+    for i in range(15):
         # Create sequences of different lengths
         seq_length = np.random.randint(1000, 5000)
         sequence = "".join(np.random.choice(["A", "T", "G", "C"], size=seq_length))
 
-        fragments[f"contig_{i}.original"] = {"sequence": sequence, "length": seq_length}
+        fragments[f"contig_{i}"] = {"sequence": sequence, "length": seq_length}
 
     return fragments
 

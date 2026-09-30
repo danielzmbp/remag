@@ -159,7 +159,7 @@ remag contigs.fasta -o output_directory
 
 ### Reusing or replacing results
 
-REMAG reuses available results when their recorded minimum contig length matches the current run. When compatible outputs are found, it prints:
+REMAG reuses compatible intermediate results. Clustering reuse requires matching admission and graph cutoffs, clustering/rescue settings, ordered embeddings, sequences and marker mappings. It restarts rescue from saved pre-rescue assignments. Older binning outputs without this provenance require a new output directory or `--force`. When compatible outputs are found, it prints:
 
 ```text
 Existing REMAG results found. Reusing available outputs. Use --force to recompute.
@@ -231,11 +231,20 @@ BAM/CRAM coverage uses `--cores` readers and processes one alignment file at a t
 - `--filter-only`: stop after eukaryotic filtering and write filtered FASTA output
 - `--save-filtered-contigs`: also write classified contigs rejected by the eukaryotic filter
 - `--skip-bacterial-filter`: disable the HyenaDNA filter
-- `--min-bin-size`: minimum bin size written to FASTA; defaults to 500,000 bp
+- `--graph-min-contig-length`: minimum length entering the Leiden graph; defaults to the effective `--min-contig-length`
+- `--min-bin-size`: minimum bin size written to FASTA after rescue; defaults to 500,000 bp
 
 Use `remag -h` for a quick reference and `remag --help` for the full CLI, including training, clustering, filtering, and rescue options.
 
 REMAG defaults to a minimum contig and training-fragment length of 1,000 bp when exactly one coverage file is supplied. With multiple coverage files or no coverage, it chooses from the input assembly before HyenaDNA filtering: among contigs at least 1,000 bp long, a median below 2,500 bp selects 1,000 bp; a median of 2,500 bp or higher selects 4,096 bp. Use `--min-contig-length` to override this choice. The measured median and chosen minimum are logged, and effective settings are always saved in `params.json`. Reusing outputs requires the same recorded minimum; if it differs or older outputs lack that information, use `--force` or a new output directory.
+
+To admit contigs from 1 kb while restricting the initial graph to contigs from 3 kb, use:
+
+```bash
+remag contigs.fasta -c sample1.bam -c sample2.bam --min-contig-length 1000 --graph-min-contig-length 3000
+```
+
+All admitted contigs share the same embedding space. The graph cutoff must be at least the admission cutoff; it does not change filtering or training-fragment length. After fragmented bins are merged, unassigned graph contigs and admitted shorter contigs are recruited together in embedding row order. The default graph cutoff follows the effective admission cutoff, preserving the existing single-sample settings. `--skip-rescue` skips both merging and recruitment.
 
 The k-NN graph uses 15 neighbors, and HyenaDNA filtering is enabled. Use `--leiden-k-neighbors` and `--skip-bacterial-filter` to adjust these settings. Multiple coverage files lower the default base learning rate from `0.005` to `0.0005`; an explicitly supplied learning rate is preserved.
 
@@ -247,21 +256,26 @@ REMAG recovers eukaryotic bins with a multi-stage pipeline:
 2. **Feature extraction**: REMAG combines 4-mer composition with optional multi-sample coverage data. Contigs are augmented into fragments for training when their lengths permit; contigs longer than 50 kb receive augmentations from each half.
 3. **Contrastive learning**: A Siamese network trained with Barlow Twins learns embeddings that place fragments from the same contig close together.
 4. **Core gene annotation**: `miniprot` maps eukaryotic single-copy core genes to support clustering and quality checks. Multiple non-overlapping matches to a marker family within a contig are reported as separate copies; clustering and rescue still count that family once per contig.
-5. **Greedy clustering and rescue**: REMAG applies greedy Leiden clustering using cosine-similarity edge weights across multiple resolutions, then merges or rescues bins when single-copy gene checks support it.
+5. **Greedy clustering and rescue**: REMAG applies greedy Leiden clustering using cosine-similarity edge weights across multiple resolutions, merges fragmented bins, then recruits all eligible unassigned contigs in one pass. Bins below the minimum size remain available as seeds until the final size filter.
+
+Rescue uses length-weighted centroids and a cosine similarity threshold of 0.70. Centroids stay fixed during merging and are recomputed once before recruitment. Each candidate tries its nearest bin only. With the default marker limits, a marker-bearing candidate must leave at most 5% duplicated marker families and increase duplication by strictly less than 5 percentage points. Counts update after each accepted contig; marker-free candidates have no marker veto. A whole-bin merge has one additional allowance: at similarity of at least 0.95, a target already above the duplication ceiling may accept a merge that does not worsen its duplication. This allowance does not apply to individual-contig recruitment. `--rescue-max-total-duplication` controls the ceiling (capped at 10% for whole-bin merges), and `--rescue-max-duplication-increase` controls the strict increase limit.
 
 ## Output
 
-All runs retain `params.json` with the effective settings, including the selected minimum length. Matching reruns preserve the original record.
+All runs retain `params.json` with the effective settings, including admission and graph cutoffs and the rescue settings. Matching reruns preserve the original record.
 
 ### Binning outputs
 
 - `bins/`: FASTA files for bins meeting `--min-bin-size`
 - `bins.csv`: Final assignments for contigs in saved bins; excludes noise and bins below the minimum size
+- `pre_rescue.csv`: Initial assignments for all admitted contigs; shorter contigs outside the graph are initially noise
+- `rescue_assignments.csv`: Assignments before the final size filter, including noise and small bins, with an `exported` flag
+- `clustering_provenance.json`: Clustering/rescue settings and input fingerprints used to check cache compatibility
 - `embeddings.csv`: Embeddings for original contigs, including those that do not enter a saved bin
 - `fragments.pkl`: Fragment sequences and coordinates used by the pipeline; currently written even without `-k`
 - `remag.log`: Detailed log file
 - `gene_contig_mappings.json`: Cached gene mappings and positions; older caches without positions are regenerated when annotations are loaded
-- `core_gene_duplication_results.json`: Core gene duplication analysis for the final saved bins, after rescue and minimum-size filtering Includes `within_contig_duplications`, identifying marker families with multiple locations on the same contig.
+- `core_gene_duplication_results.json`: Core gene duplication analysis for the final saved bins, after rescue and minimum-size filtering. Includes `within_contig_duplications`, identifying marker families with multiple locations on the same contig.
 
 Binning stops with an error if required gene annotation fails. A successful search with no accepted matches still reports zero detected genes.
 
@@ -272,6 +286,7 @@ Binning stops with an error if required gene annotation fails. A successful sear
 - `coverage_embeddings.csv`: Coverage encoder embeddings, when coverage features are present (before fusion)
 - `features.csv`: Extracted k-mer and coverage features
 - `knn_graph_edges.csv`: k-NN graph edge list used for Leiden clustering
+- `knn_graph_contigs.csv`: Ordered graph contig IDs; edge indices refer to these rows, which may be a subset of `embeddings.csv`
 - `knn_graph_stats.json`: k-NN graph construction statistics
 - `temp_gene_mapping/`: Miniprot files used to generate gene mappings
 - `temp_miniprot/`: Per-bin miniprot files, when the fallback duplication-check path runs

@@ -7,13 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Add `--graph-min-contig-length` to separate graph membership from admission
+  and training. Its default follows the effective admission cutoff; existing
+  automatic and single-sample minimum-length settings remain unchanged.
+- Retain pre-rescue assignments, complete rescue assignments with export status,
+  graph vertex IDs, and clustering/rescue provenance for reproducible reuse.
+
 ### Changed
+- Merge fragmented bins, then recruit eligible unassigned graph and shorter
+  contigs together in embedding order, followed by one final bin-size filter.
+  Preserve fixed centroids and the tested cumulative marker safeguards.
+- Reject incompatible or legacy binning caches instead of silently returning
+  previous final bins. Save embedding values losslessly for exact cache reuse.
 - Read alignment coverage in independent workers controlled by `--cores`, passing only fragment
   metadata and returning statistics instead of transferring depth arrays. Preserve
   coverage calculations and ordering while bounding queued work. Memory and worker
   failures stop the run instead of substituting zero coverage.
-- Use existing cosine-similarity edge weights in Leiden clustering. Existing
-  bins are reused as before: use a fresh output directory or `--force` to recluster.
+- Use existing cosine-similarity edge weights in Leiden clustering.
 - Default to a 1,000 bp minimum contig and training-fragment length with exactly
   one coverage file. Multiple coverage files and runs without coverage retain
   the assembly-median rule; explicit `--min-contig-length` still takes precedence.

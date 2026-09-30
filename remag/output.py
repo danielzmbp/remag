@@ -2,17 +2,23 @@
 Output module for REMAG
 """
 
+import hashlib
 import json
 import os
 import shutil
 from pathlib import Path
 
+import numpy as np
 from loguru import logger
 
 from .utils import ContigHeaderMapper, _write_fasta_record
 
 REMAG_OUTPUT_PATTERNS = (
     "bins.csv",
+    "pre_rescue.csv",
+    "rescue_assignments.csv",
+    "clustering_provenance.json",
+    "knn_graph_contigs.csv",
     "embeddings.csv",
     "siamese_model.pt",
     "kmer_embeddings.csv",
@@ -114,6 +120,105 @@ def validate_cached_min_contig_length(output_dir, min_contig_length):
         )
 
 
+def binning_settings(args):
+    """Effective settings governing core clustering, unified rescue and export."""
+    from .rescue import RESCUE_ALGORITHM
+
+    minimum = getattr(args, "min_contig_length", 1)
+    return {
+        "admission_min_contig_length": minimum,
+        "graph_min_contig_length": getattr(args, "graph_min_contig_length", None)
+        or minimum,
+        "rescue_algorithm": RESCUE_ALGORITHM,
+        "skip_rescue": getattr(args, "skip_rescue", False),
+        "similarity_threshold": 0.70,
+        "max_duplication_increase": getattr(
+            args, "rescue_max_duplication_increase", 5.0
+        ),
+        "max_total_duplication": getattr(args, "rescue_max_total_duplication", 5.0),
+        "merge_duplication_ceiling": 10.0,
+        "nonworsening_merge_similarity": 0.95,
+        "candidate_order": "shared embedding row order",
+        "centroid_policy": "fixed during merging; recomputed once before recruitment",
+        "min_bin_size": getattr(args, "min_bin_size", 500000),
+        "greedy_resolutions": getattr(args, "greedy_resolutions", [0.5, 1.0, 2.0, 5.0]),
+        "greedy_max_contamination": getattr(args, "greedy_max_contamination", 0.10),
+        "leiden_k_neighbors": getattr(args, "leiden_k_neighbors", 15),
+        "leiden_similarity_threshold": getattr(
+            args, "leiden_similarity_threshold", 0.1
+        ),
+        "leiden_seed": 42,
+        "leiden_weights": "weight",
+        "skip_bacterial_filter": getattr(args, "skip_bacterial_filter", False),
+    }
+
+
+def incompatible_cache(detail):
+    return ValueError(
+        f"Existing clustering outputs are incompatible: {detail}. "
+        "Choose a new output directory to preserve them, or use --force to recompute."
+    )
+
+
+def validate_cached_binning_settings(args):
+    """Reject legacy or incompatible binning before opening logs or other outputs."""
+    root = Path(args.output)
+    binning_files = (
+        "bins.csv",
+        "pre_rescue.csv",
+        "clustering_provenance.json",
+        "rescue_assignments.csv",
+        "knn_graph_edges.csv",
+        "knn_graph_stats.json",
+    )
+    if not any((root / p).exists() for p in binning_files) and not list(
+        root.glob("bins/bin_*.fa")
+    ):
+        return
+    try:
+        previous = json.loads((root / "clustering_provenance.json").read_text())
+    except (OSError, ValueError) as error:
+        raise incompatible_cache("missing unified-rescue provenance") from error
+    if previous.get("settings") != binning_settings(args):
+        raise incompatible_cache("graph cutoff or clustering/rescue settings changed")
+
+
+def file_sha256(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def embedding_identity(values, contig_names):
+    """Fingerprint ordered IDs and exact values, independent of float32/64 storage."""
+    digest = hashlib.sha256(json.dumps(list(contig_names)).encode())
+    digest.update(str(values.shape).encode())
+    # Avoid copying the entire embedding matrix just to check cache compatibility.
+    for start in range(0, len(values), 4096):
+        digest.update(np.ascontiguousarray(values[start : start + 4096], dtype="<f8"))
+    return digest.hexdigest()
+
+
+def clustering_identity(embeddings, fragments, genes, args):
+    sequences = hashlib.sha256()
+    for contig in embeddings.index:
+        sequences.update(
+            contig.encode() + b"\0" + fragments[contig]["sequence"].encode() + b"\0"
+        )
+    return {
+        "settings": binning_settings(args),
+        "ordered_embeddings_sha256": embedding_identity(
+            embeddings.values, embeddings.index
+        ),
+        "sequences_sha256": sequences.hexdigest(),
+        "gene_mappings_sha256": hashlib.sha256(
+            json.dumps(genes, sort_keys=True).encode()
+        ).hexdigest(),
+    }
+
+
 def save_clusters_as_fasta(clusters_df, fragments_dict, args):
     """
     Write cluster bins as FASTA files under the `<output>/bins` directory.
@@ -138,9 +243,11 @@ def save_clusters_as_fasta(clusters_df, fragments_dict, args):
     cluster_contig_dict = (
         clusters_df.groupby("cluster")["contig"]
         .apply(
-            lambda contigs: {
-                mapper.get_header(c) for c in contigs if mapper.get_header(c)
-            }
+            lambda contigs: list(
+                dict.fromkeys(
+                    mapper.get_header(c) for c in contigs if mapper.get_header(c)
+                )
+            )
         )
         .to_dict()
     )

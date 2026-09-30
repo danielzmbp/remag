@@ -176,6 +176,7 @@ click.rich_click.OPTION_GROUPS = {
             "name": "Filtering & Processing",
             "options": [
                 "--min-contig-length",
+                "--graph-min-contig-length",
                 "--min-bin-size",
                 "--coverage-batch-size",
                 "--hyenadna-batch-size",
@@ -389,6 +390,14 @@ def validate_coverage_options(ctx, param, value):
     "User-specified values override auto-detection.",
 )
 @click.option(
+    "--graph-min-contig-length",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Minimum contig length for the initial graph. Defaults to the effective "
+    "--min-contig-length and must be at least that value. Shorter admitted contigs "
+    "remain available for rescue. Does not change training-fragment lengths.",
+)
+@click.option(
     "--max-positive-pairs",
     type=int,
     default=5000000,
@@ -424,14 +433,14 @@ def validate_coverage_options(ctx, param, value):
 @click.option(
     "--skip-rescue",
     is_flag=True,
-    help="Skip bin rescue (merging fragmented bins).",
+    help="Skip fragmented-bin merging and recruitment of unassigned contigs.",
 )
 @click.option(
     "--rescue-max-duplication-increase",
     type=float,
     default=5.0,
     show_default=True,
-    help="Maximum allowed increase in duplication percentage when merging bins during rescue (e.g. 5.0 allows 0% -> 5%).",
+    help="Strict upper limit on the increase in marker duplication during rescue, in percentage points (exactly +5 is rejected at 5.0).",
 )
 @click.option(
     "--rescue-max-total-duplication",
@@ -439,8 +448,9 @@ def validate_coverage_options(ctx, param, value):
     default=5.0,
     show_default=True,
     help=(
-        "Maximum allowed TOTAL duplication percentage after merging bins during "
-        "rescue (hard-capped at 10% for bin-to-bin merges)."
+        "Maximum final marker duplication percentage for recruitment. Whole-bin merges "
+        "use a ceiling of min(value, 10), with a non-worsening exception for targets "
+        "already above the ceiling at cosine similarity >=0.95."
     ),
 )
 @click.option(
@@ -516,6 +526,7 @@ def main_cli(
     barlow_lambda,
     random_seed,
     min_contig_length,
+    graph_min_contig_length,
     max_positive_pairs,
     threads,
     min_bin_size,
@@ -626,6 +637,13 @@ def main_cli(
         except (OSError, ValueError) as e:
             raise click.ClickException(str(e)) from e
 
+    graph_min_contig_length = graph_min_contig_length or min_contig_length
+    if graph_min_contig_length < min_contig_length:
+        raise click.BadParameter(
+            "Must be at least --min-contig-length.",
+            param_hint="--graph-min-contig-length",
+        )
+
     args = argparse.Namespace(
         fasta=fasta_path,
         bam=bam_cram_files if bam_cram_files else None,
@@ -638,6 +656,7 @@ def main_cli(
         barlow_lambda=barlow_lambda,
         random_seed=random_seed,
         min_contig_length=min_contig_length,
+        graph_min_contig_length=graph_min_contig_length,
         contig_length_median=contig_length_median,
         max_positive_pairs=max_positive_pairs,
         cores=threads,

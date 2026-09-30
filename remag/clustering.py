@@ -12,6 +12,15 @@ import pandas as pd
 from loguru import logger
 from sklearn.neighbors import NearestNeighbors
 
+from .output import (
+    clustering_identity,
+    embedding_identity,
+    file_sha256,
+    incompatible_cache,
+    validate_cached_binning_settings,
+)
+from .utils import contig_lengths_for_embeddings
+
 
 def _calculate_bin_quality(contig_names, gene_mappings):
     """
@@ -115,6 +124,7 @@ def _greedy_leiden_clustering(
     # 1. Construct initial graph
     graph = _construct_knn_graph(
         embeddings,
+        contig_names=contig_names,
         k=k,
         similarity_threshold=similarity_threshold,
         n_jobs=n_jobs,
@@ -246,7 +256,7 @@ def _greedy_leiden_clustering(
 
 
 def _construct_knn_graph(
-    embeddings, k=15, similarity_threshold=0.1, n_jobs=1, args=None
+    embeddings, k=15, similarity_threshold=0.1, n_jobs=1, args=None, contig_names=None
 ):
     """
     Construct a k-NN graph from multidimensional embeddings using cosine similarity.
@@ -281,11 +291,16 @@ def _construct_knn_graph(
             f"Adjusted k from {original_k} to {k} due to limited samples ({n_samples})"
         )
 
+    graph_identity = embedding_identity(
+        embeddings, list(range(n_samples)) if contig_names is None else contig_names
+    )
     # Check if graph already exists and can be loaded
     if args and args.output:
         edge_list_path = os.path.join(args.output, "knn_graph_edges.csv")
         graph_stats_path = os.path.join(args.output, "knn_graph_stats.json")
 
+        if os.path.exists(edge_list_path) != os.path.exists(graph_stats_path):
+            raise incompatible_cache("incomplete graph cache")
         if os.path.exists(edge_list_path) and os.path.exists(graph_stats_path):
             try:
                 # Load graph statistics to verify compatibility
@@ -297,6 +312,8 @@ def _construct_knn_graph(
                     saved_stats.get("n_vertices") == len(embeddings)
                     and saved_stats.get("k") == k
                     and saved_stats.get("similarity_threshold") == similarity_threshold
+                    and saved_stats.get("ordered_embeddings_sha256") == graph_identity
+                    and saved_stats.get("edges_sha256") == file_sha256(edge_list_path)
                 ):
                     logger.info(f"Loading existing k-NN graph from {edge_list_path}")
 
@@ -321,20 +338,13 @@ def _construct_knn_graph(
                         f"Successfully loaded k-NN graph: {g.vcount()} nodes, {g.ecount()} edges"
                     )
                     return g
-                else:
-                    logger.info(
-                        "Existing k-NN graph has different parameters, constructing new graph"
-                    )
-                    logger.debug(
-                        f"Saved: vertices={saved_stats.get('n_vertices')}, k={saved_stats.get('k')}, "
-                        f"threshold={saved_stats.get('similarity_threshold')}"
-                    )
-                    logger.debug(
-                        f"Current: vertices={len(embeddings)}, k={k}, threshold={similarity_threshold}"
-                    )
-            except Exception as e:
-                logger.warning(f"Could not load existing k-NN graph: {e}")
-                logger.info("Constructing new k-NN graph")
+                raise incompatible_cache(
+                    "graph vertices, values, order or parameters changed"
+                )
+            except (OSError, ValueError, KeyError) as error:
+                raise incompatible_cache(
+                    "graph cache is missing, changed or unreadable"
+                ) from error
 
     logger.info(
         f"Constructing k-NN graph from {len(embeddings)} embeddings (k={k}, n_jobs={n_jobs})"
@@ -393,7 +403,9 @@ def _construct_knn_graph(
         # Save as edge list with weights
         edge_list_path = os.path.join(args.output, "knn_graph_edges.csv")
         with open(edge_list_path, "w") as f:
-            f.write("# Node IDs correspond to row indices in embeddings.csv\n")
+            f.write(
+                "# Node IDs correspond to row indices in knn_graph_contigs.csv (the graph subset)\n"
+            )
             f.write("source,target,weight\n")
             for edge in g.es:
                 source = edge.source
@@ -404,6 +416,8 @@ def _construct_knn_graph(
 
         # Also save graph statistics
         graph_stats = {
+            "ordered_embeddings_sha256": graph_identity,
+            "edges_sha256": file_sha256(edge_list_path),
             "n_vertices": g.vcount(),
             "n_edges": g.ecount(),
             "k": k,
@@ -428,20 +442,44 @@ def cluster_contigs(embeddings_df, fragments_dict, gene_mappings, args):
     # Ensure output directory exists for all code paths
     os.makedirs(args.output, exist_ok=True)
 
-    bins_path = os.path.join(args.output, "bins.csv")
+    lengths = contig_lengths_for_embeddings(embeddings_df, fragments_dict)
+    minimum = getattr(args, "min_contig_length", 1)
+    cutoff = getattr(args, "graph_min_contig_length", None) or minimum
+    if cutoff < minimum:
+        raise ValueError("Graph minimum must be at least the admission minimum.")
+    admitted = [c for c in embeddings_df.index if lengths[c] >= minimum]
+    embeddings_df = embeddings_df.loc[admitted]
+    identity = clustering_identity(embeddings_df, fragments_dict, gene_mappings, args)
+    pre_path = os.path.join(args.output, "pre_rescue.csv")
+    metadata_path = os.path.join(args.output, "clustering_provenance.json")
+    validate_cached_binning_settings(args)
+    if os.path.exists(pre_path):
+        with open(metadata_path) as handle:
+            saved = json.load(handle)
+        if any(saved.get(k) != v for k, v in identity.items()) or saved.get(
+            "pre_rescue_sha256"
+        ) != file_sha256(pre_path):
+            raise incompatible_cache(
+                "candidate population/order, embeddings, sequences or markers changed"
+            )
+        clusters = pd.read_csv(
+            pre_path, dtype={"contig": str, "cluster": str}, keep_default_na=False
+        )
+        if clusters["contig"].tolist() != admitted or clusters["cluster"].isna().any():
+            raise incompatible_cache("invalid pre-rescue assignments")
+        logger.info(
+            "Loading compatible pre-rescue assignments; unified rescue will run again."
+        )
+        return clusters
+    if os.path.exists(metadata_path) or os.path.exists(
+        os.path.join(args.output, "bins.csv")
+    ):
+        raise incompatible_cache("missing pre-rescue assignments")
 
-    # Check if bins file already exists
-    if os.path.exists(bins_path):
-        logger.info(f"Loading existing bins from {bins_path}")
-        return pd.read_csv(bins_path)
-
-    # Embeddings are already L2 normalized when saved to CSV
-    logger.debug("Using pre-normalized embeddings for clustering...")
-    norm_data = embeddings_df.values
-
-    # Get contig names correctly
-    contig_names = list(embeddings_df.index)
-
+    # Only the graph core enters Leiden; all admitted embeddings share one model.
+    contig_names = [c for c in admitted if lengths[c] >= cutoff]
+    core_embeddings = embeddings_df.loc[contig_names]
+    norm_data = core_embeddings.values
     # Log essential data properties
     logger.info(
         f"Clustering {len(contig_names)} contigs with {embeddings_df.shape[1]}D embeddings"
@@ -471,15 +509,14 @@ def cluster_contigs(embeddings_df, fragments_dict, gene_mappings, args):
         f"bin_{label}" if label != -1 else "noise" for label in cluster_labels
     ]
 
-    # Embedding indices are already cleaned to original contig names by generate_embeddings.
-    final_original_contig_names = list(embeddings_df.index)
+    labels = dict(zip(contig_names, formatted_labels))
     contig_clusters_df = pd.DataFrame(
-        {"contig": final_original_contig_names, "cluster": formatted_labels}
+        {
+            "contig": admitted,
+            "cluster": [labels.get(c, "noise") for c in admitted],
+        }
     )
-
-    # Use contig-level clusters directly
     clusters_df = contig_clusters_df
-
     # Count and report final results
     final_counts = contig_clusters_df["cluster"].value_counts().to_dict()
     n_noise = final_counts.get("noise", 0)
@@ -495,18 +532,14 @@ def cluster_contigs(embeddings_df, fragments_dict, gene_mappings, args):
         f"sizes: {dict(sorted(filtered_counts.items()))}"
     )
 
-    # Filter out noise contigs for final bins.csv
-    final_bins_df = contig_clusters_df[contig_clusters_df["cluster"] != "noise"].copy()
-
-    # Save final bins (excluding noise) - keep only first two columns
-    final_bins_df = final_bins_df[["contig", "cluster"]]
-    final_bins_df.to_csv(bins_path, index=False)
-
-    # Note about visualization (embeddings.csv is always saved)
-    logger.info(
-        "Embeddings saved to embeddings.csv. Use scripts/plot_features.py for UMAP visualization with plotting dependencies."
-    )
-
-    logger.info(f"Saved contig-level clusters to {bins_path}")
-
+    # Keep noise and sub-threshold seeds: the size filter runs only after rescue.
+    clusters_df.to_csv(pre_path, index=False)
+    identity["pre_rescue_sha256"] = file_sha256(pre_path)
+    with open(metadata_path, "w") as handle:
+        json.dump(identity, handle, indent=2)
+    if getattr(args, "keep_intermediate", False):
+        pd.DataFrame({"contig": contig_names}).to_csv(
+            os.path.join(args.output, "knn_graph_contigs.csv"), index=False
+        )
+    logger.info(f"Saved initial assignments to {pre_path}")
     return clusters_df

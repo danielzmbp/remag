@@ -1,18 +1,20 @@
-"""
-Rescue module for REMAG.
-Implements "Satellite Rescue" strategy to merge fragmented bins based on embedding similarity and SCG safety.
-"""
+"""Merge fragmented core bins, then recruit eligible unassigned contigs once."""
 
 import json
 import os
+from collections import Counter
 
 import numpy as np
+import pandas as pd
 from loguru import logger
 from sklearn.metrics.pairwise import cosine_similarity
 
 from .miniprot_utils import get_gene_mappings_cache_path
+from .utils import contig_lengths_for_embeddings
 
+RESCUE_ALGORITHM = "unified-v1"
 MAX_MERGE_DUPLICATION_PERCENT = 10.0
+NONWORSENING_MERGE_SIMILARITY = 0.95
 
 
 def _weighted_centroid(members, embeddings_df, contig_lengths):
@@ -28,25 +30,153 @@ def _weighted_centroid(members, embeddings_df, contig_lengths):
     return np.sum(vecs * weights, axis=0)
 
 
+def _marker_counts(members, gene_mappings):
+    # Count a marker once per contig, regardless of its number of loci there.
+    return Counter(gene for c in members for gene in gene_mappings.get(c, {}))
+
+
+def _duplication(counts):
+    return sum(n > 1 for n in counts.values()) / len(counts) * 100.0 if counts else 0.0
+
+
 def get_bin_scg_stats(bin_contigs, gene_mappings_cache):
-    """Calculate SCG duplication % for a list of contigs."""
-    if not bin_contigs:
-        return 0.0, 0.0
+    """Return marker duplication percentage and distinct marker count."""
+    counts = _marker_counts(bin_contigs, gene_mappings_cache)
+    return _duplication(counts), len(counts)
 
-    bin_genes = {}
-    for c in bin_contigs:
-        if c in gene_mappings_cache:
-            # gene_mappings_cache[c] is a dict of {gene_id: info}
-            for gene_id in gene_mappings_cache[c]:
-                bin_genes[gene_id] = bin_genes.get(gene_id, 0) + 1
 
-    present = len(bin_genes)
-    if present == 0:
-        return 0.0, 0.0
+def _bin_members(clusters):
+    """Preserve first-bin occurrence and member row order, including small bins."""
+    members = {}
+    for contig, cluster in clusters[["contig", "cluster"]].itertuples(
+        index=False, name=None
+    ):
+        if cluster != "noise":
+            members.setdefault(cluster, []).append(contig)
+    return members
 
-    duplicated = len([c for c in bin_genes.values() if c > 1])
-    duplication_rate = (duplicated / present) * 100.0
-    return duplication_rate, present
+
+def _merge_fragmented_bins(
+    clusters,
+    embeddings,
+    lengths,
+    genes,
+    similarity_threshold,
+    max_duplication_increase,
+    max_total_duplication,
+):
+    """One stable smallest-first merge pass with fixed original centroids."""
+    clusters = clusters.copy()
+    members = _bin_members(clusters)
+    centers = {}
+    for name, contigs in members.items():
+        available = [c for c in contigs if c in embeddings.index]
+        if available:
+            centers[name] = _weighted_centroid(available, embeddings, lengths)
+    sizes = {b: sum(lengths[c] for c in members[b]) for b in centers}
+    order = sorted(centers, key=sizes.get)  # Stable; no alphabetical tie-break.
+    removed = set()
+    cap = min(max_total_duplication, MAX_MERGE_DUPLICATION_PERCENT)
+    for source in order:
+        if source in removed:
+            continue
+        target, score = None, -1.0
+        for candidate in order:
+            if (
+                candidate == source
+                or candidate in removed
+                or sizes[candidate] < sizes[source]
+            ):
+                continue
+            sim = cosine_similarity(
+                centers[source].reshape(1, -1), centers[candidate].reshape(1, -1)
+            )[0, 0]
+            if sim > score:
+                target, score = candidate, sim
+        if target is None or score < similarity_threshold:
+            continue
+        before, _ = get_bin_scg_stats(members[target], genes)
+        after, _ = get_bin_scg_stats(members[target] + members[source], genes)
+        nonworsening = (
+            before > cap and after <= before and score >= NONWORSENING_MERGE_SIMILARITY
+        )
+        if after - before < max_duplication_increase and (after <= cap or nonworsening):
+            logger.debug(
+                f"Merging {source} into {target}: cosine={score:.3f}, duplication={before:.2f}%->{after:.2f}%"
+            )
+            clusters.loc[clusters["cluster"] == source, "cluster"] = target
+            members[target].extend(members[source])
+            sizes[target] += sizes[source]
+            removed.add(source)
+    return clusters
+
+
+def _recruit_contigs(
+    members,
+    candidates,
+    embeddings,
+    genes,
+    lengths,
+    similarity_threshold=0.70,
+    max_duplication_increase=5.0,
+    max_total_duplication=5.0,
+):
+    """Fixed post-merge centers, first-target ties, cumulative marker safeguards."""
+    members = {b: list(contigs) for b, contigs in members.items()}
+    names = [
+        b
+        for b, contigs in members.items()
+        if any(c in embeddings.index for c in contigs)
+    ]
+    if not names or not candidates:
+        return members
+    centers = np.vstack(
+        [
+            _weighted_centroid(
+                [c for c in members[b] if c in embeddings.index], embeddings, lengths
+            )
+            for b in names
+        ]
+    )
+    counts = {b: _marker_counts(members[b], genes) for b in names}
+    # Bound the similarity matrix while preserving the original candidate order.
+    for start in range(0, len(candidates), 4096):
+        part = candidates[start : start + 4096]
+        similarities = cosine_similarity(embeddings.loc[part].values, centers)
+        for i, contig in enumerate(part):
+            scores = similarities[i]
+            best = int(np.argmax(scores))
+            score = float(scores[best])
+            # Match the native pairwise calculation at ties and the cutoff boundary.
+            near_tie = (
+                len(scores) > 1 and np.sort(scores)[-1] - np.sort(scores)[-2] <= 1e-12
+            )
+            if near_tie or abs(score - similarity_threshold) <= 1e-12:
+                scores = [
+                    float(
+                        cosine_similarity(
+                            embeddings.loc[contig].values.reshape(1, -1),
+                            center.reshape(1, -1),
+                        )[0, 0]
+                    )
+                    for center in centers
+                ]
+                best = max(range(len(scores)), key=scores.__getitem__)
+                score = scores[best]
+            if score < similarity_threshold:
+                continue
+            target = names[best]
+            proposed = counts[target].copy()
+            proposed.update(genes.get(contig, {}).keys())
+            before, after = _duplication(counts[target]), _duplication(proposed)
+            if genes.get(contig) and not (
+                after <= max_total_duplication
+                and after - before < max_duplication_increase
+            ):
+                continue  # Do not try a second-best target or the whole-bin exception.
+            members[target].append(contig)
+            counts[target] = proposed
+    return members
 
 
 def rescue_fragmented_bins(
@@ -57,249 +187,70 @@ def rescue_fragmented_bins(
     similarity_threshold=0.70,
     max_duplication_increase=5.0,
     max_total_duplication=5.0,
+    min_contig_length=1,
 ):
+    """Merge core bins and recruit all eligible noise/short contigs in one pass.
+
+    Embeddings must share one trained space and contain only admitted contigs.
+    The final minimum-bin-size filter belongs to export, after this entry point.
+    An explicitly empty marker mapping is valid: marker-free candidates have no
+    marker veto. Missing annotations are not treated as a successful empty map.
     """
-    Attempt to merge smaller bins (or split parts of genomes) into larger "Core Bins"
-    based on global embedding centroid similarity, provided it is safe (SCG check).
-    """
-    logger.info("Running Satellite Rescue to merge fragmented bins...")
-
-    merge_duplication_cap = min(max_total_duplication, MAX_MERGE_DUPLICATION_PERCENT)
-
-    # 1. Load Gene Mappings Cache
-    gene_mappings_cache = getattr(args, "_gene_mappings_cache", None)
-    if gene_mappings_cache is None:
-        cache_path = get_gene_mappings_cache_path(args)
-        if os.path.exists(cache_path):
-            with open(cache_path, "r") as f:
-                gene_mappings_cache = json.load(f)
-
-    if not gene_mappings_cache:
-        logger.warning(
-            "No gene mappings cache found. Skipping rescue step as safety checks require SCGs."
+    lengths = contig_lengths_for_embeddings(embeddings_df, fragments_dict)
+    if (
+        clusters_df["contig"].duplicated().any()
+        or clusters_df[["contig", "cluster"]].isna().any().any()
+    ):
+        raise ValueError(
+            "Rescue assignments contain duplicate or missing contig/cluster IDs."
         )
-        return clusters_df
-
-    # 2. Prepare Data
-    # Calculate contig lengths
-    contig_lengths = {k: len(v["sequence"]) for k, v in fragments_dict.items()}
-
-    # Filter out noise for initial bin list
-    valid_bins_df = clusters_df[clusters_df["cluster"] != "noise"].copy()
-    all_bins = valid_bins_df["cluster"].unique()
-
-    if len(all_bins) == 0:
-        logger.info("No bins. Skipping rescue.")
-        return clusters_df
-
-    # 3. Calculate Centroids for ALL Bins
-    bin_centroids = {}
-    bin_sizes = {}  # in bp
-
-    logger.debug(f"Calculating centroids for {len(all_bins)} bins...")
-
-    for b in all_bins:
-        members = valid_bins_df[valid_bins_df["cluster"] == b]["contig"].values
-        valid_members = [c for c in members if c in embeddings_df.index]
-
-        if not valid_members:
-            continue
-
-        # Calculate size
-        size = sum(contig_lengths.get(c, 0) for c in members)
-        bin_sizes[b] = size
-
-        # Calculate weighted centroid
-        bin_centroids[b] = _weighted_centroid(
-            valid_members, embeddings_df, contig_lengths
-        )
-
-    # Sort bins by size (smallest first) so we merge small into large
-    # Filter out bins that had no valid embeddings (not in bin_centroids)
-    sorted_bins = sorted(bin_centroids.keys(), key=lambda b: bin_sizes[b])
-
-    logger.info(
-        f"Attempting merge on {len(sorted_bins)} bins (Threshold > {similarity_threshold})..."
+    if any(c not in lengths for c in clusters_df["contig"]):
+        raise ValueError("Rescue assignments contain contigs without sequences.")
+    genes = getattr(args, "_gene_mappings_cache", None)
+    if genes is None:
+        path = get_gene_mappings_cache_path(args)
+        if not os.path.exists(path):
+            raise ValueError("Rescue requires completed marker annotations.")
+        with open(path) as handle:
+            genes = json.load(handle)
+    logger.info("Merging fragmented bins and recruiting unassigned contigs...")
+    merged = _merge_fragmented_bins(
+        clusters_df,
+        embeddings_df,
+        lengths,
+        genes,
+        similarity_threshold,
+        max_duplication_increase,
+        max_total_duplication,
     )
-
-    merged_count = 0
-    merged_map = (
-        {}
-    )  # source -> target (for tracking chains if needed, though we do single pass)
-    final_clusters = clusters_df["cluster"].copy()
-
-    # Keep track of "active" bin members to calculate cumulative SCG stats correctly
-    # Initialize with current members
-    bin_members_map = {
-        b: list(valid_bins_df[valid_bins_df["cluster"] == b]["contig"].values)
-        for b in sorted_bins
-    }
-
-    for source_bin in sorted_bins:
-        # If this bin has already been merged into something else, skip it
-        # (Though with smallest-to-largest sort, we usually haven't processed it as a target yet)
-        if source_bin in merged_map:
-            continue
-
-        source_vec = bin_centroids[source_bin].reshape(1, -1)
-
-        best_target = None
-        best_score = -1.0
-
-        # Compare against all LARGER bins
-        for target_bin in sorted_bins:
-            if source_bin == target_bin:
-                continue
-            if target_bin in merged_map:
-                continue  # Don't merge into a bin that's already gone
-
-            # Only merge into strictly larger bins (or equal, tie-break by name) to maintain stability
-            # and ensure flow towards anchors.
-            if bin_sizes[target_bin] < bin_sizes[source_bin]:
-                continue
-
-            target_vec = bin_centroids[target_bin].reshape(1, -1)
-            sim = cosine_similarity(source_vec, target_vec)[0][0]
-
-            if sim > best_score:
-                best_score = sim
-                best_target = target_bin
-
-        if best_target and best_score >= similarity_threshold:
-            # Check SCG Safety
-            source_members = bin_members_map[source_bin]
-            target_members = bin_members_map[best_target]
-
-            current_dup, _ = get_bin_scg_stats(target_members, gene_mappings_cache)
-            # Hypothetical merge
-            new_dup, _ = get_bin_scg_stats(
-                target_members + source_members, gene_mappings_cache
-            )
-
-            if (
-                new_dup - current_dup
-            ) < max_duplication_increase and new_dup <= merge_duplication_cap:
-                # MERGE!
-                logger.info(
-                    f"Merging {source_bin} ({bin_sizes[source_bin]/1e6:.2f}Mb) -> {best_target} ({bin_sizes[best_target]/1e6:.2f}Mb) | Sim: {best_score:.3f} | Dup: {current_dup:.1f}%->{new_dup:.1f}%"
-                )
-
-                # Update final clusters
-                mask = final_clusters == source_bin
-                final_clusters[mask] = best_target
-
-                # Mark as merged
-                merged_map[source_bin] = best_target
-                merged_count += 1
-
-                # Update target bin members map so future merges into this target see the accumulated genes
-                bin_members_map[best_target].extend(source_members)
-
-                # Update size estimate for future iterations?
-                # Yes, technically the target is now bigger.
-                bin_sizes[best_target] += bin_sizes[source_bin]
-
-    if merged_count > 0:
-        logger.info(f"Rescue complete: Merged {merged_count} bins.")
-        # Update dataframe
-        clusters_df["cluster"] = final_clusters
-    else:
-        logger.info("Rescue complete: No safe merges found.")
-
-    # 4. Singleton Rescue
-    # Attempt to assign unbinned "noise" contigs to the best matching bin
-    # Re-calculate valid bins and centroids after the merge step
-
-    # Get current valid bins (excluding noise)
-    current_valid_bins = clusters_df[clusters_df["cluster"] != "noise"][
-        "cluster"
-    ].unique()
-
-    if len(current_valid_bins) == 0:
-        return clusters_df
-
-    logger.info("Running Singleton Rescue for unbinned contigs...")
-
-    # Calculate updated centroids
-    updated_centroids = {}
-    updated_bin_members = {}
-
-    for b in current_valid_bins:
-        members = clusters_df[clusters_df["cluster"] == b]["contig"].values
-        valid_members = [c for c in members if c in embeddings_df.index]
-
-        if not valid_members:
-            continue
-
-        updated_bin_members[b] = list(members)
-
-        # Calculate weighted centroid
-        updated_centroids[b] = _weighted_centroid(
-            valid_members, embeddings_df, contig_lengths
-        )
-
-    # Identify noise contigs
-    noise_contigs = clusters_df[clusters_df["cluster"] == "noise"]["contig"].values
-    valid_noise_contigs = [c for c in noise_contigs if c in embeddings_df.index]
-
-    logger.info(f"Found {len(valid_noise_contigs)} unbinned contigs with embeddings.")
-
-    rescued_singletons = 0
-
-    for contig in valid_noise_contigs:
-        contig_vec = embeddings_df.loc[contig].values.reshape(1, -1)
-
-        best_target = None
-        best_score = -1.0
-
-        # Find best matching bin
-        for target_bin, centroid in updated_centroids.items():
-            target_vec = centroid.reshape(1, -1)
-            sim = cosine_similarity(contig_vec, target_vec)[0][0]
-
-            if sim > best_score:
-                best_score = sim
-                best_target = target_bin
-
-        # Check threshold and safety
-        if best_target and best_score >= similarity_threshold:
-            target_members = updated_bin_members[best_target]
-
-            # SCG Safety Check
-            # Only need to check if this contig has genes that conflict with the bin
-            contig_genes = gene_mappings_cache.get(contig, {}).keys()
-            if not contig_genes:
-                # No core genes -> Safe to add (won't increase duplication count)
-                is_safe = True
-            else:
-                # Check for conflicts
-                current_dup, _ = get_bin_scg_stats(target_members, gene_mappings_cache)
-                new_dup, _ = get_bin_scg_stats(
-                    target_members + [contig], gene_mappings_cache
-                )
-
-                if (
-                    new_dup - current_dup
-                ) < max_duplication_increase and new_dup <= max_total_duplication:
-                    is_safe = True
-                else:
-                    is_safe = False
-
-            if is_safe:
-                # Assign to bin
-                logger.debug(
-                    f"Rescued singleton {contig} -> {best_target} (Sim: {best_score:.3f})"
-                )
-                clusters_df.loc[clusters_df["contig"] == contig, "cluster"] = (
-                    best_target
-                )
-                updated_bin_members[best_target].append(
-                    contig
-                )  # Update local list for subsequent checks
-                rescued_singletons += 1
-
-    logger.info(
-        f"Singleton Rescue complete: Assigned {rescued_singletons} contigs to existing bins."
+    seeds = _bin_members(merged)
+    assigned = {c for contigs in seeds.values() for c in contigs}
+    candidates = [
+        c
+        for c in embeddings_df.index
+        if lengths[c] >= min_contig_length and c not in assigned
+    ]
+    recruited = _recruit_contigs(
+        seeds,
+        candidates,
+        embeddings_df,
+        genes,
+        lengths,
+        similarity_threshold,
+        max_duplication_increase,
+        max_total_duplication,
     )
-
-    return clusters_df
+    labels = {c: b for b, contigs in recruited.items() for c in contigs}
+    # Preserve existing rows and append the short pool for complete noise provenance.
+    present = set(merged["contig"])
+    missing = [c for c in candidates if c not in present]
+    if missing:
+        merged = pd.concat(
+            [merged, pd.DataFrame({"contig": missing, "cluster": "noise"})],
+            ignore_index=True,
+        )
+    merged["cluster"] = [labels.get(c, "noise") for c in merged["contig"]]
+    logger.info(
+        f"Recruited {len(labels) - len(assigned)} of {len(candidates)} eligible unassigned contigs."
+    )
+    return merged

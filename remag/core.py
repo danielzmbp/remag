@@ -18,8 +18,10 @@ from .miniprot_utils import (
 )
 from .models import generate_embeddings, train_siamese_network
 from .output import (
+    binning_settings,
     prepare_output_directory,
     save_clusters_as_fasta,
+    validate_cached_binning_settings,
     validate_cached_min_contig_length,
 )
 from .rescue import rescue_fragmented_bins
@@ -28,9 +30,15 @@ from .utils import setup_logging
 
 def main(args):
     try:
+        if getattr(args, "graph_min_contig_length", None) is None:
+            args.graph_min_contig_length = args.min_contig_length
+        if args.graph_min_contig_length < args.min_contig_length:
+            raise ValueError("Graph minimum must be at least the admission minimum.")
         existing_results = prepare_output_directory(args)
         if existing_results and not getattr(args, "force", False):
             validate_cached_min_contig_length(args.output, args.min_contig_length)
+            if not getattr(args, "filter_only", False):
+                validate_cached_binning_settings(args)
         setup_logging(args.output, verbose=args.verbose)
         os.makedirs(args.output, exist_ok=True)
         if existing_results:
@@ -57,10 +65,16 @@ def main(args):
         f"Minimum contig and training-fragment length: {args.min_contig_length:,} bp."
     )
 
+    logger.info(f"Minimum graph contig length: {args.graph_min_contig_length:,} bp.")
+
     # Keep the original parameters when resuming, including older run versions.
     if not existing_results or getattr(args, "force", False):
         params_path = os.path.join(args.output, "params.json")
-        params = {"version": version("remag"), **vars(args)}
+        params = {
+            "version": version("remag"),
+            **vars(args),
+            "binning": binning_settings(args),
+        }
         with open(params_path, "w", encoding="utf-8") as f:
             json.dump(params, f, indent=4)
         logger.debug(f"Run parameters saved to {params_path}")
@@ -186,7 +200,8 @@ def main(args):
             embeddings_df,
             fragments_dict,
             args,
-            similarity_threshold=0.70,  # Based on our proof of concept
+            similarity_threshold=0.70,
+            min_contig_length=args.min_contig_length,
             max_duplication_increase=getattr(
                 args, "rescue_max_duplication_increase", 5.0
             ),
@@ -207,6 +222,9 @@ def main(args):
     # Filter bins to only include contigs from valid bins (those that meet minimum size)
     logger.info("Filtering bins.csv to match saved bins...")
     filtered_bins_df = final_bins_df[final_bins_df["cluster"].isin(valid_bins)]
+    provenance = clusters_df[["contig", "cluster"]].copy()
+    provenance["exported"] = provenance["cluster"].isin(valid_bins)
+    provenance.to_csv(os.path.join(args.output, "rescue_assignments.csv"), index=False)
     filtered_bins_df.to_csv(bins_csv_path, index=False)
     logger.info(
         f"bins.csv saved with {len(filtered_bins_df)} contigs from {len(valid_bins)} valid bins"

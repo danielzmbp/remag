@@ -183,6 +183,23 @@ class ContigHeaderMapper:
         return self._contig_to_header_map.get(contig_name)
 
 
+def contig_lengths_for_embeddings(embeddings_df, fragments_dict):
+    """Require exact original IDs; never guess between fragment-like aliases."""
+    if not embeddings_df.index.is_unique:
+        raise ValueError("Duplicate contig IDs in embeddings.")
+    if any(
+        not isinstance(c, str) or not c or c.split()[0] != c for c in fragments_dict
+    ):
+        raise ValueError(
+            "Sequence records must use unique, normalized FASTA identifiers."
+        )
+    if any(c not in fragments_dict for c in embeddings_df.index):
+        raise ValueError(
+            "Embedding contig IDs must exactly match sequence identifiers."
+        )
+    return {c: len(data["sequence"]) for c, data in fragments_dict.items()}
+
+
 def initialize_duplication_columns(clusters_df):
     """Initialize core gene duplication columns in clusters DataFrame.
 
