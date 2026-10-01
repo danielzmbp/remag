@@ -899,13 +899,14 @@ def generate_embeddings(model, features_df, args):
     # Check if embeddings file already exists
     if os.path.exists(embeddings_path):
         logger.info(f"Loading existing embeddings from {embeddings_path}")
-        return pd.read_csv(
+        # Read IDs as a column first: pandas 2.x can infer integers for a CSV index.
+        cached = pd.read_csv(
             embeddings_path,
-            index_col=0,
             dtype={0: str},
             keep_default_na=False,
             float_precision="round_trip",
         )
+        return cached.set_index(cached.columns[0]).rename_axis(None)
 
     device = get_torch_device()
     logger.debug(f"Using device: {device}")
