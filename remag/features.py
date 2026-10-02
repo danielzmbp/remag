@@ -67,20 +67,50 @@ def _calculate_kmer_composition(
     kmer_dict, nr_features = generate_feature_mapping(kmer_len)
     composition = OrderedDict()
 
+    if kmer_len == 4:
+        # uint16 keeps invalid-base arithmetic from overflowing before masking.
+        base_codes = np.full(256, 255, dtype=np.uint16)
+        for code, base in enumerate("ATGC"):
+            base_codes[ord(base)] = code
+        feature_lookup = np.empty(256, dtype=np.int64)
+        for kmer, feature in kmer_dict.items():
+            key = 0
+            for base in kmer:
+                key = key * 4 + int(base_codes[ord(base)])
+            feature_lookup[key] = feature
+
     for header, seq in sequences_to_process:
         norm_seq = seq.upper()
-        kmers = []
-        for j in range(len(norm_seq) - kmer_len + 1):
-            kmer = norm_seq[j : j + kmer_len]
-            if kmer in kmer_dict:
-                kmers.append(kmer_dict[kmer])
-
-        if kmers:
-            composition[header] = np.bincount(
-                np.array(kmers, dtype=np.int64), minlength=nr_features
-            )
+        if kmer_len == 4:
+            values = base_codes[
+                np.frombuffer(norm_seq.encode("ascii", "replace"), dtype=np.uint8)
+            ]
+            if len(values) < 4:
+                counts = np.zeros(nr_features, dtype=np.int64)
+            else:
+                valid = (
+                    (values[:-3] < 4)
+                    & (values[1:-2] < 4)
+                    & (values[2:-1] < 4)
+                    & (values[3:] < 4)
+                )
+                keys = (
+                    values[:-3] * 64 + values[1:-2] * 16 + values[2:-1] * 4 + values[3:]
+                )
+                counts = np.bincount(feature_lookup[keys[valid]], minlength=nr_features)
         else:
-            composition[header] = np.zeros(nr_features, dtype=np.int64)
+            kmers = []
+            for j in range(len(norm_seq) - kmer_len + 1):
+                kmer = norm_seq[j : j + kmer_len]
+                if kmer in kmer_dict:
+                    kmers.append(kmer_dict[kmer])
+            if kmers:
+                counts = np.bincount(
+                    np.array(kmers, dtype=np.int64), minlength=nr_features
+                )
+            else:
+                counts = np.zeros(nr_features, dtype=np.int64)
+        composition[header] = counts
 
     if not composition:
         return pd.DataFrame()
@@ -1597,17 +1627,16 @@ def calculate_coverage_from_tsv(
 def _get_total_mapped_reads(bam_file: str) -> int:
     try:
         with pysam.AlignmentFile(bam_file, "rb") as bamfile:
-            if bamfile.is_cram:
-                # CRAI indexes do not contain mapped-read counts.
-                total_mapped = sum(
-                    not read.is_unmapped for read in bamfile.fetch(until_eof=True)
-                )
-            else:
+            is_cram = bamfile.is_cram
+            if not is_cram:
                 total_mapped = bamfile.mapped
-            logger.debug(
-                f"Alignment file {os.path.basename(bam_file)}: {total_mapped:,} mapped reads"
-            )
-            return total_mapped
+        if is_cram:
+            # CRAI indexes lack counts; count every alignment without flag 4.
+            total_mapped = int(pysam.view("-c", "-F", "4", "-@", "0", bam_file).strip())
+        logger.debug(
+            f"Alignment file {os.path.basename(bam_file)}: {total_mapped:,} mapped reads"
+        )
+        return total_mapped
     except MemoryError:
         raise
     except Exception as e:
