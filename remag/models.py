@@ -945,17 +945,24 @@ def generate_embeddings(model, features_df, args):
                     batch_features
                 )
 
+            batch_embeddings_cpu = batch_embeddings.cpu().numpy()
+            if save_encoder_embeddings:
+                kmer_encoded_cpu = kmer_encoded.cpu().numpy()
+                coverage_encoded_cpu = (
+                    coverage_encoded.cpu().numpy()
+                    if coverage_encoded is not None
+                    else None
+                )
+
             for j, header in enumerate(batch_df.index):
                 clean_header = extract_base_contig_name(header)
-                embeddings[clean_header] = batch_embeddings[j].cpu().numpy()
+                embeddings[clean_header] = batch_embeddings_cpu[j]
 
                 # Save encoder embeddings if requested
                 if save_encoder_embeddings:
-                    kmer_embeddings[clean_header] = kmer_encoded[j].cpu().numpy()
-                    if coverage_encoded is not None:
-                        coverage_embeddings[clean_header] = (
-                            coverage_encoded[j].cpu().numpy()
-                        )
+                    kmer_embeddings[clean_header] = kmer_encoded_cpu[j]
+                    if coverage_encoded_cpu is not None:
+                        coverage_embeddings[clean_header] = coverage_encoded_cpu[j]
 
     embeddings_df = pd.DataFrame.from_dict(embeddings, orient="index")
 
