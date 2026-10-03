@@ -27,14 +27,18 @@ def test_batch_transfers_preserve_values_and_exports(
             "001.original",
         ],
     )
-    original = features[features.index.str.endswith(".original")]
+    original = features[features.index.str.endswith(".original")].copy()
     values = torch.tensor(original.values, dtype=torch.float32)
-    # Match the previous implementation's batch shapes: PyTorch normalization
-    # can round differently when the same rows are processed in a larger batch.
+    # Match the previous implementation's batch shapes and memory layout:
+    # PyTorch normalization can round differently for different tensor strides.
+    reference_batches = [
+        torch.tensor(original.iloc[start : start + 2].values, dtype=torch.float32)
+        for start in range(0, len(original), 2)
+    ]
     normalized = torch.cat(
         [
             torch.nn.functional.normalize(batch[:, :2] + 0.25, p=2, dim=1)
-            for batch in values.split(2)
+            for batch in reference_batches
         ]
     )
     names = ["001", "NA", "c.1", "null", "001"]
@@ -88,6 +92,9 @@ def test_batch_transfers_preserve_values_and_exports(
         2,
         2,
         1,
+    ]
+    assert [call.args[0].stride() for call in model.get_embedding.call_args_list] == [
+        batch.stride() for batch in reference_batches
     ]
     expected_transfers = []
     for size in [2, 2, 1]:
