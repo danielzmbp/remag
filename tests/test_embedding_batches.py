@@ -29,7 +29,14 @@ def test_batch_transfers_preserve_values_and_exports(
     )
     original = features[features.index.str.endswith(".original")]
     values = torch.tensor(original.values, dtype=torch.float32)
-    normalized = torch.nn.functional.normalize(values[:, :2] + 0.25, p=2, dim=1)
+    # Match the previous implementation's batch shapes: PyTorch normalization
+    # can round differently when the same rows are processed in a larger batch.
+    normalized = torch.cat(
+        [
+            torch.nn.functional.normalize(batch[:, :2] + 0.25, p=2, dim=1)
+            for batch in values.split(2)
+        ]
+    )
     names = ["001", "NA", "c.1", "null", "001"]
     # Build the reference rows with the previous per-contig conversion.
     expected = pd.DataFrame.from_dict(
