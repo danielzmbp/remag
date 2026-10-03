@@ -1,8 +1,10 @@
 """Scientific invariants of the frozen unified rescue and its pipeline integration."""
 
 from argparse import Namespace
+from itertools import combinations
 from unittest.mock import patch
 
+import igraph as ig
 import numpy as np
 import pandas as pd
 import pytest
@@ -18,8 +20,18 @@ def run_rescue(names, vectors, labels, lengths, genes, **kwargs):
     embeddings = pd.DataFrame(vectors, index=names)
     clusters = pd.DataFrame({"contig": list(labels), "cluster": list(labels.values())})
     fragments = {c: {"sequence": "A" * lengths[c]} for c in names}
+    graph = ig.Graph(
+        n=len(labels),
+        edges=list(combinations(range(len(labels)), 2)),
+        vertex_attrs={"name": list(labels)},
+    )
     result = rescue_fragmented_bins(
-        clusters, embeddings, fragments, Namespace(_gene_mappings_cache=genes), **kwargs
+        clusters,
+        embeddings,
+        fragments,
+        Namespace(_gene_mappings_cache=genes),
+        graph=graph,
+        **kwargs,
     )
     return result.set_index("contig")["cluster"].to_dict()
 
@@ -74,7 +86,9 @@ def test_nonworsening_exception_is_only_for_whole_bins(similarity, accepted):
         "source": {"g0": {}},
     }
     with patch("remag.rescue.cosine_similarity", return_value=np.array([[similarity]])):
-        merged = _merge_fragmented_bins(frame, emb, lengths, genes, 0.7, 5.0, 5.0)
+        merged = _merge_fragmented_bins(
+            frame, emb, lengths, genes, 0.7, 5.0, 5.0, {frozenset(("T", "S"))}
+        )
     assert merged.iloc[-1]["cluster"] == ("T" if accepted else "S")
     recruited = _recruit_contigs({"T": ["t1", "t2"]}, ["source"], emb, genes, lengths)
     assert recruited == {"T": ["t1", "t2"]}  # No singleton exception above the ceiling.

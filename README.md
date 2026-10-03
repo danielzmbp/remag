@@ -260,6 +260,8 @@ REMAG recovers eukaryotic bins with a multi-stage pipeline:
 
 Rescue uses length-weighted centroids and a cosine similarity threshold of 0.70. Centroids stay fixed during merging and are recomputed once before recruitment. Each candidate tries its nearest bin only. With the default marker limits, a marker-bearing candidate must leave at most 5% duplicated marker families and increase duplication by strictly less than 5 percentage points. Counts update after each accepted contig; marker-free candidates have no marker veto. A whole-bin merge has one additional allowance: at similarity of at least 0.95, a target already above the duplication ceiling may accept a merge that does not worsen its duplication. This allowance does not apply to individual-contig recruitment. `--rescue-max-total-duplication` controls the ceiling (capped at 10% for whole-bin merges), and `--rescue-max-duplication-increase` controls the strict increase limit.
 
+Whole-bin merges also require at least one original clustering-graph edge between their current contigs, including contigs absorbed by earlier merges. If the nearest bin has no graph connection, the merge is rejected without trying another target. This safeguard also applies to the non-worsening marker allowance; individual-contig recruitment keeps its existing rule.
+
 ## Output
 
 All runs retain `params.json` with the effective settings, including admission and graph cutoffs and the rescue settings. Matching reruns preserve the original record.
@@ -271,6 +273,9 @@ All runs retain `params.json` with the effective settings, including admission a
 - `pre_rescue.csv`: Initial assignments for all admitted contigs; shorter contigs outside the graph are initially noise
 - `rescue_assignments.csv`: Assignments before the final size filter, including noise and small bins, with an `exported` flag
 - `clustering_provenance.json`: Clustering/rescue settings and input fingerprints used to check cache compatibility
+- `knn_graph_edges.csv`: Original k-NN graph edge list used for clustering and the merge safeguard
+- `knn_graph_contigs.csv`: Ordered graph contig IDs; edge indices refer to these rows, which may be a subset of `embeddings.csv`
+- `knn_graph_stats.json`: Graph construction statistics and fingerprints for cache validation
 - `embeddings.csv`: Embeddings for original contigs, including those that do not enter a saved bin
 - `fragments.pkl`: Fragment sequences and coordinates used by the pipeline; currently written even without `-k`
 - `remag.log`: Detailed log file
@@ -279,15 +284,14 @@ All runs retain `params.json` with the effective settings, including admission a
 
 Binning stops with an error if required gene annotation fails. A successful search with no accepted matches still reports zero detected genes.
 
+The original graph is retained even without `--keep-intermediate` and reused with compatible pre-rescue assignments. Older rescue versions or missing/changed graph evidence require a new output directory or `--force`; existing outputs are preserved until recomputation is requested.
+
 ### Additional outputs with `-k` / `--keep-intermediate`
 
 - `siamese_model.pt`: Trained Siamese neural network model
 - `kmer_embeddings.csv`: K-mer encoder embeddings (before fusion)
 - `coverage_embeddings.csv`: Coverage encoder embeddings, when coverage features are present (before fusion)
 - `features.csv`: Extracted k-mer and coverage features
-- `knn_graph_edges.csv`: k-NN graph edge list used for Leiden clustering
-- `knn_graph_contigs.csv`: Ordered graph contig IDs; edge indices refer to these rows, which may be a subset of `embeddings.csv`
-- `knn_graph_stats.json`: k-NN graph construction statistics
 - `temp_gene_mapping/`: Miniprot files used to generate gene mappings
 - `temp_miniprot/`: Per-bin miniprot files, when the fallback duplication-check path runs
 

@@ -93,6 +93,7 @@ def _greedy_leiden_clustering(
     random_state=42,
     n_jobs=1,
     args=None,
+    graph=None,
 ):
     """
     Perform greedy Leiden clustering.
@@ -113,6 +114,7 @@ def _greedy_leiden_clustering(
         random_state: random seed
         n_jobs: number of cores
         args: args object
+        graph: Optional complete original graph, already built or loaded by the caller
 
     Returns:
         list: Cluster labels matching embeddings order (-1 for noise/unbinned)
@@ -122,14 +124,15 @@ def _greedy_leiden_clustering(
     )
 
     # 1. Construct initial graph
-    graph = _construct_knn_graph(
-        embeddings,
-        contig_names=contig_names,
-        k=k,
-        similarity_threshold=similarity_threshold,
-        n_jobs=n_jobs,
-        args=args,
-    )
+    if graph is None:
+        graph = _construct_knn_graph(
+            embeddings,
+            contig_names=contig_names,
+            k=k,
+            similarity_threshold=similarity_threshold,
+            n_jobs=n_jobs,
+            args=args,
+        )
 
     # Add names to graph vertices for easy retrieval
     graph.vs["name"] = contig_names
@@ -256,7 +259,13 @@ def _greedy_leiden_clustering(
 
 
 def _construct_knn_graph(
-    embeddings, k=15, similarity_threshold=0.1, n_jobs=1, args=None, contig_names=None
+    embeddings,
+    k=15,
+    similarity_threshold=0.1,
+    n_jobs=1,
+    args=None,
+    contig_names=None,
+    require_cache=False,
 ):
     """
     Construct a k-NN graph from multidimensional embeddings using cosine similarity.
@@ -267,45 +276,51 @@ def _construct_knn_graph(
         k: Number of nearest neighbors for each node
         similarity_threshold: Minimum cosine similarity to create an edge (0-1)
         n_jobs: Number of parallel jobs for k-NN search
-        args: Arguments object containing output directory and keep_intermediate flag
+        args: Arguments object containing the graph-cache output directory
+        contig_names: Ordered core-contig IDs corresponding to the embedding rows
+        require_cache: Refuse missing graph evidence when resuming assignments
 
     Returns:
         igraph.Graph: Weighted graph with cosine similarity weights
     """
-    # Handle edge cases
     n_samples = len(embeddings)
-    if n_samples == 0:
-        # Empty embeddings - return empty graph
-        return ig.Graph()
-
-    if n_samples == 1:
-        # Single node - return graph with one node and no edges
-        graph = ig.Graph(n=1)
-        return graph
-
     # Adjust k if we have fewer samples than k+1
-    if n_samples <= k:
+    if n_samples > 1 and n_samples <= k:
         original_k = k
         k = n_samples - 1
         logger.warning(
             f"Adjusted k from {original_k} to {k} due to limited samples ({n_samples})"
         )
+    if n_samples < 2:
+        k = 0
 
-    graph_identity = embedding_identity(
-        embeddings, list(range(n_samples)) if contig_names is None else contig_names
+    contig_names = (
+        [str(i) for i in range(n_samples)] if contig_names is None else contig_names
     )
+    graph_identity = embedding_identity(embeddings, contig_names)
     # Check if graph already exists and can be loaded
     if args and args.output:
         edge_list_path = os.path.join(args.output, "knn_graph_edges.csv")
         graph_stats_path = os.path.join(args.output, "knn_graph_stats.json")
+        contigs_path = os.path.join(args.output, "knn_graph_contigs.csv")
 
-        if os.path.exists(edge_list_path) != os.path.exists(graph_stats_path):
+        present = [
+            os.path.exists(p) for p in (edge_list_path, graph_stats_path, contigs_path)
+        ]
+        if any(present) and not all(present):
             raise incompatible_cache("incomplete graph cache")
-        if os.path.exists(edge_list_path) and os.path.exists(graph_stats_path):
+        if require_cache and not all(present):
+            raise incompatible_cache("missing original graph cache")
+        if all(present):
             try:
                 # Load graph statistics to verify compatibility
                 with open(graph_stats_path, "r") as f:
                     saved_stats = json.load(f)
+                if not isinstance(saved_stats, dict):
+                    raise ValueError("Invalid graph statistics.")
+                saved_names = pd.read_csv(
+                    contigs_path, dtype={"contig": str}, keep_default_na=False
+                )["contig"].tolist()
 
                 # Check if parameters match
                 if (
@@ -314,6 +329,8 @@ def _construct_knn_graph(
                     and saved_stats.get("similarity_threshold") == similarity_threshold
                     and saved_stats.get("ordered_embeddings_sha256") == graph_identity
                     and saved_stats.get("edges_sha256") == file_sha256(edge_list_path)
+                    and saved_stats.get("contigs_sha256") == file_sha256(contigs_path)
+                    and saved_names == list(contig_names)
                 ):
                     logger.info(f"Loading existing k-NN graph from {edge_list_path}")
 
@@ -333,6 +350,12 @@ def _construct_knn_graph(
                     g.add_vertices(len(embeddings))
                     g.add_edges(edges)
                     g.es["weight"] = weights
+                    g.vs["name"] = saved_names
+                    if (
+                        g.ecount() != saved_stats.get("n_edges")
+                        or not np.isfinite(weights).all()
+                    ):
+                        raise incompatible_cache("invalid graph edges or weights")
 
                     logger.info(
                         f"Successfully loaded k-NN graph: {g.vcount()} nodes, {g.ecount()} edges"
@@ -341,7 +364,13 @@ def _construct_knn_graph(
                 raise incompatible_cache(
                     "graph vertices, values, order or parameters changed"
                 )
-            except (OSError, ValueError, KeyError) as error:
+            except (
+                OSError,
+                ValueError,
+                KeyError,
+                TypeError,
+                ig.InternalError,
+            ) as error:
                 raise incompatible_cache(
                     "graph cache is missing, changed or unreadable"
                 ) from error
@@ -350,45 +379,25 @@ def _construct_knn_graph(
         f"Constructing k-NN graph from {len(embeddings)} embeddings (k={k}, n_jobs={n_jobs})"
     )
 
-    # Use sklearn's NearestNeighbors for efficient, parallelized k-NN search
-    # Since embeddings are L2-normalized, cosine similarity = dot product
-    nbrs = NearestNeighbors(
-        n_neighbors=k or 1,  # Zero-neighbor graphs are sliced below.
-        metric="cosine",
-        algorithm="brute",  # brute force is often fastest for high-dimensional data
-        n_jobs=n_jobs,
-    )
-    nbrs.fit(embeddings)
-
-    # Query fitted points so sklearn excludes each point by identity.
-    distances, indices = nbrs.kneighbors()
-
-    # Convert distances to similarities (cosine distance = 1 - cosine similarity)
-    similarities = 1 - distances
-
-    # Build edge list using vectorized operations
-    # Keep the requested count, including the zero-neighbor case.
-    neighbor_indices = indices[:, :k]
-    neighbor_similarities = similarities[:, :k]
-
-    # Create source indices array [0, 0... 1, 1...] matching the shape
-    # Use broadcasting/repeating to align with flattened neighbor arrays
-    source_indices = np.repeat(np.arange(len(embeddings)), neighbor_indices.shape[1])
-
-    # Flatten arrays
-    flat_sources = source_indices
-    flat_targets = neighbor_indices.flatten()
-    flat_weights = neighbor_similarities.flatten()
-
-    # Apply threshold mask
-    mask = flat_weights >= similarity_threshold
-
-    # Create edges and weights
-    # igraph expects list of tuples for edges
-    valid_sources = flat_sources[mask]
-    valid_targets = flat_targets[mask]
-    edges = list(zip(valid_sources, valid_targets))
-    weights = flat_weights[mask].tolist()
+    edges, weights = [], []
+    if n_samples > 1:
+        # Query fitted points so sklearn excludes each point by identity.
+        nbrs = NearestNeighbors(
+            n_neighbors=k or 1,  # Zero-neighbor graphs are sliced below.
+            metric="cosine",
+            algorithm="brute",
+            n_jobs=n_jobs,
+        )
+        nbrs.fit(embeddings)
+        distances, indices = nbrs.kneighbors()
+        neighbor_indices = indices[:, :k]
+        neighbor_similarities = (1 - distances)[:, :k]
+        sources = np.repeat(np.arange(n_samples), neighbor_indices.shape[1])
+        targets = neighbor_indices.flatten()
+        similarities = neighbor_similarities.flatten()
+        mask = similarities >= similarity_threshold
+        edges = list(zip(sources[mask], targets[mask]))
+        weights = similarities[mask].tolist()
 
     logger.info(f"Created {len(edges)} edges with similarity >= {similarity_threshold}")
 
@@ -397,9 +406,10 @@ def _construct_knn_graph(
     g.add_vertices(len(embeddings))
     g.add_edges(edges)
     g.es["weight"] = weights
+    g.vs["name"] = contig_names
 
-    # Save graph if keep_intermediate is enabled
-    if args and getattr(args, "keep_intermediate", False):
+    # Preserve the original graph for rescue and compatible pre-rescue reruns.
+    if args and args.output:
         # Save as edge list with weights
         edge_list_path = os.path.join(args.output, "knn_graph_edges.csv")
         with open(edge_list_path, "w") as f:
@@ -413,20 +423,23 @@ def _construct_knn_graph(
                 weight = edge["weight"]
                 f.write(f"{source},{target},{weight:.6f}\n")
         logger.info(f"Saved k-NN graph edge list to {edge_list_path}")
+        contigs_path = os.path.join(args.output, "knn_graph_contigs.csv")
+        pd.DataFrame({"contig": contig_names}).to_csv(contigs_path, index=False)
 
         # Also save graph statistics
         graph_stats = {
             "ordered_embeddings_sha256": graph_identity,
             "edges_sha256": file_sha256(edge_list_path),
+            "contigs_sha256": file_sha256(contigs_path),
             "n_vertices": g.vcount(),
             "n_edges": g.ecount(),
             "k": k,
             "similarity_threshold": similarity_threshold,
-            "density": g.density(),
+            "density": g.density() if n_samples > 1 else 0.0,
             "n_connected_components": len(g.connected_components()),
-            "average_degree": np.mean(g.degree()),
-            "max_degree": max(g.degree()),
-            "min_degree": min(g.degree()),
+            "average_degree": float(np.mean(g.degree())) if n_samples else 0.0,
+            "max_degree": max(g.degree(), default=0),
+            "min_degree": min(g.degree(), default=0),
         }
 
         graph_stats_path = os.path.join(args.output, "knn_graph_stats.json")
@@ -437,8 +450,10 @@ def _construct_knn_graph(
     return g
 
 
-def cluster_contigs(embeddings_df, fragments_dict, gene_mappings, args):
-    """Main clustering function that orchestrates the clustering process using Greedy Leiden."""
+def cluster_contigs(
+    embeddings_df, fragments_dict, gene_mappings, args, return_graph=False
+):
+    """Cluster or reload initial assignments; optionally return the original graph."""
     # Ensure output directory exists for all code paths
     os.makedirs(args.output, exist_ok=True)
 
@@ -453,7 +468,8 @@ def cluster_contigs(embeddings_df, fragments_dict, gene_mappings, args):
     pre_path = os.path.join(args.output, "pre_rescue.csv")
     metadata_path = os.path.join(args.output, "clustering_provenance.json")
     validate_cached_binning_settings(args)
-    if os.path.exists(pre_path):
+    cached = os.path.exists(pre_path)
+    if cached:
         with open(metadata_path) as handle:
             saved = json.load(handle)
         if any(saved.get(k) != v for k, v in identity.items()) or saved.get(
@@ -467,11 +483,7 @@ def cluster_contigs(embeddings_df, fragments_dict, gene_mappings, args):
         )
         if clusters["contig"].tolist() != admitted or clusters["cluster"].isna().any():
             raise incompatible_cache("invalid pre-rescue assignments")
-        logger.info(
-            "Loading compatible pre-rescue assignments; unified rescue will run again."
-        )
-        return clusters
-    if os.path.exists(metadata_path) or os.path.exists(
+    elif os.path.exists(metadata_path) or os.path.exists(
         os.path.join(args.output, "bins.csv")
     ):
         raise incompatible_cache("missing pre-rescue assignments")
@@ -480,6 +492,30 @@ def cluster_contigs(embeddings_df, fragments_dict, gene_mappings, args):
     contig_names = [c for c in admitted if lengths[c] >= cutoff]
     core_embeddings = embeddings_df.loc[contig_names]
     norm_data = core_embeddings.values
+    graph = _construct_knn_graph(
+        norm_data,
+        contig_names=contig_names,
+        k=getattr(args, "leiden_k_neighbors", 15),
+        similarity_threshold=getattr(args, "leiden_similarity_threshold", 0.1),
+        n_jobs=getattr(args, "cores", 1),
+        args=args,
+        require_cache=cached,
+    )
+    graph_files = {
+        name: file_sha256(os.path.join(args.output, name))
+        for name in (
+            "knn_graph_edges.csv",
+            "knn_graph_contigs.csv",
+            "knn_graph_stats.json",
+        )
+    }
+    if cached:
+        if saved.get("graph_sha256") != graph_files:
+            raise incompatible_cache("original clustering graph changed")
+        logger.info(
+            "Loading compatible pre-rescue assignments and original graph; unified rescue will run again."
+        )
+        return (clusters, graph) if return_graph else clusters
     # Log essential data properties
     logger.info(
         f"Clustering {len(contig_names)} contigs with {embeddings_df.shape[1]}D embeddings"
@@ -503,6 +539,7 @@ def cluster_contigs(embeddings_df, fragments_dict, gene_mappings, args):
         random_state=42,
         n_jobs=getattr(args, "cores", 1),
         args=args,
+        graph=graph,
     )
 
     formatted_labels = [
@@ -535,11 +572,8 @@ def cluster_contigs(embeddings_df, fragments_dict, gene_mappings, args):
     # Keep noise and sub-threshold seeds: the size filter runs only after rescue.
     clusters_df.to_csv(pre_path, index=False)
     identity["pre_rescue_sha256"] = file_sha256(pre_path)
+    identity["graph_sha256"] = graph_files
     with open(metadata_path, "w") as handle:
         json.dump(identity, handle, indent=2)
-    if getattr(args, "keep_intermediate", False):
-        pd.DataFrame({"contig": contig_names}).to_csv(
-            os.path.join(args.output, "knn_graph_contigs.csv"), index=False
-        )
     logger.info(f"Saved initial assignments to {pre_path}")
-    return clusters_df
+    return (clusters_df, graph) if return_graph else clusters_df

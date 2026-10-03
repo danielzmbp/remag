@@ -12,7 +12,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 from .miniprot_utils import get_gene_mappings_cache_path
 from .utils import contig_lengths_for_embeddings
 
-RESCUE_ALGORITHM = "unified-v1"
+RESCUE_ALGORITHM = "unified-v2-graph-supported"
 MAX_MERGE_DUPLICATION_PERCENT = 10.0
 NONWORSENING_MERGE_SIMILARITY = 0.95
 
@@ -56,6 +56,22 @@ def _bin_members(clusters):
     return members
 
 
+def _graph_bin_support(graph, clusters):
+    """Original graph connections mapped to the assignments entering rescue."""
+    if graph is None or "name" not in graph.vs.attributes():
+        raise ValueError("Rescue requires the original graph with ordered contig IDs.")
+    names = graph.vs["name"]
+    labels = dict(clusters[["contig", "cluster"]].itertuples(index=False, name=None))
+    if len(set(names)) != len(names) or any(c not in labels for c in names):
+        raise ValueError("Rescue graph contig IDs do not match the assignments.")
+    support = set()
+    for edge in graph.es:
+        a, b = labels[names[edge.source]], labels[names[edge.target]]
+        if a != b and a != "noise" and b != "noise":
+            support.add(frozenset((a, b)))
+    return support
+
+
 def _merge_fragmented_bins(
     clusters,
     embeddings,
@@ -64,10 +80,12 @@ def _merge_fragmented_bins(
     similarity_threshold,
     max_duplication_increase,
     max_total_duplication,
+    graph_support,
 ):
     """One stable smallest-first merge pass with fixed original centroids."""
     clusters = clusters.copy()
     members = _bin_members(clusters)
+    origins = {b: {b} for b in members}
     centers = {}
     for name, contigs in members.items():
         available = [c for c in contigs if c in embeddings.index]
@@ -95,6 +113,12 @@ def _merge_fragmented_bins(
                 target, score = candidate, sim
         if target is None or score < similarity_threshold:
             continue
+        if not any(
+            frozenset((a, b)) in graph_support
+            for a in origins[source]
+            for b in origins[target]
+        ):
+            continue  # Reject the best target; do not try a second-best bin.
         before, _ = get_bin_scg_stats(members[target], genes)
         after, _ = get_bin_scg_stats(members[target] + members[source], genes)
         nonworsening = (
@@ -107,6 +131,7 @@ def _merge_fragmented_bins(
             clusters.loc[clusters["cluster"] == source, "cluster"] = target
             members[target].extend(members[source])
             sizes[target] += sizes[source]
+            origins[target].update(origins.pop(source))
             removed.add(source)
     return clusters
 
@@ -188,6 +213,7 @@ def rescue_fragmented_bins(
     max_duplication_increase=5.0,
     max_total_duplication=5.0,
     min_contig_length=1,
+    graph=None,
 ):
     """Merge core bins and recruit all eligible noise/short contigs in one pass.
 
@@ -195,6 +221,8 @@ def rescue_fragmented_bins(
     The final minimum-bin-size filter belongs to export, after this entry point.
     An explicitly empty marker mapping is valid: marker-free candidates have no
     marker veto. Missing annotations are not treated as a successful empty map.
+    ``graph`` must be the complete original core graph with contig vertex names;
+    even a valid edgeless graph is required. Only whole-bin merging uses it.
     """
     lengths = contig_lengths_for_embeddings(embeddings_df, fragments_dict)
     if (
@@ -206,6 +234,7 @@ def rescue_fragmented_bins(
         )
     if any(c not in lengths for c in clusters_df["contig"]):
         raise ValueError("Rescue assignments contain contigs without sequences.")
+    graph_support = _graph_bin_support(graph, clusters_df)
     genes = getattr(args, "_gene_mappings_cache", None)
     if genes is None:
         path = get_gene_mappings_cache_path(args)
@@ -222,6 +251,7 @@ def rescue_fragmented_bins(
         similarity_threshold,
         max_duplication_increase,
         max_total_duplication,
+        graph_support,
     )
     seeds = _bin_members(merged)
     assigned = {c for contigs in seeds.values() for c in contigs}

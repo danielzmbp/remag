@@ -130,6 +130,7 @@ def binning_settings(args):
         "graph_min_contig_length": getattr(args, "graph_min_contig_length", None)
         or minimum,
         "rescue_algorithm": RESCUE_ALGORITHM,
+        "merge_graph_support": "at least one original core graph edge between current bins",
         "skip_rescue": getattr(args, "skip_rescue", False),
         "similarity_threshold": 0.70,
         "max_duplication_increase": getattr(
@@ -170,6 +171,7 @@ def validate_cached_binning_settings(args):
         "rescue_assignments.csv",
         "knn_graph_edges.csv",
         "knn_graph_stats.json",
+        "knn_graph_contigs.csv",
     )
     if not any((root / p).exists() for p in binning_files) and not list(
         root.glob("bins/bin_*.fa")

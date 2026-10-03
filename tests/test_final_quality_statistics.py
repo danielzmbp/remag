@@ -4,6 +4,7 @@ import json
 from argparse import Namespace
 from unittest.mock import patch
 
+import igraph as ig
 import numpy as np
 import pandas as pd
 import pytest
@@ -74,7 +75,13 @@ def test_quality_statistics_match_final_saved_bins(tmp_path, scenario):
             # A failed cached-statistics check can still retry full annotation.
             return_value={"large": None} if scenario == "fallback" else mappings,
         ),
-        patch("remag.core.cluster_contigs", return_value=clusters.copy()),
+        patch(
+            "remag.core.cluster_contigs",
+            return_value=(
+                clusters.copy(),
+                ig.Graph(n=4, edges=[(0, 1)], vertex_attrs={"name": list(lengths)}),
+            ),
+        ),
         patch(
             "remag.core.check_core_gene_duplications", side_effect=full_annotation
         ) as fallback,

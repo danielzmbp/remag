@@ -2,6 +2,7 @@
 
 from types import SimpleNamespace
 
+import igraph as ig
 import pandas as pd
 import pytest
 
@@ -57,6 +58,7 @@ def test_one_bin_rescue_preserves_similarity_and_gene_limits(
         args,
         max_duplication_increase=max_increase,
         max_total_duplication=max_total,
+        graph=ig.Graph(n=len(clusters), vertex_attrs={"name": list(clusters.contig)}),
     ).set_index("contig")["cluster"]
 
     assert actual.to_dict() == {"anchor": "bin1", "candidate": expected}
@@ -84,7 +86,13 @@ def test_one_bin_rescue_handles_missing_inputs(rescue_input, scenario):
         embeddings = embeddings.loc[["anchor"]]
     expected = clusters.copy(deep=True)
 
-    actual = rescue_fragmented_bins(clusters, embeddings, fragments, args)
+    actual = rescue_fragmented_bins(
+        clusters,
+        embeddings,
+        fragments,
+        args,
+        graph=ig.Graph(n=len(clusters), vertex_attrs={"name": list(clusters.contig)}),
+    )
 
     pd.testing.assert_frame_equal(actual, expected)
 
@@ -102,6 +110,7 @@ def test_one_bin_rescue_checks_cumulative_gene_duplication(rescue_input):
         fragments,
         args,
         max_duplication_increase=1.0,
+        graph=ig.Graph(n=len(clusters), vertex_attrs={"name": list(clusters.contig)}),
     ).set_index("contig")["cluster"]
 
     assert actual.to_dict() == {
@@ -113,13 +122,25 @@ def test_one_bin_rescue_checks_cumulative_gene_duplication(rescue_input):
 
 def test_rescue_does_not_require_an_unrelated_second_bin(rescue_input):
     clusters, embeddings, fragments, args = rescue_input
-    one_bin = rescue_fragmented_bins(clusters.copy(), embeddings, fragments, args)
+    one_bin = rescue_fragmented_bins(
+        clusters.copy(),
+        embeddings,
+        fragments,
+        args,
+        graph=ig.Graph(n=len(clusters), vertex_attrs={"name": list(clusters.contig)}),
+    )
     clusters.loc[len(clusters)] = ["unrelated", "bin2"]
     embeddings.loc["unrelated"] = [0.0, 1.0]
     fragments["unrelated"] = {"sequence": "A" * 2000}
     args._gene_mappings_cache["unrelated"] = {"unrelated_gene": {}}
 
-    two_bins = rescue_fragmented_bins(clusters, embeddings, fragments, args)
+    two_bins = rescue_fragmented_bins(
+        clusters,
+        embeddings,
+        fragments,
+        args,
+        graph=ig.Graph(n=len(clusters), vertex_attrs={"name": list(clusters.contig)}),
+    )
 
     pd.testing.assert_frame_equal(one_bin, two_bins.iloc[:2])
     assert two_bins.iloc[2]["cluster"] == "bin2"

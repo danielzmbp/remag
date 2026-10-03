@@ -1,5 +1,6 @@
 from unittest.mock import Mock
 
+import igraph as ig
 import numpy as np
 import pandas as pd
 
@@ -92,6 +93,9 @@ def test_rescue_limits():
         similarity_threshold=0.9,
         max_duplication_increase=5.0,  # Relaxed from 3.0
         max_total_duplication=5.0,  # New constraint
+        graph=ig.Graph(
+            n=6, edges=[(1, 2), (3, 4)], vertex_attrs={"name": list(clusters_df.contig)}
+        ),
     )
 
     # Check Case 1: c5 should merge into bin3
@@ -140,6 +144,9 @@ def test_rescue_blocks_bin_merge_above_ten_percent_duplication():
         similarity_threshold=0.9,
         max_duplication_increase=20.0,
         max_total_duplication=20.0,
+        graph=ig.Graph(
+            n=2, edges=[(0, 1)], vertex_attrs={"name": list(clusters_df.contig)}
+        ),
     )
 
     final_c2 = result_df[result_df["contig"] == "c2"]["cluster"].values[0]

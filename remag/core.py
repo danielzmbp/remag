@@ -148,8 +148,8 @@ def main(args):
         sys.exit(1)
 
     try:
-        clusters_df = cluster_contigs(
-            embeddings_df, fragments_dict, gene_mappings, args
+        clusters_df, graph = cluster_contigs(
+            embeddings_df, fragments_dict, gene_mappings, args, return_graph=True
         )
     except Exception as e:
         logger.error(f"Failed to cluster contigs: {e}")
@@ -206,6 +206,7 @@ def main(args):
                 args, "rescue_max_duplication_increase", 5.0
             ),
             max_total_duplication=getattr(args, "rescue_max_total_duplication", 5.0),
+            graph=graph,
         )
     else:
         logger.info("Skipping rescue step")

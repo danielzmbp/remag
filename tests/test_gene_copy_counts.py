@@ -5,6 +5,7 @@ import json
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import igraph as ig
 import pandas as pd
 import pytest
 
@@ -190,6 +191,9 @@ def test_within_contig_duplication_does_not_change_rescue(tmp_path, candidate_cl
         embeddings,
         fragments,
         SimpleNamespace(_gene_mappings_cache=mappings),
+        graph=ig.Graph(
+            n=2, edges=[(0, 1)], vertex_attrs={"name": list(clusters.contig)}
+        ),
     )
     assert result.set_index("contig")["cluster"].to_dict() == {
         "anchor": "large",
@@ -292,8 +296,9 @@ def test_reported_within_contig_duplications_do_not_block_pipeline_rescue(tmp_pa
         patch("remag.core.load_or_generate_gene_mappings", return_value=mappings),
         patch(
             "remag.core.cluster_contigs",
-            return_value=pd.DataFrame(
-                {"contig": names, "cluster": ["large", "small", "noise"]}
+            return_value=(
+                pd.DataFrame({"contig": names, "cluster": ["large", "small", "noise"]}),
+                ig.Graph(n=3, edges=[(0, 1)], vertex_attrs={"name": names}),
             ),
         ),
     ):
