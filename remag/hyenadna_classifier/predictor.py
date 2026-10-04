@@ -9,7 +9,6 @@ sequence detection.
 import os
 import random
 import sys
-from concurrent.futures import ThreadPoolExecutor
 from itertools import islice
 from typing import Dict, List, Tuple
 
@@ -211,8 +210,7 @@ class HyenaDNAClassifier:
     - Small model (1024 context) for contigs < 4096bp with aggressive windowing
     - Large model (4096 context) for contigs >= 4096bp for better long-range detection
 
-    This class provides an interface similar to the previous xgbClass,
-    compatible with REMAG's filtering pipeline.
+    Provides per-contig and batched predictions for REMAG's filtering pipeline.
     """
 
     def __init__(
@@ -839,84 +837,3 @@ class HyenaDNAClassifier:
             "resampled": resampled,
             "model_used": model_name,
         }
-
-    def _classify_single(self, seq):
-        """Helper method for parallel classification."""
-        if len(seq) < self.min_contig_length:
-            return [1.0, 0.0]  # Too short
-
-        result = self.predict_contig(seq)
-        euk_prob = result["eukaryote_prob"]
-        non_euk_prob = 1.0 - euk_prob
-        return [non_euk_prob, euk_prob]
-
-    def classify(self, sequences, parallel=True, max_workers=4):
-        """
-        Classify sequences as eukaryotic or non-eukaryotic.
-
-        Compatible interface with xgbClass.classify().
-
-        Args:
-            sequences: Either a single string or a list of strings
-            parallel: Use parallel processing for batch classification (default: True)
-            max_workers: Maximum number of parallel workers (default: 4)
-
-        Returns:
-            For single sequence: numpy array of shape (1, 2) with [non_euk_prob, euk_prob]
-            For list of sequences: numpy array of shape (n, 2) with probabilities for each
-        """
-        if isinstance(sequences, str):
-            # Single sequence
-            if len(sequences) < self.min_contig_length:
-                return np.array([[1.0, 0.0]])  # Too short, classify as non-eukaryotic
-
-            result = self.predict_contig(sequences)
-            euk_prob = result["eukaryote_prob"]
-            non_euk_prob = 1.0 - euk_prob
-
-            return np.array([[non_euk_prob, euk_prob]])
-
-        elif isinstance(sequences, list):
-            # List of sequences
-            logger.info(f"{len(sequences)} sequences to classify")
-
-            if parallel and len(sequences) > 10:
-                # Use parallel processing for larger batches
-                # Note: GPU models need to be used carefully in parallel - ThreadPoolExecutor
-                # shares memory space so the CUDA context is shared
-                logger.info(f"Using parallel processing with {max_workers} workers")
-
-                results = []
-                with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                    for i, result in enumerate(
-                        executor.map(self._classify_single, sequences)
-                    ):
-                        results.append(result)
-                        if (i + 1) % 1000 == 0:
-                            logger.info(
-                                f"Classified {i + 1}/{len(sequences)} sequences"
-                            )
-
-                logger.info(f"Classification complete: {len(sequences)} sequences")
-                return np.array(results)
-            else:
-                # Sequential processing for small batches or when parallel is disabled
-                results = []
-                for i, seq in enumerate(sequences):
-                    if i > 0 and i % 1000 == 0:
-                        logger.info(f"Classified {i}/{len(sequences)} sequences")
-
-                    if len(seq) < self.min_contig_length:
-                        results.append([1.0, 0.0])  # Too short
-                        continue
-
-                    result = self.predict_contig(seq)
-                    euk_prob = result["eukaryote_prob"]
-                    non_euk_prob = 1.0 - euk_prob
-                    results.append([non_euk_prob, euk_prob])
-
-                logger.info(f"Classification complete: {len(sequences)} sequences")
-                return np.array(results)
-
-        else:
-            raise TypeError("Can only classify strings or lists of strings")

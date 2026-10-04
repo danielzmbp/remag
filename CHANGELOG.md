@@ -33,6 +33,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Return zero coverage when no FASTA headers match alignment references instead
   of failing on an empty contig batch.
 
+### Removed
+- Remove the legacy XGBoost-compatible `HyenaDNAClassifier.classify()` interface
+  and its threading helper. Python callers should use `predict_contig()` or
+  `predict_contigs()`, which return prediction dictionaries. REMAG filtering
+  continues to use these methods.
+
 ## [0.5.1] - 2026-09-19
 
 ### Fixed
