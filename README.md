@@ -231,20 +231,20 @@ BAM/CRAM coverage uses `--cores` readers and processes one alignment file at a t
 - `--filter-only`: stop after eukaryotic filtering and write filtered FASTA output
 - `--save-filtered-contigs`: also write classified contigs rejected by the eukaryotic filter
 - `--skip-bacterial-filter`: disable the HyenaDNA filter
-- `--graph-min-contig-length`: minimum length entering the Leiden graph; defaults to the effective `--min-contig-length`
+- `--graph-min-contig-length`: minimum length entering the Leiden graph; defaults to 1,000 bp with one coverage file, otherwise 3,000 bp
 - `--min-bin-size`: minimum bin size written to FASTA after rescue; defaults to 500,000 bp
 
 Use `remag -h` for a quick reference and `remag --help` for the full CLI, including training, clustering, filtering, and rescue options.
 
-REMAG defaults to a minimum contig and training-fragment length of 1,000 bp when exactly one coverage file is supplied. With multiple coverage files or no coverage, it chooses from the input assembly before HyenaDNA filtering: among contigs at least 1,000 bp long, a median below 2,500 bp selects 1,000 bp; a median of 2,500 bp or higher selects 4,096 bp. Use `--min-contig-length` to override this choice. The measured median and chosen minimum are logged, and effective settings are always saved in `params.json`. Reusing outputs requires the same recorded minimum; if it differs or older outputs lack that information, use `--force` or a new output directory.
+REMAG defaults to a minimum contig and training-fragment length of 1,000 bp for every run. With exactly one coverage file, the initial graph also includes contigs from 1,000 bp. With multiple coverage files or no coverage, the graph starts at 3,000 bp, while admitted shorter contigs remain available for rescue. Use `--min-contig-length` and `--graph-min-contig-length` to override these settings. A default graph cutoff is raised to the admission cutoff if needed. Effective settings are logged and saved in `params.json`; reusing outputs requires compatible admission and graph cutoffs. Use `--force` or a new output directory when changing them.
 
-To admit contigs from 1 kb while restricting the initial graph to contigs from 3 kb, use:
+For example, the default settings with two coverage files are:
 
 ```bash
-remag contigs.fasta -c sample1.bam -c sample2.bam --min-contig-length 1000 --graph-min-contig-length 3000
+remag contigs.fasta -c sample1.bam -c sample2.bam
 ```
 
-All admitted contigs share the same embedding space. The graph cutoff must be at least the admission cutoff; it does not change filtering or training-fragment length. After fragmented bins are merged, unassigned graph contigs and admitted shorter contigs are recruited together in embedding row order. The default graph cutoff follows the effective admission cutoff, preserving the existing single-sample settings. `--skip-rescue` skips both merging and recruitment.
+All admitted contigs share the same embedding space. The graph cutoff must be at least the admission cutoff; it does not change filtering or training-fragment length. After fragmented bins are merged, unassigned graph contigs and admitted shorter contigs are recruited together in embedding row order. `--skip-rescue` skips both merging and recruitment.
 
 The k-NN graph uses 15 neighbors, and HyenaDNA filtering is enabled. Use `--leiden-k-neighbors` and `--skip-bacterial-filter` to adjust these settings. Multiple coverage files lower the default base learning rate from `0.005` to `0.0005`; an explicitly supplied learning rate is preserved.
 

@@ -383,18 +383,15 @@ def validate_coverage_options(ctx, param, value):
     default=None,
     show_default=False,
     help="Minimum contig length in base pairs for binning consideration. "
-    "Also sets the minimum training-fragment length. With one coverage file, "
-    "default to 1000. Otherwise, use 1000 if the median input contig length "
-    "(among contigs >=1000 bp, before filtering) is below 2500 bp; "
-    "otherwise use 4096. "
-    "User-specified values override auto-detection.",
+    "Also sets the minimum training-fragment length. Defaults to 1000.",
 )
 @click.option(
     "--graph-min-contig-length",
     type=click.IntRange(min=1),
     default=None,
-    help="Minimum contig length for the initial graph. Defaults to the effective "
-    "--min-contig-length and must be at least that value. Shorter admitted contigs "
+    help="Minimum contig length for the initial graph. Defaults to 1000 with one "
+    "coverage file, otherwise 3000, and is raised to --min-contig-length if needed. "
+    "Must be at least --min-contig-length. Shorter admitted contigs "
     "remain available for rescue. Does not change training-fragment lengths.",
 )
 @click.option(
@@ -625,19 +622,25 @@ def main_cli(
             "Coassembly detected: Auto base learning rate set to 0.0005.", err=True
         )
 
-    # Resolve length before filtering, cache reuse, or forced output cleanup.
-    contig_length_median = None
+    # Validate default admission before cache reuse or forced output cleanup.
     if min_contig_length is None:
-        from .utils import select_min_contig_length
+        from .utils import fasta_iter
 
+        min_contig_length = 1000
         try:
-            min_contig_length, contig_length_median = select_min_contig_length(
-                fasta_path, coverage_count=coverage_count
-            )
+            if not any(
+                len(seq) >= min_contig_length for _, seq in fasta_iter(fasta_path)
+            ):
+                raise ValueError("No input contigs are at least 1,000 bp long.")
         except (OSError, ValueError) as e:
             raise click.ClickException(str(e)) from e
 
-    graph_min_contig_length = graph_min_contig_length or min_contig_length
+    if graph_min_contig_length is None:
+        from .utils import default_graph_min_contig_length
+
+        graph_min_contig_length = default_graph_min_contig_length(
+            min_contig_length, coverage_count
+        )
     if graph_min_contig_length < min_contig_length:
         raise click.BadParameter(
             "Must be at least --min-contig-length.",
@@ -657,7 +660,6 @@ def main_cli(
         random_seed=random_seed,
         min_contig_length=min_contig_length,
         graph_min_contig_length=graph_min_contig_length,
-        contig_length_median=contig_length_median,
         max_positive_pairs=max_positive_pairs,
         cores=threads,
         min_bin_size=min_bin_size,

@@ -148,8 +148,8 @@ def test_no_core_seeds_returns_all_noise(tmp_path):
     assert result.cluster.tolist() == ["noise"] * len(emb)
 
 
-@pytest.mark.parametrize("coverage_count,expected", [(0, 4096), (1, 1000), (2, 4096)])
-def test_graph_default_follows_existing_admission_rule(
+@pytest.mark.parametrize("coverage_count,expected", [(0, 3000), (1, 1000), (2, 3000)])
+def test_graph_default_depends_only_on_coverage_count(
     tmp_path, coverage_count, expected
 ):
     fasta = tmp_path / "assembly.fa"
@@ -163,7 +163,8 @@ def test_graph_default_follows_existing_admission_rule(
         result = CliRunner().invoke(main_cli, command)
     assert result.exit_code == 0, result.output
     args = run.call_args.args[0]
-    assert args.min_contig_length == args.graph_min_contig_length == expected
+    assert args.min_contig_length == 1000
+    assert args.graph_min_contig_length == expected
 
 
 def test_explicit_graph_cutoff_does_not_change_admission_or_training(tmp_path):

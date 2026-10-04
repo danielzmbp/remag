@@ -1,4 +1,4 @@
-"""Automatic length selection and protection against incompatible reruns."""
+"""Fixed length defaults and protection against incompatible reruns."""
 
 import gzip
 import json
@@ -12,8 +12,7 @@ from click.testing import CliRunner
 from remag.cli import main_cli
 from remag.core import main
 from remag.features import get_features
-from remag.output import validate_cached_min_contig_length
-from remag.utils import select_min_contig_length
+from remag.output import binning_settings, validate_cached_min_contig_length
 
 
 def write_fasta(path, lengths):
@@ -26,30 +25,6 @@ def write_fasta(path, lengths):
     return str(path)
 
 
-@pytest.mark.parametrize("suffix", [".fa", ".fa.gz"])
-@pytest.mark.parametrize(
-    "lengths,minimum,median",
-    [
-        ([999, 1000, 1200], 1000, 1100),
-        ([1000], 1000, 1000),
-        ([2499, 2499, 4096], 1000, 2499),
-        ([1000, 2500, 4096], 4096, 2500),
-        ([2499, 2500, 2500, 4096], 4096, 2500),
-        ([2498, 2499, 2500, 4096], 1000, 2499.5),
-        ([4096], 4096, 4096),
-    ],
-)
-def test_unfiltered_median_boundaries_and_order(
-    tmp_path, suffix, lengths, minimum, median
-):
-    fasta = tmp_path / f"input{suffix}"
-    for ordered in (lengths, list(reversed(lengths))):
-        assert select_min_contig_length(write_fasta(fasta, ordered)) == (
-            minimum,
-            median,
-        )
-
-
 @pytest.mark.parametrize(
     "coverage_count,lengths",
     [
@@ -59,10 +34,6 @@ def test_unfiltered_median_boundaries_and_order(
         (0, [0, 999]),
         (1, [0, 999]),
         (3, [0, 999]),
-        (0, [2500]),
-        (3, [2500]),
-        (0, [3000, 4095]),
-        (3, [3000, 4095]),
     ],
 )
 def test_empty_selection_stops_before_forced_cleanup(tmp_path, lengths, coverage_count):
@@ -86,13 +57,12 @@ def test_empty_selection_stops_before_forced_cleanup(tmp_path, lengths, coverage
 
 @pytest.mark.parametrize("coverage_count", [0, 1, 3])
 @pytest.mark.parametrize("skip_filter", [False, True])
-@pytest.mark.parametrize(
-    "lengths,minimum", [([1000, 1500, 6000], 1000), ([5000], 4096)]
-)
-def test_cli_resolves_length_before_filtering(
-    tmp_path, coverage_count, skip_filter, lengths, minimum
+@pytest.mark.parametrize("suffix", [".fa", ".fa.gz"])
+@pytest.mark.parametrize("lengths", [[1000, 1500, 6000], [2500], [5000]])
+def test_cli_defaults_do_not_depend_on_assembly_lengths(
+    tmp_path, coverage_count, skip_filter, suffix, lengths
 ):
-    fasta = write_fasta(tmp_path / "input.fa", lengths)
+    fasta = write_fasta(tmp_path / f"input{suffix}", lengths)
     command = [fasta, "-o", str(tmp_path / "out")]
     for i in range(coverage_count):
         coverage = tmp_path / f"sample{i}.bam"
@@ -104,15 +74,16 @@ def test_cli_resolves_length_before_filtering(
         result = CliRunner().invoke(main_cli, command)
     assert result.exit_code == 0, result.output
     args = run.call_args.args[0]
-    assert args.min_contig_length == (1000 if coverage_count == 1 else minimum)
-    assert args.contig_length_median is not None
+    assert args.min_contig_length == 1000
+    assert args.graph_min_contig_length == (1000 if coverage_count == 1 else 3000)
+    assert not hasattr(args, "contig_length_median")
     assert args.skip_bacterial_filter is skip_filter
     assert args.base_learning_rate == (0.0005 if coverage_count > 1 else 0.005)
 
 
 @pytest.mark.parametrize("extension", ["bam", "cram", "tsv", "cov.gz"])
 @pytest.mark.parametrize("length", [2500, 10000])
-def test_single_coverage_uses_1000_even_with_high_median(tmp_path, extension, length):
+def test_single_coverage_uses_1000_for_admission_and_graph(tmp_path, extension, length):
     fasta = write_fasta(tmp_path / "input.fa.gz", [length])
     coverage = tmp_path / f"sample.{extension}"
     coverage.touch()
@@ -121,7 +92,7 @@ def test_single_coverage_uses_1000_even_with_high_median(tmp_path, extension, le
     assert result.exit_code == 0, result.output
     args = run.call_args.args[0]
     assert args.min_contig_length == 1000
-    assert args.contig_length_median == length
+    assert args.graph_min_contig_length == 1000
 
 
 @pytest.mark.parametrize("minimum", [1, 1000, 4096, 5000])
@@ -134,46 +105,85 @@ def test_explicit_minimum_skips_length_scan(tmp_path, minimum, coverage_count):
         coverage.touch()
         command += ["-c", str(coverage)]
     with (
-        patch("remag.utils.select_min_contig_length") as select,
+        patch("remag.utils.fasta_iter") as scan,
         patch("remag.cli.run_remag") as run,
     ):
         result = CliRunner().invoke(main_cli, command)
     assert result.exit_code == 0, result.output
-    select.assert_not_called()
-    assert run.call_args.args[0].min_contig_length == minimum
-    assert run.call_args.args[0].contig_length_median is None
+    scan.assert_not_called()
+    args = run.call_args.args[0]
+    assert args.min_contig_length == minimum
+    assert args.graph_min_contig_length == max(
+        minimum, 1000 if coverage_count == 1 else 3000
+    )
+    assert not hasattr(args, "contig_length_median")
 
 
-@pytest.mark.parametrize(
-    "coverage_count,minimum,lengths",
-    [
-        (0, 1000, [999, 1000, 1800, 6000]),
-        (0, 4096, [1000, 4096, 5000, 6000]),
-        (1, 1000, [999, 1000, 3000, 5000, 6000]),
-    ],
-)
-def test_automatic_features_match_explicit_admission_and_training_fragments(
-    tmp_path, coverage_count, minimum, lengths
+def test_default_validation_stops_at_first_admitted_contig(tmp_path):
+    fasta = write_fasta(tmp_path / "input.fa", [1000])
+
+    def records():
+        yield "c", "A" * 1000
+        raise AssertionError("Default selection must not scan the whole assembly")
+
+    with (
+        patch("remag.utils.fasta_iter", return_value=records()),
+        patch("remag.cli.run_remag") as run,
+    ):
+        result = CliRunner().invoke(main_cli, [fasta])
+    assert result.exit_code == 0, result.output
+    assert run.call_args.args[0].min_contig_length == 1000
+
+
+@pytest.mark.parametrize("coverage_count", [0, 1, 3])
+@pytest.mark.parametrize("graph_minimum", [1000, 5000])
+def test_explicit_graph_minimum_overrides_scenario_default(
+    tmp_path, coverage_count, graph_minimum
 ):
+    fasta = write_fasta(tmp_path / "input.fa", [1000, 6000])
+    command = [fasta, "--graph-min-contig-length", str(graph_minimum)]
+    for index in range(coverage_count):
+        coverage = tmp_path / f"sample{index}.tsv"
+        coverage.touch()
+        command += ["-c", str(coverage)]
+    with patch("remag.cli.run_remag") as run:
+        result = CliRunner().invoke(main_cli, command)
+    assert result.exit_code == 0, result.output
+    assert run.call_args.args[0].min_contig_length == 1000
+    assert run.call_args.args[0].graph_min_contig_length == graph_minimum
+
+
+@pytest.mark.parametrize("coverage_count", [0, 1, 3])
+def test_default_features_match_explicit_1000_admission_and_training(
+    tmp_path, coverage_count
+):
+    lengths = [999, 1000, 1800, 3000, 5000, 6000]
     fasta = write_fasta(tmp_path / "input.fa", lengths)
-    selected, _ = select_min_contig_length(fasta, coverage_count=coverage_count)
-    assert selected == minimum
-    (tmp_path / "auto").mkdir()
+    command = [fasta]
+    for index in range(coverage_count):
+        coverage = tmp_path / f"sample{index}.bam"
+        coverage.touch()
+        command += ["-c", str(coverage)]
+    with patch("remag.cli.run_remag") as run:
+        result = CliRunner().invoke(main_cli, command)
+    assert result.exit_code == 0, result.output
+    args = run.call_args.args[0]
+    (tmp_path / "default").mkdir()
     (tmp_path / "explicit").mkdir()
-    auto, auto_fragments = get_features(
-        fasta, None, None, str(tmp_path / "auto"), selected, 1, 4
+    default, default_fragments = get_features(
+        fasta, None, None, str(tmp_path / "default"), args.min_contig_length, 1, 4, args
     )
     explicit, explicit_fragments = get_features(
-        fasta, None, None, str(tmp_path / "explicit"), minimum, 1, 4
+        fasta, None, None, str(tmp_path / "explicit"), 1000, 1, 4
     )
-    pd.testing.assert_frame_equal(auto, explicit)
-    assert auto_fragments == explicit_fragments
-    assert set(auto_fragments) == {
-        f"c{i}" for i, length in enumerate(lengths) if length >= minimum
+    pd.testing.assert_frame_equal(default, explicit)
+    assert default_fragments == explicit_fragments
+    assert set(default_fragments) == {
+        f"c{i}" for i, length in enumerate(lengths) if length >= 1000
     }
     assert all(
-        fragment["length"] >= minimum
-        for contig in auto_fragments.values()
+        fragment["length"] >= 1000
+        for contig in default_fragments.values()
         for fragment in contig["fragment_info"].values()
     )
 
@@ -183,13 +193,31 @@ def filter_only_args(tmp_path, minimum=1000, force=False):
         fasta=write_fasta(tmp_path / "input.fa", [1200, 6000]),
         output=str(tmp_path / "out"),
         min_contig_length=minimum,
-        contig_length_median=None,
         verbose=False,
         filter_only=True,
         skip_bacterial_filter=False,
         keep_intermediate=False,
         force=force,
     )
+
+
+@pytest.mark.parametrize("coverage_count", [0, 1, 3])
+@pytest.mark.parametrize("coverage_type", ["bam", "tsv"])
+def test_core_records_the_same_graph_defaults_as_cli(
+    tmp_path, coverage_count, coverage_type
+):
+    args = filter_only_args(tmp_path)
+    setattr(args, coverage_type, [f"sample{i}" for i in range(coverage_count)])
+    with patch("remag.core.filter_bacterial_contigs", return_value=args.fasta):
+        main(args)
+    params = json.loads((tmp_path / "out" / "params.json").read_text())
+    assert params["min_contig_length"] == 1000
+    assert params["graph_min_contig_length"] == (1000 if coverage_count == 1 else 3000)
+    assert (
+        params["binning"]["graph_min_contig_length"]
+        == params["graph_min_contig_length"]
+    )
+    assert "contig_length_median" not in params
 
 
 @pytest.mark.parametrize(
@@ -225,19 +253,49 @@ def test_incompatible_rerun_preserves_files_and_stops_before_filter(tmp_path, me
         validate_cached_min_contig_length(str(output), 1000)
 
 
-def test_single_coverage_default_rejects_cached_4096_run(tmp_path):
+@pytest.mark.parametrize("coverage_count", [0, 1, 3])
+def test_default_admission_rejects_cached_4096_run(tmp_path, coverage_count):
     fasta = write_fasta(tmp_path / "input.fa", [5000])
-    coverage = tmp_path / "sample.bam"
-    coverage.touch()
     output = tmp_path / "out"
     output.mkdir()
     (output / "params.json").write_text('{"min_contig_length": 4096}')
     (output / "embeddings.csv").write_text("existing embeddings")
     before = {p.name: p.read_bytes() for p in output.iterdir()}
+    command = [fasta, "-o", str(output)]
+    for index in range(coverage_count):
+        coverage = tmp_path / f"sample{index}.bam"
+        coverage.touch()
+        command += ["-c", str(coverage)]
     with patch("remag.core.filter_bacterial_contigs") as filtering:
-        result = CliRunner().invoke(
-            main_cli, [fasta, "-c", str(coverage), "-o", str(output)]
-        )
+        result = CliRunner().invoke(main_cli, command)
+    assert result.exit_code == 1
+    filtering.assert_not_called()
+    assert {p.name: p.read_bytes() for p in output.iterdir()} == before
+
+
+@pytest.mark.parametrize("coverage_count", [0, 3])
+def test_new_graph_default_rejects_cached_1000_graph(tmp_path, coverage_count):
+    fasta = write_fasta(tmp_path / "input.fa", [1000, 6000])
+    output = tmp_path / "out"
+    command = [fasta, "-o", str(output)]
+    for index in range(coverage_count):
+        coverage = tmp_path / f"sample{index}.bam"
+        coverage.touch()
+        command += ["-c", str(coverage)]
+    with patch("remag.cli.run_remag") as run:
+        result = CliRunner().invoke(main_cli, command)
+    assert result.exit_code == 0, result.output
+    old_args = run.call_args.args[0]
+    old_args.graph_min_contig_length = 1000
+    output.mkdir()
+    (output / "params.json").write_text('{"min_contig_length": 1000}')
+    (output / "pre_rescue.csv").write_text("existing assignments")
+    (output / "clustering_provenance.json").write_text(
+        json.dumps({"settings": binning_settings(old_args)})
+    )
+    before = {p.name: p.read_bytes() for p in output.iterdir()}
+    with patch("remag.core.filter_bacterial_contigs") as filtering:
+        result = CliRunner().invoke(main_cli, command)
     assert result.exit_code == 1
     filtering.assert_not_called()
     assert {p.name: p.read_bytes() for p in output.iterdir()} == before
@@ -264,7 +322,6 @@ def test_matching_legacy_rerun_preserves_original_parameters(
 @pytest.mark.parametrize("force", [False, True])
 def test_new_and_forced_runs_always_record_resolved_cutoff(tmp_path, force, capsys):
     args = filter_only_args(tmp_path, minimum=4096, force=force)
-    args.contig_length_median = 3600
     output = tmp_path / "out"
     if force:
         output.mkdir()
@@ -277,8 +334,9 @@ def test_new_and_forced_runs_always_record_resolved_cutoff(tmp_path, force, caps
     assert filtering.call_args.kwargs["min_contig_length"] == 4096
     params = json.loads((output / "params.json").read_text())
     assert params["min_contig_length"] == 4096
-    assert params["contig_length_median"] == 3600
+    assert params["graph_min_contig_length"] == 4096
+    assert "contig_length_median" not in params
     assert params["keep_intermediate"] is False
     assert not (output / "embeddings.csv").exists()
-    assert "3600 bp" in (output / "remag.log").read_text()
+    assert "Median input contig" not in (output / "remag.log").read_text()
     assert "4,096" in capsys.readouterr().out

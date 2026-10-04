@@ -223,6 +223,7 @@ class TestCliDefaults:
         assert args.leiden_k_neighbors == 15
         assert args.skip_bacterial_filter is False
         assert args.min_contig_length == 1000
+        assert args.graph_min_contig_length == (1000 if coverage_count == 1 else 3000)
         assert args.base_learning_rate == (0.0005 if coverage_count > 1 else 0.005)
         assert not hasattr(args, "mode")
 

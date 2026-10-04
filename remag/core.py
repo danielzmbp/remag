@@ -25,13 +25,18 @@ from .output import (
     validate_cached_min_contig_length,
 )
 from .rescue import rescue_fragmented_bins
-from .utils import setup_logging
+from .utils import default_graph_min_contig_length, setup_logging
 
 
 def main(args):
     try:
         if getattr(args, "graph_min_contig_length", None) is None:
-            args.graph_min_contig_length = args.min_contig_length
+            coverage_count = len(
+                getattr(args, "bam", None) or getattr(args, "tsv", None) or []
+            )
+            args.graph_min_contig_length = default_graph_min_contig_length(
+                args.min_contig_length, coverage_count
+            )
         if args.graph_min_contig_length < args.min_contig_length:
             raise ValueError("Graph minimum must be at least the admission minimum.")
         existing_results = prepare_output_directory(args)
@@ -55,12 +60,6 @@ def main(args):
         logger.error(f"Failed to initialize output directory: {e}")
         sys.exit(1)
 
-    contig_length_median = getattr(args, "contig_length_median", None)
-    if contig_length_median is not None:
-        logger.info(
-            f"Median input contig length (>=1,000 bp, before filtering): "
-            f"{contig_length_median:g} bp."
-        )
     logger.info(
         f"Minimum contig and training-fragment length: {args.min_contig_length:,} bp."
     )
