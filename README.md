@@ -303,6 +303,8 @@ The original graph is retained even without `--keep-intermediate` and reused wit
 
 `--filter-only` stops after this stage and does not produce binning outputs. Use it with filtering enabled; `--skip-bacterial-filter` disables that stage. Contigs below the minimum length are excluded from classification and the rejected-contig FASTA.
 
+Prediction evaluates every adaptive sliding window before applying the existing random-window resampling rules once. It retains contigs with mean eukaryotic probability at least 0.45. New runs record the prediction policy in `params.json`. Reusing an older filtered FASTA does not rerun prediction; REMAG warns when its policy differs or is unknown. Use `--force` or a new output directory to apply the current policy.
+
 If no contigs pass the classifier, the current implementation falls back to the original input FASTA instead of writing a filtered FASTA. Classifier initialization failures also fall back to the input; consult `remag.log` for details.
 
 ### Visualization

@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   graph vertex IDs, and clustering/rescue provenance for reproducible reuse.
 
 ### Changed
+- Evaluate all HyenaDNA sliding windows before applying the original random-window
+  resampling rules once. Remove prediction early termination while retaining
+  adaptive strides, model selection and the 0.45 admission threshold. Record the
+  policy in new run parameters and warn when reusing filtering from another or
+  unknown policy.
 - Merge fragmented bins, then recruit eligible unassigned graph and shorter
   contigs together in embedding order, followed by one final bin-size filter.
   Preserve fixed centroids and the tested cumulative marker safeguards.

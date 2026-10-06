@@ -10,7 +10,11 @@ from importlib.metadata import version
 from loguru import logger
 
 from .clustering import cluster_contigs
-from .features import filter_bacterial_contigs, get_features
+from .features import (
+    HYENADNA_PREDICTION_POLICY,
+    filter_bacterial_contigs,
+    get_features,
+)
 from .miniprot_utils import (
     check_core_gene_duplications,
     check_core_gene_duplications_from_cache,
@@ -73,6 +77,11 @@ def main(args):
             "version": version("remag"),
             **vars(args),
             "binning": binning_settings(args),
+            "hyenadna_prediction_policy": (
+                None
+                if getattr(args, "skip_bacterial_filter", False)
+                else HYENADNA_PREDICTION_POLICY
+            ),
         }
         with open(params_path, "w", encoding="utf-8") as f:
             json.dump(params, f, indent=4)

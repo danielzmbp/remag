@@ -6,6 +6,7 @@ import errno
 import gzip
 import hashlib
 import itertools
+import json
 import os
 import random
 from collections import OrderedDict, deque
@@ -140,6 +141,7 @@ def get_features_csv_path(output_dir):
 
 
 EUKARYOTE_FILTER_THRESHOLD = 0.45
+HYENADNA_PREDICTION_POLICY = "no_early_stop_original_sampling"
 
 
 def filter_bacterial_contigs(
@@ -175,6 +177,21 @@ def filter_bacterial_contigs(
     os.makedirs(output_dir, exist_ok=True)
 
     if os.path.exists(filtered_fasta):
+        previous_policy = None
+        try:
+            with open(os.path.join(output_dir, "params.json"), encoding="utf-8") as f:
+                params = json.load(f)
+            if isinstance(params, dict):
+                previous_policy = params.get("hyenadna_prediction_policy")
+        except (OSError, ValueError):
+            pass
+        if previous_policy != HYENADNA_PREDICTION_POLICY:
+            logger.warning(
+                "Reusing filtered FASTA from a different or unknown classifier policy "
+                f"({previous_policy or 'legacy/unknown'}); prediction is not rerun. "
+                "Use --force or a new output directory to apply the current policy "
+                f"({HYENADNA_PREDICTION_POLICY})."
+            )
         logger.info(f"Using existing filtered FASTA: {filtered_fasta}")
         return filtered_fasta
 

@@ -521,11 +521,14 @@ class HyenaDNAClassifier:
         self,
         sequences: List[str],
         adaptive_stride: bool = True,
-        early_stopping: bool = True,
+        early_stopping: bool = False,
         low_confidence_threshold: float = 0.75,
         additional_random_windows: int = 8,
     ) -> List[Dict]:
-        """Predict multiple contigs while batching windows across contigs."""
+        """Predict all sliding windows, then apply the original resampling rules.
+
+        early_stopping is retained for caller compatibility but is ignored.
+        """
         results = [None] * len(sequences)
         stats = [None] * len(sequences)
         grouped_windows = {}
@@ -537,7 +540,7 @@ class HyenaDNAClassifier:
             )
             estimated_windows = estimate_window_count(seq_len, window_size, stride)
 
-            if early_stopping and estimated_windows > self.batch_size:
+            if estimated_windows > self.batch_size:
                 results[contig_idx] = self.predict_contig(
                     sequence,
                     adaptive_stride=adaptive_stride,
@@ -577,34 +580,21 @@ class HyenaDNAClassifier:
             seq_len = contig_stats["seq_len"]
             window_size = contig_stats["window_size"]
 
-            if early_stopping and num_windows >= 3:
-                avg_prob = prob_sum / num_windows
-                is_eukaryote = avg_prob >= 0.5
-                if is_eukaryote:
-                    confidence = num_eukaryote / num_windows
-                else:
-                    confidence = (num_windows - num_eukaryote) / num_windows
-
-                if confidence < low_confidence_threshold and seq_len > window_size:
-                    contig_stats["resampled"] = True
-                    num_random = (
-                        additional_random_windows * 2
-                        if seq_len < self.length_threshold
-                        else additional_random_windows
-                    )
-                    random_windows = generate_random_windows(
-                        sequences[contig_idx], window_size, num_random
-                    )
-                else:
-                    random_windows = []
-            elif num_windows == 2 and abs(prob_sum / num_windows - 0.5) <= 0.05:
-                contig_stats["resampled"] = True
-                num_additional = 10 if seq_len < self.length_threshold else 6
-                random_windows = generate_random_windows(
-                    sequences[contig_idx], window_size, num_additional
-                )
-            else:
-                random_windows = []
+            num_random = self._resampling_count(
+                seq_len,
+                window_size,
+                num_windows,
+                num_eukaryote,
+                prob_sum,
+                low_confidence_threshold,
+                additional_random_windows,
+            )
+            contig_stats["resampled"] = num_random > 0
+            random_windows = (
+                generate_random_windows(sequences[contig_idx], window_size, num_random)
+                if num_random > 0
+                else []
+            )
 
             if random_windows:
                 model, tokenizer, _, _, model_name = self._select_model_config(
@@ -656,11 +646,41 @@ class HyenaDNAClassifier:
 
         return results
 
+    def _resampling_count(
+        self,
+        seq_len,
+        window_size,
+        num_windows,
+        num_eukaryote,
+        prob_sum,
+        low_confidence_threshold,
+        additional_random_windows,
+    ):
+        """Decide once whether the completed sliding pass needs random windows."""
+        if num_windows >= 3:
+            agreeing = (
+                num_eukaryote
+                if prob_sum / num_windows >= 0.5
+                else num_windows - num_eukaryote
+            )
+            if (
+                agreeing / num_windows < low_confidence_threshold
+                and seq_len > window_size
+            ):
+                return (
+                    additional_random_windows * 2
+                    if seq_len < self.length_threshold
+                    else additional_random_windows
+                )
+        elif num_windows == 2 and abs(prob_sum / num_windows - 0.5) <= 0.05:
+            return 10 if seq_len < self.length_threshold else 6
+        return 0
+
     def predict_contig(
         self,
         sequence: str,
         adaptive_stride: bool = True,
-        early_stopping: bool = True,
+        early_stopping: bool = False,
         low_confidence_threshold: float = 0.75,
         additional_random_windows: int = 8,
     ) -> Dict:
@@ -675,7 +695,7 @@ class HyenaDNAClassifier:
         Args:
             sequence: DNA sequence to classify
             adaptive_stride: Use adaptive stride based on sequence length
-            early_stopping: Stop early when confidence is high
+            early_stopping: Ignored; retained for compatibility with existing callers
             low_confidence_threshold: Confidence threshold below which to add random windows (default: 0.75)
             additional_random_windows: Number of random windows to add when confidence is low (default: 8)
 
@@ -696,23 +716,12 @@ class HyenaDNAClassifier:
         )
 
         window_iter = sliding_window(sequence, window_size, stride)
-        total_windows = (
-            estimate_window_count(seq_len, window_size, stride)
-            if early_stopping
-            else None
-        )
         window_batch_size = max(1, self.batch_size)
-        early_check_min_windows = (
-            min(self.batch_size, total_windows)
-            if total_windows is not None
-            else self.batch_size
-        )
 
         num_windows = 0
         num_eukaryote = 0
         prob_sum = 0.0
         resampled = False
-        uncertainty_detected = False
 
         while True:
             batch = list(islice(window_iter, window_batch_size))
@@ -730,83 +739,31 @@ class HyenaDNAClassifier:
             num_eukaryote += euk_count
             prob_sum += prob_total
 
-            if early_stopping and num_windows >= max(3, early_check_min_windows):
-                # Calculate current confidence
-                avg_prob = prob_sum / num_windows
-                is_eukaryote = avg_prob >= 0.5
-
-                if is_eukaryote:
-                    confidence = num_eukaryote / num_windows
-                else:
-                    confidence = (num_windows - num_eukaryote) / num_windows
-
-                # High confidence - stop early
-                if confidence >= 0.90:
-                    break
-
-                # Low confidence detected - switch to random sampling immediately
-                if (
-                    confidence < low_confidence_threshold
-                    and not uncertainty_detected
-                    and seq_len > window_size
-                ):
-                    uncertainty_detected = True
-                    resampled = True
-
-                    # Generate random windows and add them to current batch processing
-                    # For small contigs, use more random windows for better coverage
-                    num_random = (
-                        additional_random_windows * 2
-                        if seq_len < self.length_threshold
-                        else additional_random_windows
-                    )
-                    random_windows = generate_random_windows(
-                        sequence, window_size, num_random
-                    )
-                    euk_count_extra, prob_total_extra, batch_windows_extra = (
-                        self._predict_window_stats(random_windows, model, tokenizer)
-                    )
-
-                    if batch_windows_extra > 0:
-                        num_windows += batch_windows_extra
-                        num_eukaryote += euk_count_extra
-                        prob_sum += prob_total_extra
-
-                        # Recalculate confidence with random windows added
-                        avg_prob = prob_sum / num_windows
-                        is_eukaryote = avg_prob >= 0.5
-
-                        if is_eukaryote:
-                            confidence = num_eukaryote / num_windows
-                        else:
-                            confidence = (num_windows - num_eukaryote) / num_windows
-
-                        # Check if random sampling resolved uncertainty
-                        if confidence >= 0.85:
-                            break
-
-                # Check impossible outcomes for early stopping
-                if total_windows is not None and (
-                    2 * num_eukaryote > total_windows
-                    or 2 * (num_windows - num_eukaryote) > total_windows
-                ):
-                    break
-
-        # Special case: Very low confidence with only 2 windows - force more sampling
-        if num_windows == 2 and abs(prob_sum / num_windows - 0.5) <= 0.05:
-            # Ambiguous case - add more random windows
-            num_additional = 10 if seq_len < self.length_threshold else 6
+        num_additional = self._resampling_count(
+            seq_len,
+            window_size,
+            num_windows,
+            num_eukaryote,
+            prob_sum,
+            low_confidence_threshold,
+            additional_random_windows,
+        )
+        if num_additional > 0:
             random_windows = generate_random_windows(
                 sequence, window_size, num_additional
             )
-            euk_count_extra, prob_total_extra, batch_windows_extra = (
-                self._predict_window_stats(random_windows, model, tokenizer)
-            )
-            if batch_windows_extra > 0:
+            for start in range(0, len(random_windows), window_batch_size):
+                euk_count_extra, prob_total_extra, batch_windows_extra = (
+                    self._predict_window_stats(
+                        random_windows[start : start + window_batch_size],
+                        model,
+                        tokenizer,
+                    )
+                )
                 num_windows += batch_windows_extra
                 num_eukaryote += euk_count_extra
                 prob_sum += prob_total_extra
-                resampled = True
+            resampled = True
 
         if num_windows == 0:
             return {
