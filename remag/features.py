@@ -12,6 +12,7 @@ import random
 from collections import OrderedDict, deque
 from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
+from contextlib import nullcontext
 from functools import lru_cache
 from multiprocessing.util import Finalize
 from typing import Dict, List, Optional, Set, Tuple
@@ -23,6 +24,13 @@ from loguru import logger
 from sklearn.preprocessing import MinMaxScaler
 from tqdm import tqdm
 
+from .filter_policy import (
+    EUKARYOTE_FILTER_THRESHOLD,
+    HYENADNA_PREDICTION_POLICY,
+    INFERENCE_BATCH_SIZE,
+    RECORD_BATCH_SIZE,
+    ClassifierPolicyError,
+)
 from .utils import CoverageDict, FragmentDict, _write_fasta_record, fasta_iter
 
 
@@ -140,15 +148,11 @@ def get_features_csv_path(output_dir):
     return os.path.join(output_dir, "features.csv")
 
 
-EUKARYOTE_FILTER_THRESHOLD = 0.45
-HYENADNA_PREDICTION_POLICY = "no_early_stop_original_sampling"
-
-
 def filter_bacterial_contigs(
     fasta_file,
     output_dir,
     min_contig_length=1000,
-    hyenadna_batch_size=1024,
+    hyenadna_batch_size=INFERENCE_BATCH_SIZE,
     save_filtered_contigs=False,
 ):
     """
@@ -159,7 +163,7 @@ def filter_bacterial_contigs(
         fasta_file: Path to input FASTA file
         output_dir: Output directory for filtered results
         min_contig_length: Minimum contig length threshold
-        hyenadna_batch_size: Batch size for HyenaDNA model inference (default: 1024)
+        hyenadna_batch_size: Legacy argument; inference uses 256 windows per batch
         save_filtered_contigs: If True, save non-eukaryotic contigs to a separate file
 
     Returns:
@@ -195,6 +199,10 @@ def filter_bacterial_contigs(
         logger.info(f"Using existing filtered FASTA: {filtered_fasta}")
         return filtered_fasta
 
+    logger.info(
+        f"HyenaDNA filtering policy: {HYENADNA_PREDICTION_POLICY}; "
+        "64 contigs per batch, up to 256 windows per inference call."
+    )
     try:
         try:
             from .hyenadna_classifier import HyenaDNAClassifier
@@ -206,7 +214,11 @@ def filter_bacterial_contigs(
             device="auto",
             min_contig_length=min_contig_length,
             batch_size=hyenadna_batch_size,
+            use_dual_models=False,
+            window_size=4096,
         )
+    except ClassifierPolicyError:
+        raise
     except ImportError as e:
         logger.error(
             f"HyenaDNA classifier not found: {e}. Using original FASTA without filtering"
@@ -238,7 +250,7 @@ def filter_bacterial_contigs(
             return
 
         try:
-            sequences = [seq for _, seq in records]
+            sequences = [seq.upper() for _, seq in records]
             if hasattr(classifier, "predict_contigs"):
                 predictions = list(classifier.predict_contigs(sequences))
             else:
@@ -247,7 +259,7 @@ def filter_bacterial_contigs(
                 raise ValueError("Classifier returned the wrong number of predictions")
 
             prepared_results = []
-            for (header, seq_upper), result in zip(records, predictions):
+            for (header, sequence), result in zip(records, predictions):
                 euk_prob = result["eukaryote_prob"]
                 confidence = result["confidence"]
                 num_windows = result["num_windows"]
@@ -257,8 +269,10 @@ def filter_bacterial_contigs(
                     if euk_prob >= eukaryote_filter_threshold
                     else "non_eukaryote"
                 )
-                row = f"{header}\t{len(seq_upper)}\t{prediction}\t{euk_prob:.4f}\t{confidence:.4f}\t{num_windows}\t{resampled}\n"
+                row = f"{header}\t{len(sequence)}\t{prediction}\t{euk_prob:.17g}\t{confidence:.4f}\t{num_windows}\t{resampled}\n"
                 prepared_results.append((prediction, row))
+        except ClassifierPolicyError:
+            raise
         except Exception as e:
             logger.error(f"Classification error for batch: {e}")
             for header, sequence in records:
@@ -266,20 +280,20 @@ def filter_bacterial_contigs(
                 n_eukaryotic += 1
             return
 
-        for (header, seq_upper), (prediction, row) in zip(records, prepared_results):
+        for (header, sequence), (prediction, row) in zip(records, prepared_results):
             results_file.write(row)
 
             if prediction == "eukaryote":
-                _write_fasta_record(fasta_out, header, seq_upper)
+                _write_fasta_record(fasta_out, header, sequence)
                 n_eukaryotic += 1
             else:
                 n_filtered += 1
                 if filtered_out_file:
-                    _write_fasta_record(filtered_out_file, header, seq_upper)
+                    _write_fasta_record(filtered_out_file, header, sequence)
 
     with open(classification_results, "w", encoding="utf-8") as results_file, open(
         temp_fasta, "w", encoding="utf-8"
-    ) as fasta_out:
+    ) as fasta_out, (filtered_out_file or nullcontext()):
 
         results_file.write(
             "contig_id\tlength\tprediction\teukaryote_prob\tconfidence\tnum_windows\tresampled\n"
@@ -288,14 +302,13 @@ def filter_bacterial_contigs(
         # Process sequences in batches so HyenaDNA windows can be batched across contigs.
         logger.info("Classifying sequences...")
         record_batch = []
-        record_batch_size = max(1, min(4096, hyenadna_batch_size))
+        record_batch_size = RECORD_BATCH_SIZE
         for header, seq in tqdm(fasta_iter(fasta_file), desc="Classifying sequences"):
             if len(seq) < min_contig_length:
                 continue
 
             n_total += 1
-            seq_upper = seq.upper()
-            record_batch.append((header, seq_upper))
+            record_batch.append((header, seq))
 
             if len(record_batch) < record_batch_size:
                 continue
@@ -306,21 +319,9 @@ def filter_bacterial_contigs(
         if record_batch:
             process_record_batch(record_batch, results_file, fasta_out)
 
-    # Close the filtered out file if it was opened
-    if filtered_out_file:
-        filtered_out_file.close()
-
     logger.info(
         f"Processed {n_total} sequences: kept {n_eukaryotic} eukaryotic, filtered {n_filtered} non-eukaryotic"
     )
-
-    # Handle the case where no eukaryotic sequences were found
-    if n_eukaryotic == 0:
-        os.remove(temp_fasta)
-        if filtered_out_file:
-            os.remove(filtered_out_fasta + ".tmp")
-        logger.warning("No eukaryotic sequences found, keeping all sequences")
-        return fasta_file
 
     # Rename temp file to final filtered fasta
     os.rename(temp_fasta, filtered_fasta)

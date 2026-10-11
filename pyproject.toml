@@ -86,7 +86,7 @@ include = ["remag*"]
 exclude = ["tests*"]
 
 [tool.setuptools.package-data]
-"remag.hyenadna_classifier" = ["models/*"]
+"remag.hyenadna_classifier" = ["models/pytorch_model.bin.20260724.4k"]
 "remag.db" = ["*.faa.gz"]
 
 [tool.black]

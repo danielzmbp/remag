@@ -18,7 +18,9 @@ def prediction(probability=0.8):
 def filter_records(tmp_path, classifier, batch_size=2, count=2):
     fasta = tmp_path / "input.fa"
     fasta.write_text("".join(f">c{i}\nACGT\n" for i in range(1, count + 1)))
-    with patch("remag.hyenadna_classifier.HyenaDNAClassifier", return_value=classifier):
+    with patch(
+        "remag.hyenadna_classifier.HyenaDNAClassifier", return_value=classifier
+    ), patch("remag.features.RECORD_BATCH_SIZE", batch_size):
         result = features.filter_bacterial_contigs(
             str(fasta),
             str(tmp_path / "out"),

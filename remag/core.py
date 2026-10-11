@@ -15,6 +15,7 @@ from .features import (
     filter_bacterial_contigs,
     get_features,
 )
+from .filter_policy import HYENADNA_FILTER_CONFIG, INFERENCE_BATCH_SIZE
 from .miniprot_utils import (
     check_core_gene_duplications,
     check_core_gene_duplications_from_cache,
@@ -82,6 +83,11 @@ def main(args):
                 if getattr(args, "skip_bacterial_filter", False)
                 else HYENADNA_PREDICTION_POLICY
             ),
+            "hyenadna_filter": (
+                None
+                if getattr(args, "skip_bacterial_filter", False)
+                else HYENADNA_FILTER_CONFIG
+            ),
         }
         with open(params_path, "w", encoding="utf-8") as f:
             json.dump(params, f, indent=4)
@@ -92,7 +98,7 @@ def main(args):
     skip_bacterial_filter = getattr(args, "skip_bacterial_filter", False)
     if not skip_bacterial_filter:
         logger.info("Filtering non-eukaryotic contigs using HyenaDNA classifier...")
-        hyenadna_batch_size = getattr(args, "hyenadna_batch_size", 1024)
+        hyenadna_batch_size = getattr(args, "hyenadna_batch_size", INFERENCE_BATCH_SIZE)
         save_filtered_contigs = getattr(args, "save_filtered_contigs", False)
         input_fasta = filter_bacterial_contigs(
             args.fasta,
@@ -108,6 +114,13 @@ def main(args):
     if getattr(args, "filter_only", False):
         logger.info(
             "Filter-only mode enabled; skipping feature generation and binning."
+        )
+        return
+
+    if not skip_bacterial_filter and os.path.getsize(input_fasta) == 0:
+        logger.info(
+            "No contigs retained by eukaryotic filtering. "
+            "Finished without training or producing bins."
         )
         return
 

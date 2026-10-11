@@ -15,11 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   graph vertex IDs, and clustering/rescue provenance for reproducible reuse.
 
 ### Changed
-- Evaluate all HyenaDNA sliding windows before applying the original random-window
-  resampling rules once. Remove prediction early termination while retaining
-  adaptive strides, model selection and the 0.45 admission threshold. Record the
-  policy in new run parameters and warn when reusing filtering from another or
-  unknown policy.
+- Use the July 2026 single 4 kb HyenaDNA checkpoint for all eligible contigs,
+  with up to 16 deterministic windows and mean-probability admission at 0.30.
+  Preserve native tokenization and use probabilities from the selected device,
+  and record the checkpoint and policy identity. Use reference batches of 64
+  contigs and 256 windows; the legacy inference batch option no longer changes them.
 - Merge fragmented bins, then recruit eligible unassigned graph and shorter
   contigs together in embedding order, followed by one final bin-size filter.
   Preserve fixed centroids and the tested cumulative marker safeguards.
@@ -35,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the assembly-median rule; explicit `--min-contig-length` still takes precedence.
 
 ### Fixed
+- Finish successfully without training or binning when eukaryotic filtering
+  retains no contigs, preserving the empty filtered FASTA and classification outputs.
 - Return zero coverage when no FASTA headers match alignment references instead
   of failing on an empty contig batch.
 

@@ -6,15 +6,25 @@ filtering pipeline, using a pre-trained HyenaDNA model for eukaryotic
 sequence detection.
 """
 
+import hashlib
+import math
 import os
-import random
 import sys
-from itertools import islice
 from typing import Dict, List, Tuple
 
-import numpy as np
 import torch
 from loguru import logger
+
+from ..filter_policy import (
+    EUKARYOTE_FILTER_THRESHOLD,
+    INFERENCE_BATCH_SIZE,
+    MODEL_FILENAME,
+    MODEL_SHA256,
+    RECORD_BATCH_SIZE,
+    WINDOW_BUDGET,
+    WINDOW_SIZE,
+    ClassifierPolicyError,
+)
 
 # Add compatibility layer for models trained with different module paths
 # This allows loading models that expect 'hyenadna_model' module
@@ -32,86 +42,12 @@ except ImportError:
     from standalone_tokenizer import StandaloneCharacterTokenizer as CharacterTokenizer
 
 
-def sliding_window(sequence: str, window_size: int = 4096, stride: int = 2048):
-    """Yield sliding windows from a sequence."""
-    if window_size <= 0 or stride <= 0:
-        raise ValueError("window_size and stride must be positive")
-
-    sequence = sequence.upper()
-    seq_len = len(sequence)
-
-    if seq_len <= window_size:
-        yield sequence
-        return
-
-    start = 0
-    while True:
-        end = min(start + window_size, seq_len)
-        window = sequence[start:end]
-
-        if len(window) >= window_size // 2:
-            yield window
-
-        if end == seq_len:
-            break
-
-        start += stride
-        if start >= seq_len:
-            break
-
-
-def estimate_window_count(
-    seq_len: int, window_size: int = 4096, stride: int = 2048
-) -> int:
-    """Estimate how many windows will be generated."""
-    if window_size <= 0 or stride <= 0:
-        raise ValueError("window_size and stride must be positive")
-
-    if seq_len <= window_size:
-        return 1
-
-    full_windows = ((seq_len - window_size) // stride) + 1
-    next_start = full_windows * stride
-    last_full_start = (full_windows - 1) * stride
-    last_full_reaches_end = last_full_start + window_size >= seq_len
-    has_partial = (
-        not last_full_reaches_end
-        and next_start < seq_len
-        and (seq_len - next_start) >= window_size // 2
-    )
-
-    return full_windows + (1 if has_partial else 0)
-
-
-def generate_random_windows(
-    sequence: str, window_size: int, num_windows: int, seed: int = 42
-) -> List[str]:
-    """Generate random windows from a sequence for additional sampling.
-
-    Args:
-        sequence: DNA sequence to sample from
-        window_size: Size of each window
-        num_windows: Number of random windows to generate
-        seed: Random seed for reproducibility (default: 42)
-
-    Returns:
-        List of random window sequences
-    """
-    seq_len = len(sequence)
-    if seq_len <= window_size:
-        return [sequence]
-
-    windows = []
-    max_start = seq_len - window_size
-
-    # Use local seeded RNG for deterministic behavior
-    rng = random.Random(seed)
-    for _ in range(num_windows):
-        start = rng.randint(0, max_start)
-        window = sequence[start : start + window_size]
-        windows.append(window)
-
-    return windows
+def uniform_positions(length: int) -> List[int]:
+    """Spread up to 16 nominal 4 kb windows over the entire contig."""
+    if length <= WINDOW_SIZE:
+        return [0]
+    n = min(WINDOW_BUDGET, 1 + math.ceil((length - WINDOW_SIZE) / 2048))
+    return sorted({round(j * (length - WINDOW_SIZE) / (n - 1)) for j in range(n)})
 
 
 def _build_window_encoder(tokenizer):
@@ -203,15 +139,7 @@ def _get_window_encoder(tokenizer):
 
 
 class HyenaDNAClassifier:
-    """
-    Dual-model HyenaDNA-based classifier for eukaryotic sequence detection.
-
-    Uses adaptive model selection:
-    - Small model (1024 context) for contigs < 4096bp with aggressive windowing
-    - Large model (4096 context) for contigs >= 4096bp for better long-range detection
-
-    Provides per-contig and batched predictions for REMAG's filtering pipeline.
-    """
+    """Single 4 kb HyenaDNA model with deterministic, bounded window sampling."""
 
     def __init__(
         self,
@@ -219,239 +147,65 @@ class HyenaDNAClassifier:
         device: str = "auto",
         window_size: int = None,
         stride: int = None,
-        batch_size: int = 64,
-        min_contig_length: int = 1024,
-        use_dual_models: bool = True,
+        batch_size: int = INFERENCE_BATCH_SIZE,
+        min_contig_length: int = 1000,
+        use_dual_models: bool = False,
         length_threshold: int = 4096,
     ):
-        """
-        Initialize the HyenaDNA classifier with dual-model support.
+        """Load the verified July 2026 checkpoint with its 4,096-token context.
 
-        Args:
-            model_path: Path to specific model file. If None, uses dual-model approach.
-            device: Device to use ('auto', 'cpu', 'cuda', 'mps')
-            window_size: Override window size (None = auto-select based on model)
-            stride: Override stride (None = auto-select based on model)
-            batch_size: Batch size for inference
-            min_contig_length: Minimum contig length to classify
-            use_dual_models: Use both 1024 and 4096 models adaptively (default: True)
-            length_threshold: Sequence length threshold for model selection (default: 4096)
+        Legacy sampling/model-selection arguments are accepted for compatibility
+        but cannot alter the selected policy. A custom path must contain the same
+        verified checkpoint. Auto device selection uses CUDA when available,
+        otherwise CPU; MPS has not been validated for this policy.
         """
-        # Set random seeds for deterministic behavior
-        random.seed(42)
-        np.random.seed(42)
-
-        self.batch_size = batch_size
+        if batch_size != INFERENCE_BATCH_SIZE:
+            logger.warning(
+                "HyenaDNA uses the validated batch size of 256 windows; "
+                f"ignoring requested batch size {batch_size}."
+            )
+        if (
+            use_dual_models
+            or window_size not in (None, WINDOW_SIZE)
+            or stride not in (None, 2048)
+            or length_threshold != 4096
+        ):
+            logger.warning("Legacy HyenaDNA model/stride settings are ignored.")
+        self.batch_size = INFERENCE_BATCH_SIZE
         self.min_contig_length = min_contig_length
-        self.use_dual_models = use_dual_models
-        self.length_threshold = length_threshold
+        self.use_dual_models = False
+        self.window_size = WINDOW_SIZE
+        self.small_model = self.large_model = None
+        self.small_tokenizer = self.large_tokenizer = None
 
-        # Determine device
         if device == "auto":
-            if torch.backends.mps.is_available():
-                self.device = "mps"
-            elif torch.cuda.is_available():
-                self.device = "cuda"
-            else:
-                self.device = "cpu"
-        else:
-            self.device = device
-
-        logger.info(f"Using device: {self.device}")
-        curr_path = os.path.dirname(os.path.abspath(__file__))
-
-        # Initialize dual models or single model
-        if use_dual_models and model_path is None:
-            logger.info("Initializing dual-model classifier (1024 + 4096 context)")
-
-            # Load small model (1024 context)
-            small_model_path = os.path.join(
-                curr_path, "models", "pytorch_model.bin.20251024"
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.device = str(torch.device(device))
+        if torch.device(self.device).type not in ("cpu", "cuda"):
+            raise ClassifierPolicyError(
+                "This HyenaDNA policy supports CPU and CUDA; MPS is not validated."
             )
-            if not os.path.exists(small_model_path):
-                raise FileNotFoundError(f"Small model not found: {small_model_path}")
-
-            logger.debug(f"Loading small model (1024) from {small_model_path}")
-            self.small_model = torch.load(
-                small_model_path, map_location=self.device, weights_only=False
+        logger.info(f"HyenaDNA inference device: {self.device}")
+        if model_path is None:
+            model_path = os.path.join(
+                os.path.dirname(__file__), "models", MODEL_FILENAME
             )
-            self.small_model = self.small_model.to(self.device)
-            self.small_model.eval()
-
-            # Load large model (4096 context)
-            large_model_path = os.path.join(
-                curr_path, "models", "pytorch_model.bin.20251116.4k"
+        with open(model_path, "rb") as handle:
+            digest = hashlib.sha256(handle.read()).hexdigest()
+        if digest != MODEL_SHA256:
+            raise ClassifierPolicyError(
+                "HyenaDNA checkpoint SHA256 does not match the selected policy."
             )
-            if not os.path.exists(large_model_path):
-                raise FileNotFoundError(f"Large model not found: {large_model_path}")
-
-            logger.debug(f"Loading large model (4096) from {large_model_path}")
-            self.large_model = torch.load(
-                large_model_path, map_location=self.device, weights_only=False
-            )
-            self.large_model = self.large_model.to(self.device)
-            self.large_model.eval()
-
-            # Create tokenizers for both models
-            self.small_tokenizer = CharacterTokenizer(
-                characters=["A", "C", "G", "T", "N"],
-                model_max_length=1024,
-                padding_side="left",
-            )
-
-            self.large_tokenizer = CharacterTokenizer(
-                characters=["A", "C", "G", "T", "N"],
-                model_max_length=4096,
-                padding_side="left",
-            )
-
-            # Set to None - will be selected dynamically
-            self.model = None
-            self.tokenizer = None
-            self.window_size = None
-            self.stride = None
-
-        else:
-            # Single model mode (backward compatibility)
-            if model_path is None:
-                model_path = os.path.join(
-                    curr_path, "models", "pytorch_model.bin.20251116.4k"
-                )
-                default_window_size = 4096
-                default_stride = 2048
-                default_max_length = 4096
-            else:
-                # Infer parameters from model name
-                if "4k" in model_path or "4096" in model_path:
-                    default_window_size = 4096
-                    default_stride = 2048
-                    default_max_length = 4096
-                else:
-                    default_window_size = 1024
-                    default_stride = 512
-                    default_max_length = 1024
-
-            if not os.path.exists(model_path):
-                raise FileNotFoundError(f"Model file not found: {model_path}")
-
-            logger.debug(f"Loading single model from {model_path}")
-            self.model = torch.load(
-                model_path, map_location=self.device, weights_only=False
-            )
-            self.model = self.model.to(self.device)
-            self.model.eval()
-
-            self.tokenizer = CharacterTokenizer(
-                characters=["A", "C", "G", "T", "N"],
-                model_max_length=default_max_length,
-                padding_side="left",
-            )
-
-            self.window_size = (
-                window_size if window_size is not None else default_window_size
-            )
-            self.stride = stride if stride is not None else default_stride
-            self.small_model = None
-            self.large_model = None
-            self.small_tokenizer = None
-            self.large_tokenizer = None
-
-        logger.debug("HyenaDNA classifier initialized successfully")
-
-    def _select_model_config(self, seq_len: int, adaptive_stride: bool = True):
-        """Select the model, tokenizer, window size, and stride for a sequence."""
-        if self.use_dual_models:
-            if seq_len < self.length_threshold:
-                model = self.small_model
-                tokenizer = self.small_tokenizer
-                window_size = 1024
-                if adaptive_stride:
-                    if seq_len < 2000:
-                        stride = 256
-                    elif seq_len < 3000:
-                        stride = 384
-                    else:
-                        stride = 512
-                else:
-                    stride = 512
-                model_name = "small_1024"
-            else:
-                model = self.large_model
-                tokenizer = self.large_tokenizer
-                window_size = 4096
-                if adaptive_stride:
-                    if seq_len < 8000:
-                        stride = 2048
-                    elif seq_len < 20000:
-                        stride = 4096
-                    else:
-                        stride = 8192
-                else:
-                    stride = 2048
-                model_name = "large_4096"
-        else:
-            model = self.model
-            tokenizer = self.tokenizer
-            window_size = self.window_size
-            stride = self.stride
-            if adaptive_stride:
-                if seq_len < 4000:
-                    stride = window_size // 2
-                elif seq_len < 20000:
-                    stride = window_size
-                else:
-                    stride = window_size * 2
-            model_name = "single"
-
-        return model, tokenizer, window_size, stride, model_name
-
-    @torch.inference_mode()
-    def _predict_window_stats(
-        self,
-        windows: List[str],
-        model=None,
-        tokenizer=None,
-    ) -> Tuple[int, float, int]:
-        """Run inference on windows and return statistics.
-
-        Args:
-            windows: List of window sequences to predict
-            model: Model to use (if None, uses self.model)
-            tokenizer: Tokenizer to use (if None, uses self.tokenizer)
-        """
-        if not windows:
-            return 0, 0.0, 0
-
-        # Use provided model/tokenizer or fall back to instance defaults
-        model = model if model is not None else self.model
-        tokenizer = tokenizer if tokenizer is not None else self.tokenizer
-
-        encoder = _get_window_encoder(tokenizer)
-        input_ids = encoder(windows).to(self.device)
-
-        outputs = model(input_ids)
-
-        if isinstance(outputs, tuple):
-            logits = outputs[0]
-        elif hasattr(outputs, "logits"):
-            logits = outputs.logits
-        else:
-            logits = outputs
-
-        if logits.shape[-1] == 2:
-            diff = logits[:, 1] - logits[:, 0]
-            preds = diff >= 0
-            euk_probs = torch.sigmoid(diff)
-        else:
-            probs = torch.softmax(logits, dim=-1)
-            euk_probs = probs[:, 1]
-            preds = torch.argmax(probs, dim=-1) == 1
-
-        batch_windows = preds.shape[0]
-        euk_count = int(preds.sum().item())
-        prob_sum = float(euk_probs.sum().item())
-
-        return euk_count, prob_sum, batch_windows
+        self.model = torch.load(
+            model_path, map_location=self.device, weights_only=False
+        )
+        self.model = self.model.to(self.device)
+        self.model.eval()
+        self.tokenizer = CharacterTokenizer(
+            characters=["A", "C", "G", "T", "N"],
+            model_max_length=WINDOW_SIZE,
+            padding_side="left",
+        )
 
     @torch.inference_mode()
     def _predict_window_predictions(
@@ -491,31 +245,64 @@ class HyenaDNAClassifier:
         combined = torch.stack((preds.to(euk_probs.dtype), euk_probs), dim=1)
         return [(bool(pred), float(prob)) for pred, prob in combined.cpu().tolist()]
 
-    def _predict_grouped_windows(self, grouped_windows, stats):
-        """Predict grouped windows and accumulate results into per-contig stats."""
-        for group in grouped_windows.values():
-            items = group["items"]
-            if not items:
-                continue
-
-            model = group["model"]
-            tokenizer = group["tokenizer"]
-            batch_size = max(1, self.batch_size)
-
-            for start in range(0, len(items), batch_size):
-                batch_items = items[start : start + batch_size]
-                windows = [window for _, window in batch_items]
-                predictions = self._predict_window_predictions(
-                    windows, model, tokenizer
+    def _predict_batch(self, sequences):
+        """Infer a bounded record batch in contig/start order, using Python sums."""
+        requests = [
+            (i, start)
+            for i, sequence in enumerate(sequences)
+            for start in uniform_positions(len(sequence))
+        ]
+        scores = [[] for _ in sequences]
+        for begin in range(0, len(requests), INFERENCE_BATCH_SIZE):
+            batch = requests[begin : begin + INFERENCE_BATCH_SIZE]
+            windows = [sequences[i][start : start + WINDOW_SIZE] for i, start in batch]
+            predictions = self._predict_window_predictions(windows)
+            if len(predictions) != len(batch):
+                raise ClassifierPolicyError(
+                    "HyenaDNA returned an unexpected window count."
                 )
+            for (i, _), (vote, probability) in zip(batch, predictions):
+                if not math.isfinite(probability) or not 0 <= probability <= 1:
+                    raise ClassifierPolicyError(
+                        "HyenaDNA returned an invalid probability."
+                    )
+                scores[i].append((vote, probability))
+        results = []
+        for sequence, values in zip(sequences, scores):
+            probability = sum(p for _, p in values) / len(values)
+            # Preserve the diagnostic native 0.5 window-agreement statistic.
+            # It does not participate in sampling or the 0.30 admission decision.
+            native_class = probability >= 0.5
+            confidence = sum(vote == native_class for vote, _ in values) / len(values)
+            results.append(
+                {
+                    "prediction": (
+                        "eukaryote"
+                        if probability >= EUKARYOTE_FILTER_THRESHOLD
+                        else "non_eukaryote"
+                    ),
+                    "eukaryote_prob": probability,
+                    "confidence": confidence,
+                    "num_windows": len(values),
+                    "length": len(sequence),
+                    "resampled": False,
+                    "model_used": "single_4096_20260724",
+                }
+            )
+        return results
 
-                for (contig_idx, _), (is_eukaryote, euk_prob) in zip(
-                    batch_items, predictions
-                ):
-                    contig_stats = stats[contig_idx]
-                    contig_stats["num_windows"] += 1
-                    contig_stats["num_eukaryote"] += int(is_eukaryote)
-                    contig_stats["prob_sum"] += euk_prob
+    def _predict_full_precision_batch(self, sequences):
+        cuda = torch.device(self.device).type == "cuda"
+        # Keep native full-precision inference without changing later training.
+        old_tf32 = torch.backends.cuda.matmul.allow_tf32
+        try:
+            if cuda:
+                torch.backends.cuda.matmul.allow_tf32 = False
+            with torch.autocast(device_type="cuda" if cuda else "cpu", enabled=False):
+                return self._predict_batch(sequences)
+        finally:
+            if cuda:
+                torch.backends.cuda.matmul.allow_tf32 = old_tf32
 
     def predict_contigs(
         self,
@@ -525,156 +312,32 @@ class HyenaDNAClassifier:
         low_confidence_threshold: float = 0.75,
         additional_random_windows: int = 8,
     ) -> List[Dict]:
-        """Predict all sliding windows, then apply the original resampling rules.
+        """Score all eligible contigs; legacy sampling arguments are ignored.
 
-        early_stopping is retained for caller compatibility but is ignored.
+        Groups of 64 eligible contigs share inference calls of at most 256 windows.
+        Every planned window contributes to the arithmetic mean. No RNG is used.
         """
-        results = [None] * len(sequences)
-        stats = [None] * len(sequences)
-        grouped_windows = {}
-
-        for contig_idx, sequence in enumerate(sequences):
-            seq_len = len(sequence)
-            model, tokenizer, window_size, stride, model_name = (
-                self._select_model_config(seq_len, adaptive_stride)
-            )
-            estimated_windows = estimate_window_count(seq_len, window_size, stride)
-
-            if estimated_windows > self.batch_size:
-                results[contig_idx] = self.predict_contig(
-                    sequence,
-                    adaptive_stride=adaptive_stride,
-                    early_stopping=early_stopping,
-                    low_confidence_threshold=low_confidence_threshold,
-                    additional_random_windows=additional_random_windows,
-                )
-                continue
-
-            stats[contig_idx] = {
-                "seq_len": seq_len,
-                "model_name": model_name,
-                "window_size": window_size,
+        results = [
+            {
+                "prediction": "non_eukaryote",
+                "eukaryote_prob": 0.0,
+                "confidence": 0.0,
                 "num_windows": 0,
-                "num_eukaryote": 0,
-                "prob_sum": 0.0,
+                "length": len(sequence),
                 "resampled": False,
+                "model_used": "none",
             }
-
-            key = model_name
-            group = grouped_windows.setdefault(
-                key, {"model": model, "tokenizer": tokenizer, "items": []}
-            )
-            for window in sliding_window(sequence, window_size, stride):
-                group["items"].append((contig_idx, window))
-
-        self._predict_grouped_windows(grouped_windows, stats)
-
-        random_windows_by_model = {}
-        for contig_idx, contig_stats in enumerate(stats):
-            if contig_stats is None or contig_stats["num_windows"] == 0:
-                continue
-
-            num_windows = contig_stats["num_windows"]
-            num_eukaryote = contig_stats["num_eukaryote"]
-            prob_sum = contig_stats["prob_sum"]
-            seq_len = contig_stats["seq_len"]
-            window_size = contig_stats["window_size"]
-
-            num_random = self._resampling_count(
-                seq_len,
-                window_size,
-                num_windows,
-                num_eukaryote,
-                prob_sum,
-                low_confidence_threshold,
-                additional_random_windows,
-            )
-            contig_stats["resampled"] = num_random > 0
-            random_windows = (
-                generate_random_windows(sequences[contig_idx], window_size, num_random)
-                if num_random > 0
-                else []
-            )
-
-            if random_windows:
-                model, tokenizer, _, _, model_name = self._select_model_config(
-                    seq_len, adaptive_stride
-                )
-                group = random_windows_by_model.setdefault(
-                    model_name, {"model": model, "tokenizer": tokenizer, "items": []}
-                )
-                for window in random_windows:
-                    group["items"].append((contig_idx, window))
-
-        self._predict_grouped_windows(random_windows_by_model, stats)
-
-        for contig_idx, contig_stats in enumerate(stats):
-            if results[contig_idx] is not None:
-                continue
-
-            if contig_stats is None or contig_stats["num_windows"] == 0:
-                results[contig_idx] = {
-                    "prediction": "non_eukaryote",
-                    "eukaryote_prob": 0.0,
-                    "confidence": 0.0,
-                    "num_windows": 0,
-                    "length": len(sequences[contig_idx]),
-                    "resampled": False,
-                    "model_used": "unknown",
-                }
-                continue
-
-            num_windows = contig_stats["num_windows"]
-            num_eukaryote = contig_stats["num_eukaryote"]
-            avg_prob = contig_stats["prob_sum"] / num_windows
-            is_eukaryote = avg_prob >= 0.5
-
-            if is_eukaryote:
-                confidence = num_eukaryote / num_windows
-            else:
-                confidence = (num_windows - num_eukaryote) / num_windows
-
-            results[contig_idx] = {
-                "prediction": "eukaryote" if is_eukaryote else "non_eukaryote",
-                "eukaryote_prob": float(avg_prob),
-                "confidence": float(confidence),
-                "num_windows": num_windows,
-                "length": contig_stats["seq_len"],
-                "resampled": contig_stats["resampled"],
-                "model_used": contig_stats["model_name"],
-            }
-
+            for sequence in sequences
+        ]
+        eligible = [
+            i for i, seq in enumerate(sequences) if len(seq) >= self.min_contig_length
+        ]
+        for start in range(0, len(eligible), RECORD_BATCH_SIZE):
+            indices = eligible[start : start + RECORD_BATCH_SIZE]
+            batch = [sequences[i].upper() for i in indices]
+            for i, result in zip(indices, self._predict_full_precision_batch(batch)):
+                results[i] = result
         return results
-
-    def _resampling_count(
-        self,
-        seq_len,
-        window_size,
-        num_windows,
-        num_eukaryote,
-        prob_sum,
-        low_confidence_threshold,
-        additional_random_windows,
-    ):
-        """Decide once whether the completed sliding pass needs random windows."""
-        if num_windows >= 3:
-            agreeing = (
-                num_eukaryote
-                if prob_sum / num_windows >= 0.5
-                else num_windows - num_eukaryote
-            )
-            if (
-                agreeing / num_windows < low_confidence_threshold
-                and seq_len > window_size
-            ):
-                return (
-                    additional_random_windows * 2
-                    if seq_len < self.length_threshold
-                    else additional_random_windows
-                )
-        elif num_windows == 2 and abs(prob_sum / num_windows - 0.5) <= 0.05:
-            return 10 if seq_len < self.length_threshold else 6
-        return 0
 
     def predict_contig(
         self,
@@ -684,113 +347,5 @@ class HyenaDNAClassifier:
         low_confidence_threshold: float = 0.75,
         additional_random_windows: int = 8,
     ) -> Dict:
-        """
-        Predict whether a contig is eukaryotic using adaptive dual-model approach.
-
-        Strategy:
-        - Small contigs (<4096bp): Use 1024-context model with aggressive windowing (256 stride)
-        - Large contigs (≥4096bp): Use 4096-context model with standard windowing
-        - Special handling: Very low confidence triggers additional resampling
-
-        Args:
-            sequence: DNA sequence to classify
-            adaptive_stride: Use adaptive stride based on sequence length
-            early_stopping: Ignored; retained for compatibility with existing callers
-            low_confidence_threshold: Confidence threshold below which to add random windows (default: 0.75)
-            additional_random_windows: Number of random windows to add when confidence is low (default: 8)
-
-        Returns:
-            Dictionary with prediction results including:
-                - prediction: 'eukaryote' or 'non_eukaryote' (based on avg_prob >= 0.5)
-                - eukaryote_prob: Average eukaryotic probability across all windows
-                - confidence: Fraction of windows agreeing with final prediction
-                - num_windows: Number of windows analyzed
-                - length: Sequence length
-                - resampled: Boolean indicating if random sampling was triggered
-                - model_used: Which model was used ('small_1024', 'large_4096', or 'single')
-        """
-        seq_len = len(sequence)
-
-        model, tokenizer, window_size, stride, model_name = self._select_model_config(
-            seq_len, adaptive_stride
-        )
-
-        window_iter = sliding_window(sequence, window_size, stride)
-        window_batch_size = max(1, self.batch_size)
-
-        num_windows = 0
-        num_eukaryote = 0
-        prob_sum = 0.0
-        resampled = False
-
-        while True:
-            batch = list(islice(window_iter, window_batch_size))
-            if not batch:
-                break
-
-            euk_count, prob_total, batch_windows = self._predict_window_stats(
-                batch, model, tokenizer
-            )
-
-            if batch_windows == 0:
-                continue
-
-            num_windows += batch_windows
-            num_eukaryote += euk_count
-            prob_sum += prob_total
-
-        num_additional = self._resampling_count(
-            seq_len,
-            window_size,
-            num_windows,
-            num_eukaryote,
-            prob_sum,
-            low_confidence_threshold,
-            additional_random_windows,
-        )
-        if num_additional > 0:
-            random_windows = generate_random_windows(
-                sequence, window_size, num_additional
-            )
-            for start in range(0, len(random_windows), window_batch_size):
-                euk_count_extra, prob_total_extra, batch_windows_extra = (
-                    self._predict_window_stats(
-                        random_windows[start : start + window_batch_size],
-                        model,
-                        tokenizer,
-                    )
-                )
-                num_windows += batch_windows_extra
-                num_eukaryote += euk_count_extra
-                prob_sum += prob_total_extra
-            resampled = True
-
-        if num_windows == 0:
-            return {
-                "prediction": "non_eukaryote",
-                "eukaryote_prob": 0.0,
-                "confidence": 0.0,
-                "num_windows": 0,
-                "length": seq_len,
-                "resampled": False,
-                "model_used": model_name,
-            }
-
-        # Calculate final results
-        avg_prob = prob_sum / num_windows if num_windows else 0.0
-        is_eukaryote = avg_prob >= 0.5
-
-        if is_eukaryote:
-            confidence = num_eukaryote / num_windows
-        else:
-            confidence = (num_windows - num_eukaryote) / num_windows
-
-        return {
-            "prediction": "eukaryote" if is_eukaryote else "non_eukaryote",
-            "eukaryote_prob": float(avg_prob),
-            "confidence": float(confidence),
-            "num_windows": num_windows,
-            "length": seq_len,
-            "resampled": resampled,
-            "model_used": model_name,
-        }
+        """Predict one contig with the same fixed policy as batched filtering."""
+        return self.predict_contigs([sequence])[0]

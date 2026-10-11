@@ -11,6 +11,7 @@ import rich_click as click
 from click.core import ParameterSource
 
 from . import __version__
+from .filter_policy import INFERENCE_BATCH_SIZE
 
 PRECOMPUTED_COVERAGE_SUFFIXES = (
     ".tsv",
@@ -501,9 +502,9 @@ def validate_coverage_options(ctx, param, value):
 @click.option(
     "--hyenadna-batch-size",
     type=int,
-    default=1024,
+    default=INFERENCE_BATCH_SIZE,
     show_default=True,
-    help="Batch size for HyenaDNA model inference. Higher values speed up GPU inference but use more VRAM. Use 2048-4096 for high-end GPUs.",
+    help="Legacy option. The validated filter uses fixed batches of 256 windows; other values are ignored with a warning.",
 )
 @click.option(
     "--filter-only",

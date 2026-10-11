@@ -303,9 +303,15 @@ The original graph is retained even without `--keep-intermediate` and reused wit
 
 `--filter-only` stops after this stage and does not produce binning outputs. Use it with filtering enabled; `--skip-bacterial-filter` disables that stage. Contigs below the minimum length are excluded from classification and the rejected-contig FASTA.
 
-Prediction evaluates every adaptive sliding window before applying the existing random-window resampling rules once. It retains contigs with mean eukaryotic probability at least 0.45. New runs record the prediction policy in `params.json`. Reusing an older filtered FASTA does not rerun prediction; REMAG warns when its policy differs or is unknown. Use `--force` or a new output directory to apply the current policy.
+Filtering uses the July 2026 single 4 kb HyenaDNA model for every eligible contig, including those shorter than 4 kb. Contigs up to 4,096 bp use one window. Longer contigs use up to 16 evenly spread 4,096 bp windows, including both endpoints. The window count is `min(16, 1 + ceil((length - 4096) / 2048))`; positions use Python's rounding. REMAG retains the entire original contig when the arithmetic mean of window probabilities is at least **0.30**. There is no random resampling or prediction early stopping.
 
-If no contigs pass the classifier, the current implementation falls back to the original input FASTA instead of writing a filtered FASTA. Classifier initialization failures also fall back to the input; consult `remag.log` for details.
+The tokenizer uses left padding and 4,096 tokens including CLS/SEP, so each window contributes at most 4,094 biological bases. Inference uppercases input and preserves unknown characters as UNK; retained and rejected FASTA records preserve the original headers, sequence content and order. The classification table retains its columns, reports probabilities at full precision, and always reports `resampled=False`; `confidence` is the native 0.5 window-agreement diagnostic, not a filtering rule.
+
+Filtering uses fixed batches of 64 eligible contigs and up to 256 windows per inference call. The legacy `--hyenadna-batch-size` option is accepted but other values are ignored with a warning. Automatic inference uses CUDA when available, otherwise CPU. All probabilities come directly from the selected device, including those near the cutoff. MPS is not used because equivalence has not been established.
+
+New runs record the policy, checkpoint SHA256, cutoff and execution settings in `params.json`. Reusing an older filtered FASTA does not rerun prediction; REMAG warns when its policy differs or is unknown and preserves the original provenance. Use `--force` or a new output directory to apply the current policy.
+
+If no contigs pass the classifier, REMAG saves an empty filtered FASTA and finishes successfully without training or producing bins. Classifier initialization failures still fall back to the input; consult `remag.log` for details.
 
 ### Visualization
 
@@ -325,7 +331,7 @@ python scripts/plot_features.py --features output_directory/embeddings.csv --clu
 - `miniprot` on `PATH` for core gene analysis during binning; `--filter-only` does not require it. The Dockerfile includes miniprot; install it separately for PyPI and source installations.
 - Plotting extras are optional: `pip install "remag[plotting]"`
 
-The package includes two pre-trained HyenaDNA classifiers (1,024- and 4,096-base contexts) and the protein reference database used for core gene mapping.
+The package includes the pre-trained July 2026 HyenaDNA classifier (4,096-token context; SHA256 `39d05fcecfdb0849fcf1822ffb0c816ee119e0436a19e0284e33e42f280f3689`) and the protein reference database used for core gene mapping.
 
 ## Acknowledgments
 
