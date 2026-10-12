@@ -1,6 +1,6 @@
 {
     "title": "REMAG: Recovering high-quality eukaryotic genomes from complex metagenomes",
-    "description": "<p>REMAG recovers eukaryotic metagenome-assembled genomes from mixed prokaryotic-eukaryotic samples.</p><p><strong>Key Features:</strong></p><ul><li>Dual-model HyenaDNA filtering of non-eukaryotic contigs</li><li>Contrastive embeddings learned from sequence composition and coverage</li><li>Greedy Leiden clustering across multiple resolutions</li><li>Core-gene analysis with miniprot</li><li>Coverage-, composition-, and core-gene-aware bin rescue</li></ul>",
+    "description": "<p>REMAG recovers eukaryotic metagenome-assembled genomes from mixed prokaryotic-eukaryotic samples.</p><p><strong>Key Features:</strong></p><ul><li>Single-model HyenaDNA filtering with deterministic window sampling</li><li>Contrastive embeddings learned from sequence composition and coverage</li><li>Weighted greedy Leiden clustering across multiple resolutions</li><li>Core-gene analysis with miniprot</li><li>Unified bin rescue with graph and core-gene safeguards</li></ul>",
     "upload_type": "software",
     "license": "MIT",
     "creators": [

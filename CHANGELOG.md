@@ -7,10 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-12
+
 ### Added
 - Add `--graph-min-contig-length` to separate graph membership from admission
-  and training. Its default follows the effective admission cutoff; existing
-  automatic and single-sample minimum-length settings remain unchanged.
+  and training. It defaults to 1,000 bp with one coverage file and 3,000 bp
+  otherwise, and is raised to the admission cutoff when needed.
 - Retain pre-rescue assignments, complete rescue assignments with export status,
   graph vertex IDs, and clustering/rescue provenance for reproducible reuse.
 
@@ -34,6 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Merge fragmented bins, then recruit eligible unassigned graph and shorter
   contigs together in embedding order, followed by one final bin-size filter.
   Preserve fixed centroids and the tested cumulative marker safeguards.
+- Require an original clustering-graph edge between bins before merging them
+  during rescue.
 - Reject incompatible or legacy binning caches instead of silently returning
   previous final bins. Save embedding values losslessly for exact cache reuse.
 - Read alignment coverage in independent workers controlled by `--cores`, passing only fragment
@@ -41,15 +45,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   coverage calculations and ordering while bounding queued work. Memory and worker
   failures stop the run instead of substituting zero coverage.
 - Use existing cosine-similarity edge weights in Leiden clustering.
-- Default to a 1,000 bp minimum contig and training-fragment length with exactly
-  one coverage file. Multiple coverage files and runs without coverage retain
-  the assembly-median rule; explicit `--min-contig-length` still takes precedence.
+- Default to a 1,000 bp minimum contig and training-fragment length for every
+  run, replacing the assembly-median rule. Explicit `--min-contig-length`
+  settings still take precedence.
+
+### Performance
+- Vectorize k-mer counting and streamline alignment read-count extraction.
+- Transfer embedding inputs to the selected device in batches while preserving
+  feature layout, row order and numerical results.
 
 ### Fixed
 - Finish successfully without training or binning when eukaryotic filtering
   retains no contigs, preserving the empty filtered FASTA and classification outputs.
 - Return zero coverage when no FASTA headers match alignment references instead
   of failing on an empty contig batch.
+- Preserve numeric-looking contig identifiers when loading cached results.
 
 ### Removed
 - Remove the legacy XGBoost-compatible `HyenaDNAClassifier.classify()` interface
@@ -520,7 +530,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Various bug fixes and improvements
 
-[Unreleased]: https://github.com/danielzmbp/remag/compare/v0.4.5...HEAD
+[Unreleased]: https://github.com/danielzmbp/remag/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/danielzmbp/remag/compare/v0.5.1...v0.6.0
+[0.5.1]: https://github.com/danielzmbp/remag/compare/v0.5.0...v0.5.1
+[0.5.0]: https://github.com/danielzmbp/remag/compare/v0.4.5...v0.5.0
 [0.4.5]: https://github.com/danielzmbp/remag/compare/v0.4.4...v0.4.5
 [0.4.4]: https://github.com/danielzmbp/remag/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/danielzmbp/remag/compare/v0.4.2...v0.4.3
