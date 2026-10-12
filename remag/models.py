@@ -17,6 +17,17 @@ from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
 from .losses import BarlowTwinsLoss
+from .model_policy import (
+    PROVENANCE_FILE,
+    incompatible_training_cache,
+    load_cached_embeddings,
+    model_configuration,
+    save_training_provenance,
+    state_identity,
+    validate_training_provenance,
+    write_training_provenance,
+)
+from .output import file_sha256
 from .utils import extract_base_contig_name, get_torch_device
 
 
@@ -190,6 +201,12 @@ class TrainingManager:
         criterion = BarlowTwinsLoss(lambda_param=lambda_param)
         logger.info(f"Using BarlowTwinsLoss (lambda={lambda_param})")
 
+        # Match the selected experiments: one generator for worker base seeds and
+        # shuffled pairs, installed after setup and before the first iterator.
+        generator = torch.Generator().manual_seed(getattr(self.args, "random_seed", 42))
+        dataloader.generator = generator
+        dataloader.sampler.generator = generator
+
         return dataloader, optimizer, scheduler, criterion
 
     def train_epoch(self, model, dataloader, optimizer, criterion):
@@ -259,7 +276,7 @@ class AdaptiveDropout(nn.Module):
 
 
 class EnhancedFusionLayer(nn.Module):
-    """Enhanced fusion layer with bidirectional attention and gated fusion.
+    """Bidirectional attention with fixed 0.5 gates and learned residual fusion.
 
     Uses ReLU activation in fusion/projection layers for stronger non-linearity
     and better gradient flow in complex fusion operations.
@@ -311,12 +328,12 @@ class EnhancedFusionLayer(nn.Module):
             batch_first=True,
         )
 
-        # Gated fusion mechanism
-        self.kmer_gate = nn.Sequential(
+        # Advance the initialization RNG without adding trainable gates.
+        nn.Sequential(
             nn.Linear(embedding_dim * self.GATE_INPUT_MULTIPLIER, embedding_dim),
             nn.Sigmoid(),
         )
-        self.coverage_gate = nn.Sequential(
+        nn.Sequential(
             nn.Linear(embedding_dim * self.GATE_INPUT_MULTIPLIER, embedding_dim),
             nn.Sigmoid(),
         )
@@ -456,10 +473,9 @@ class EnhancedFusionLayer(nn.Module):
         )
         coverage_attended = coverage_attended.squeeze(1)  # [B, embed_dim]
 
-        # Gated fusion mechanism
-        combined_for_gate = torch.cat([kmer_proj, coverage_proj], dim=1)
-        kmer_gate_weight = self.kmer_gate(combined_for_gate)
-        coverage_gate_weight = self.coverage_gate(combined_for_gate)
+        # Keep the tested arithmetic order for direct versus attended features.
+        kmer_gate_weight = torch.full_like(kmer_proj, 0.5)
+        coverage_gate_weight = torch.full_like(coverage_proj, 0.5)
 
         # Debugging: Print gate weights (rate limited)
         self.debug_counter += 1
@@ -536,6 +552,7 @@ class SiameseNetwork(nn.Module):
     def __init__(self, n_kmer_features, n_coverage_features, embedding_dim=128):
         super(SiameseNetwork, self).__init__()
 
+        # Initialize in this order before resizing to preserve seeded weights.
         self.n_kmer_features = n_kmer_features
         self.n_coverage_features = n_coverage_features
         self.has_coverage = n_coverage_features > 0
@@ -553,12 +570,9 @@ class SiameseNetwork(nn.Module):
         )
 
         if self.has_coverage:
-            # Adaptively size the coverage encoder based on number of samples
-            # Assume ~2 features per sample (mean + std), so n_samples ≈ n_coverage_features / 2
+            # Temporary widths; _select_small_encoders sets the final dimensions.
             n_samples_estimate = max(1, n_coverage_features // 2)
 
-            # Scale hidden dimensions based on number of samples
-            # More samples = more complex co-abundance patterns = larger encoder
             if n_samples_estimate <= 2:
                 # 1-2 samples: 2-4 features → 32 → 16
                 coverage_hidden1 = 32
@@ -575,11 +589,6 @@ class SiameseNetwork(nn.Module):
                 # >10 samples: >20 features → 256 → 128
                 coverage_hidden1 = 256
                 coverage_hidden2 = 128
-
-            logger.debug(
-                f"Coverage encoder sized for ~{n_samples_estimate} samples: "
-                f"{n_coverage_features} -> {coverage_hidden1} -> {coverage_hidden2}"
-            )
 
             self.coverage_encoder = nn.Sequential(
                 nn.Linear(n_coverage_features, coverage_hidden1),
@@ -620,6 +629,41 @@ class SiameseNetwork(nn.Module):
             nn.BatchNorm1d(512),
             nn.ReLU(),
             nn.Linear(512, 512),
+        )
+
+        if self.has_coverage:
+            self._select_small_encoders(embedding_dim)
+
+    def _select_small_encoders(self, embedding_dim):
+        """Apply the selected replacements without reinitializing retained layers."""
+        if (self.coverage_encoder[0].out_features, self.coverage_final_dim) != (64, 32):
+            self.coverage_encoder = nn.Sequential(
+                nn.Linear(self.n_coverage_features, 64),
+                nn.BatchNorm1d(64),
+                nn.LeakyReLU(),
+                nn.Dropout(0.05),
+                nn.Linear(64, 32),
+                nn.BatchNorm1d(32),
+                nn.LeakyReLU(),
+            )
+            if self.coverage_final_dim != 32:
+                self.fusion_layer.coverage_proj = nn.Linear(32, embedding_dim)
+            self.coverage_final_dim = 32
+        self.kmer_encoder = nn.Sequential(
+            nn.Linear(self.n_kmer_features, 128),
+            nn.BatchNorm1d(128),
+            nn.LeakyReLU(),
+            nn.Dropout(0.05),
+            nn.Linear(128, 64),
+            nn.BatchNorm1d(64),
+            nn.LeakyReLU(),
+        )
+        self.fusion_layer.kmer_proj = nn.Linear(64, embedding_dim)
+        self.projection_head = nn.Sequential(
+            nn.Linear(embedding_dim, 128),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+            nn.Linear(128, 512),
         )
 
     def _encode_features(self, x):
@@ -780,12 +824,18 @@ def train_siamese_network(features_df, args):
     total_features = features_df.shape[1]
     n_coverage_features = total_features - n_kmer_features
 
+    if n_coverage_features < 0:
+        raise ValueError("Training requires all 136 k-mer feature columns.")
+
     logger.info(
-        f"Using dual-encoder architecture: {n_kmer_features} k-mer + {n_coverage_features} coverage features"
+        f"Model: {model_configuration(n_kmer_features, n_coverage_features, args.embedding_dim)['architecture']}; "
+        f"{n_kmer_features} k-mer + {n_coverage_features} coverage features, "
+        f"{args.embedding_dim}-dimensional graph embeddings."
     )
 
     # Load existing model if available
     if os.path.exists(model_path):
+        previous = validate_training_provenance(args, features_df)
         logger.info(f"Loading existing model from {model_path}")
         device = get_torch_device()
         model = SiameseNetwork(
@@ -793,10 +843,22 @@ def train_siamese_network(features_df, args):
             n_coverage_features=n_coverage_features,
             embedding_dim=args.embedding_dim,
         ).to(device)
-        model.load_state_dict(
-            torch.load(model_path, map_location=device, weights_only=False)
-        )
+        state = torch.load(model_path, map_location=device, weights_only=False)
+        try:
+            model.load_state_dict(state, strict=True)
+        except (RuntimeError, TypeError) as error:
+            raise incompatible_training_cache(
+                "checkpoint architecture does not match"
+            ) from error
+        if state_identity(state) != previous.get("state_sha256"):
+            raise incompatible_training_cache("checkpoint weights changed")
         return model
+
+    if os.path.exists(os.path.join(args.output, "embeddings.csv")):
+        raise incompatible_training_cache(
+            "embeddings exist without saved weights; load the verified embeddings "
+            "or explicitly recompute before retraining"
+        )
 
     device = get_torch_device()
 
@@ -820,6 +882,7 @@ def train_siamese_network(features_df, args):
             "This typically happens with very small datasets."
         )
         torch.save(model.state_dict(), model_path)
+        save_training_provenance(model, features_df, args, dataloader)
         return model
 
     logger.info(f"Starting training for {args.epochs} epochs...")
@@ -889,6 +952,7 @@ def train_siamese_network(features_df, args):
         torch.save(model.state_dict(), model_path)
         logger.info(f"Model saved to {model_path}")
 
+    save_training_provenance(model, features_df, args, dataloader)
     return model
 
 
@@ -896,17 +960,19 @@ def generate_embeddings(model, features_df, args):
     """Generate embeddings for all features using the trained model."""
     embeddings_path = os.path.join(args.output, "embeddings.csv")
 
-    # Check if embeddings file already exists
-    if os.path.exists(embeddings_path):
+    cached = load_cached_embeddings(features_df, args, model)
+    if cached is not None:
         logger.info(f"Loading existing embeddings from {embeddings_path}")
-        # Read IDs as a column first: pandas 2.x can infer integers for a CSV index.
-        cached = pd.read_csv(
-            embeddings_path,
-            dtype={0: str},
-            keep_default_na=False,
-            float_precision="round_trip",
-        )
-        return cached.set_index(cached.columns[0]).rename_axis(None)
+        return cached
+
+    # Lightweight custom embedding providers can still generate exports, but
+    # reusable training provenance requires the maintained network/state_dict.
+    provenance = None
+    if isinstance(model, SiameseNetwork):
+        if os.path.exists(os.path.join(args.output, PROVENANCE_FILE)):
+            provenance = validate_training_provenance(args, features_df, model)
+        else:
+            provenance = save_training_provenance(model, features_df, args)
 
     device = get_torch_device()
     logger.debug(f"Using device: {device}")
@@ -969,6 +1035,9 @@ def generate_embeddings(model, features_df, args):
     # Always save embeddings for downstream analysis and visualization
     # Preserve the exact generated values so cache identities survive CSV reloads.
     embeddings_df.astype(np.float64).to_csv(embeddings_path, float_format="%.17g")
+    if provenance is not None:
+        provenance["embeddings_sha256"] = file_sha256(embeddings_path)
+        write_training_provenance(args, provenance)
     logger.info(f"Embeddings saved to {embeddings_path}")
 
     # Save encoder embeddings if requested (with -k flag)

@@ -21,6 +21,11 @@ from .miniprot_utils import (
     check_core_gene_duplications_from_cache,
     load_or_generate_gene_mappings,
 )
+from .model_policy import (
+    load_cached_embeddings,
+    training_settings,
+    validate_cached_training_settings,
+)
 from .models import generate_embeddings, train_siamese_network
 from .output import (
     binning_settings,
@@ -49,6 +54,7 @@ def main(args):
             validate_cached_min_contig_length(args.output, args.min_contig_length)
             if not getattr(args, "filter_only", False):
                 validate_cached_binning_settings(args)
+                validate_cached_training_settings(args)
         setup_logging(args.output, verbose=args.verbose)
         os.makedirs(args.output, exist_ok=True)
         if existing_results:
@@ -78,6 +84,7 @@ def main(args):
             "version": version("remag"),
             **vars(args),
             "binning": binning_settings(args),
+            "training": training_settings(args),
             "hyenadna_prediction_policy": (
                 None
                 if getattr(args, "skip_bacterial_filter", False)
@@ -149,8 +156,12 @@ def main(args):
 
     logger.info("Training neural network and generating embeddings...")
     try:
-        model = train_siamese_network(features_df, args)
-        embeddings_df = generate_embeddings(model, features_df, args)
+        embeddings_df = load_cached_embeddings(features_df, args)
+        if embeddings_df is None:
+            model = train_siamese_network(features_df, args)
+            embeddings_df = generate_embeddings(model, features_df, args)
+        else:
+            logger.info("Using verified cached embeddings; training is not rerun.")
     except Exception as e:
         logger.error(f"Failed to train model or generate embeddings: {e}")
         sys.exit(1)

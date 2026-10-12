@@ -118,11 +118,10 @@ def test_batch_transfers_preserve_values_and_exports(
         if should_exist:
             assert path.read_bytes() == frame.to_csv().encode()
 
-    # A cached result must bypass model evaluation and retain literal identifiers.
-    cached = generate_embeddings(Mock(spec=[]), features, args)
-    pd.testing.assert_frame_equal(
-        cached, expected.astype(np.float64).rename(columns=str), check_exact=True
-    )
+    # An arbitrary embedding provider has no maintained model provenance.
+    # Its exports remain usable, but file presence alone cannot authorize reuse.
+    with pytest.raises(ValueError, match="training provenance"):
+        generate_embeddings(Mock(spec=[]), features, args)
     assert transfers == expected_transfers
 
 

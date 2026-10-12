@@ -159,7 +159,7 @@ remag contigs.fasta -o output_directory
 
 ### Reusing or replacing results
 
-REMAG reuses compatible intermediate results. Clustering reuse requires matching admission and graph cutoffs, clustering/rescue settings, ordered embeddings, sequences and marker mappings. It restarts rescue from saved pre-rescue assignments. Older binning outputs without this provenance require a new output directory or `--force`. When compatible outputs are found, it prints:
+REMAG reuses saved results when their recorded model, settings and inputs match the current run. Verified embeddings can be reused without retraining, even without saved model weights. Clustering checks its settings and inputs and restarts rescue from saved pre-rescue assignments. Missing provenance or changed inputs/settings require a new output directory or `--force`. When reusing results, REMAG prints:
 
 ```text
 Existing REMAG results found. Reusing available outputs. Use --force to recompute.
@@ -258,6 +258,22 @@ REMAG recovers eukaryotic bins with a multi-stage pipeline:
 4. **Core gene annotation**: `miniprot` maps eukaryotic single-copy core genes to support clustering and quality checks. Multiple non-overlapping matches to a marker family within a contig are reported as separate copies; clustering and rescue still count that family once per contig.
 5. **Greedy clustering and rescue**: REMAG applies greedy Leiden clustering using cosine-similarity edge weights across multiple resolutions, merges fragmented bins, then recruits all eligible unassigned contigs in one pass. Bins below the minimum size remain available as seeds until the final size filter.
 
+With coverage, the network uses composition widths **136 → 128 → 64** and coverage widths **p → 64 → 32**, where `p` is the number of coverage features. Both encoders use BatchNorm, LeakyReLU and dropout 0.05. Coverage hidden widths are fixed for every positive `p`. Fusion uses bidirectional four-head cross-attention, three fusion scales, nonlinear compression, adaptive dropout and a final nonlinear MLP. Each modality uses a fixed 0.5 direct-versus-attended gate and a learned residual weight.
+
+```mermaid
+flowchart LR
+    K["Composition: 136 → 128 → 64"] --> F["Cross-attention + fixed 0.5 gates<br/>Learned residual + multiscale nonlinear fusion"]
+    C["Coverage: p → 64 → 32"] --> F
+    F --> E["D-dimensional embedding<br/>default D = 256"]
+    E --> G["Graph and clustering"]
+    E --> P["Training projection: D → 128 → 512"]
+    P --> L["Barlow Twins loss"]
+```
+
+The projection head is used for training; graph construction uses the pre-projection `D`-dimensional embedding. A dedicated generator, seeded with `--random-seed`, is shared by the DataLoader and its sampler to make batch order independent of model initialization.
+
+Without coverage, the composition encoder uses **136 → 256 → 128**, followed by a projection to `D` and a **D → 512 → 512** training head.
+
 Rescue uses length-weighted centroids and a cosine similarity threshold of 0.70. Centroids stay fixed during merging and are recomputed once before recruitment. Each candidate tries its nearest bin only. With the default marker limits, a marker-bearing candidate must leave at most 5% duplicated marker families and increase duplication by strictly less than 5 percentage points. Counts update after each accepted contig; marker-free candidates have no marker veto. A whole-bin merge has one additional allowance: at similarity of at least 0.95, a target already above the duplication ceiling may accept a merge that does not worsen its duplication. This allowance does not apply to individual-contig recruitment. `--rescue-max-total-duplication` controls the ceiling (capped at 10% for whole-bin merges), and `--rescue-max-duplication-increase` controls the strict increase limit.
 
 Whole-bin merges also require at least one original clustering-graph edge between their current contigs, including contigs absorbed by earlier merges. If the nearest bin has no graph connection, the merge is rejected without trying another target. This safeguard also applies to the non-worsening marker allowance; individual-contig recruitment keeps its existing rule.
@@ -265,6 +281,8 @@ Whole-bin merges also require at least one original clustering-graph edge betwee
 ## Output
 
 All runs retain `params.json` with the effective settings, including admission and graph cutoffs and the rescue settings. Matching reruns preserve the original record.
+
+Trained runs also save `training_provenance.json` with model dimensions, training/filter settings and input/output identities used to validate reuse. `siamese_model.pt` contains the PyTorch state dictionary; provenance is stored separately.
 
 ### Binning outputs
 

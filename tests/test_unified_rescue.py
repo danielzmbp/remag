@@ -198,6 +198,8 @@ def test_small_seed_crosses_export_size_only_after_recruitment(tmp_path, skip):
         patch("remag.core.get_features", return_value=(pd.DataFrame([[1]]), fr)),
         patch("remag.core.train_siamese_network"),
         patch("remag.core.generate_embeddings", return_value=emb),
+        # This rescue-only fixture mocks training and therefore has no model provenance.
+        patch("remag.core.validate_cached_training_settings"),
         patch("remag.core.load_or_generate_gene_mappings", return_value=genes),
         patch(
             "remag.clustering._greedy_leiden_clustering", return_value=[0]

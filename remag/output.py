@@ -21,6 +21,8 @@ REMAG_OUTPUT_PATTERNS = (
     "knn_graph_contigs.csv",
     "embeddings.csv",
     "siamese_model.pt",
+    "training_provenance.json",
+    "training_provenance.json.tmp",
     "kmer_embeddings.csv",
     "coverage_embeddings.csv",
     "params.json",

@@ -15,6 +15,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   graph vertex IDs, and clustering/rescue provenance for reproducible reuse.
 
 ### Changed
+- Use fixed encoder widths for coverage-supplied runs: composition
+  136→128→64, coverage p→64→32, fixed 0.5 fusion gates, and a D→128→512 training
+  projection. Preserve cross-attention, nonlinear fusion, learned residuals,
+  D-dimensional graph embeddings and seeded initialization.
+- Give the DataLoader and its sampler one shared generator seeded by
+  `--random-seed`. Preserve positive pairs and batch/worker safeguards.
+- Record architecture, dimensions, training/filter settings and input/model
+  identities in `training_provenance.json`; reject incompatible model and
+  embedding caches. Retain plain state-dictionary checkpoints and reuse verified
+  embeddings without retraining. Preserve the coverage-free model and
+  existing public learning-rate defaults.
 - Use the July 2026 single 4 kb HyenaDNA checkpoint for all eligible contigs,
   with up to 16 deterministic windows and mean-probability admission at 0.30.
   Preserve native tokenization and use probabilities from the selected device,

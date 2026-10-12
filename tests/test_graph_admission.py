@@ -208,8 +208,8 @@ def test_exact_generated_embeddings_survive_cache_reload(tmp_path, names):
 
     values = np.array([[0.123456789, 0.987654321], [0.34, 0.56]], dtype=np.float32)
     features = pd.DataFrame([[1.0], [2.0]], index=[c + ".original" for c in names])
-    model = Mock()
-    model.get_embedding.return_value = torch.tensor(values)
+    model = models.SiameseNetwork(1, 0, embedding_dim=2)
+    model.get_embedding = Mock(return_value=torch.tensor(values))
     args = Namespace(output=str(tmp_path), batch_size=2, keep_intermediate=False)
     with patch("remag.models.get_torch_device", return_value="cpu"):
         fresh = models.generate_embeddings(model, features, args)
