@@ -3,72 +3,48 @@
 [![Preprint DOI](https://img.shields.io/badge/Preprint%20DOI-10.64898%2F2026.03.05.709928-blue)](https://doi.org/10.64898/2026.03.05.709928)
 [![Zenodo DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.16762340.svg)](https://doi.org/10.5281/zenodo.16762340)
 
-**R**ecovery of **E**ukaryotic **M**etagenome-**A**ssembled **G**enomes using contrastive learning. A specialized metagenomic binning tool designed for recovering high-quality eukaryotic genomes from mixed prokaryotic-eukaryotic samples.
+**R**ecovery of **E**ukaryotic **M**etagenome-**A**ssembled **G**enomes using contrastive learning. REMAG bins eukaryotic genomes from mixed prokaryotic–eukaryotic metagenomes using sequence composition and optional coverage data.
 
-## Index
-
-- [Installation](#installation)
-- [Quick Start](#quick-start)
-- [Usage](#usage)
-- [Common Options](#common-options)
-- [How It Works](#how-it-works)
-- [Output](#output)
-- [Requirements](#requirements)
-- [Acknowledgments](#acknowledgments)
-- [License](#license)
-- [Citation](#citation)
+[Installation](#installation) · [Quick Start](#quick-start) · [Usage](#usage) · [Common Options](#common-options) · [How It Works](#how-it-works) · [Output](#output) · [Citation](#citation)
 
 ## Installation
+
+Requires Python 3.9+ and `miniprot` on `PATH` for binning. `--filter-only` does not require miniprot. The package includes the July 2026 HyenaDNA classifier and the protein reference database.
 
 ### Conda (recommended)
 
 ```bash
-conda create -n remag -c bioconda -c conda-forge remag
+conda create -n remag -c conda-forge -c bioconda remag
 conda activate remag
 ```
 
 ### PyPI
 
-Install `miniprot` separately first:
+Install miniprot separately; for example, use a Conda environment:
 
 ```bash
-conda create -n remag python=3.9
+conda create -n remag -c conda-forge -c bioconda python=3.11 pip miniprot
 conda activate remag
-conda install -c bioconda miniprot
-pip install remag
+python -m pip install remag
 ```
 
 ### From source
 
-```bash
-conda create -n remag python=3.9
-conda activate remag
+Create and activate the environment above, then install from the repository:
 
+```bash
 git clone https://github.com/danielzmbp/remag.git
 cd remag
-conda install -c bioconda miniprot
-pip install .
+python -m pip install .
 ```
 
-### Docker
-
-```bash
-docker pull danielzmbp/remag:latest
-```
-
-### Optional plotting dependencies
-
-```bash
-pip install "remag[plotting]"
-```
+Container commands are in [Quick Start](#quick-start); plotting extras are in [Visualization](#visualization).
 
 ### GPU acceleration
 
-REMAG automatically uses NVIDIA CUDA or Apple Silicon Metal (`mps`) when available, otherwise CPU. No extra flag is required.
+Training and embedding generation automatically select NVIDIA CUDA, then Apple Silicon MPS, then CPU. **HyenaDNA filtering uses CUDA or CPU only.** The supplied Dockerfile installs CPU-only PyTorch.
 
-#### NVIDIA GPUs (Linux)
-
-Install CUDA-enabled PyTorch before REMAG. This example uses CUDA 12.8; use the [PyTorch selector](https://pytorch.org/get-started/locally/) to choose a build matching your GPU and driver.
+For NVIDIA GPUs on Linux, install CUDA-enabled PyTorch before REMAG. This example uses CUDA 12.8; choose a compatible build with the [PyTorch selector](https://pytorch.org/get-started/locally/).
 
 ```bash
 conda create -n remag-gpu -c conda-forge -c bioconda python=3.11 pip miniprot
@@ -78,9 +54,7 @@ python -m pip install remag
 python -c "import torch; print('CUDA:', torch.cuda.is_available())"
 ```
 
-#### Apple Silicon (macOS)
-
-In your native Apple Silicon REMAG environment:
+For Apple Silicon, use a native ARM environment with miniprot installed:
 
 ```bash
 python -m pip install torch remag
@@ -91,16 +65,16 @@ The relevant GPU check should report `True`.
 
 ## Quick Start
 
-### Conda
-
 ```bash
-remag contigs.fasta -c alignments.bam
+remag contigs.fasta -c alignments.bam -o output_directory
 ```
+
+Coverage is optional. Omit `-c` to use sequence composition alone. Without `-o`, results go to `remag_output` next to the input FASTA. You can also invoke the CLI with `python -m remag`.
 
 ### Docker
 
 ```bash
-docker run --rm -v "$(pwd):/data" danielzmbp/remag:latest \
+docker run --rm --user "$(id -u):$(id -g)" -v "$(pwd):/data" danielzmbp/remag:latest \
   /data/contigs.fasta -c /data/alignments.bam -o /data/output
 ```
 
@@ -114,80 +88,33 @@ singularity run --bind "$(pwd):/data" remag.sif \
 
 ## Usage
 
-### Command line interface
-
-After installation, you can use REMAG via the command line:
-
 ```bash
-# Basic usage
-remag contigs.fasta -c alignments.bam
-
-# With explicit output directory
-remag contigs.fasta -c alignments.bam -o output_directory
-
-# Multiple samples
+# Multiple samples (or use -c samples/*.bam)
 remag contigs.fasta -c sample1.bam -c sample2.bam
 
-# Multiple samples using shell-expanded globs
-remag contigs.fasta -c samples/*.bam
-
-# Using precomputed coverage tables (one TSV per sample)
+# Precomputed coverage: one file per sample
 remag contigs.fasta -c sample1.tsv -c sample2.tsv
-
-# Using interval coverage files (one COV/bedGraph per sample)
 remag contigs.fasta -c sample1.bam.cov.gz -c sample2.bam.cov.gz
 
-# Only run eukaryotic filtering (skip binning)
+# Only run eukaryotic filtering
 remag contigs.fasta --filter-only
 
-# Keep intermediate files
+# Keep features, model weights, and encoder embeddings
 remag contigs.fasta -c alignments.bam -k
 
-# Recompute results in an existing output directory
+# Replace existing results
 remag contigs.fasta -c alignments.bam -o output_directory --force
 ```
 
-Quote each coverage path containing spaces, for example `-c "sample 1.bam" -c "sample 2.bam"`.
+Quote paths containing spaces, e.g. `-c "sample 1.bam" -c "sample 2.bam"`. FASTA input may be gzipped. Retained contigs must have unique IDs (the first whitespace-separated token in each header).
 
-During feature generation, REMAG rejects repeated identifiers among retained contigs, using the first whitespace-separated token in each FASTA header.
+### Coverage inputs
 
-Coverage is optional. To use sequence composition alone:
+Use one file per sample. Do not mix BAM/CRAM with precomputed coverage in the same run.
 
-```bash
-remag contigs.fasta -o output_directory
-```
+**BAM/CRAM:** provide coordinate-sorted alignments against the input assembly. REMAG attempts to create missing indexes, so pre-index files if their directory is read-only. Alignment files are processed one at a time with readers controlled by `--threads`. If memory is exhausted, reduce `--threads`; `--coverage-batch-size` can further limit queued work. Memory and worker failures stop the run.
 
-### Reusing or replacing results
-
-REMAG reuses saved results when their recorded model, settings and inputs match the current run. Verified embeddings can be reused without retraining, even without saved model weights. Clustering checks its settings and inputs and restarts rescue from saved pre-rescue assignments. Missing provenance or changed inputs/settings require a new output directory or `--force`. When reusing results, REMAG prints:
-
-```text
-Existing REMAG results found. Reusing available outputs. Use --force to recompute.
-```
-
-Use `--force` to remove recognized REMAG outputs and rerun the requested workflow. This clears cached features, model weights, embeddings, gene mappings, previous bins, filtering outputs, temporary miniprot directories, and logs. Other files in the directory are left in place. If a supplied input would be removed, REMAG stops before deleting anything. `--force` also refuses a symlinked `bins` directory or temporary directories containing symbolic links; use a different output directory.
-
-Use `--force` or a different output directory when changing inputs or analysis settings. `--force --filter-only` clears previous results and runs filtering only. Saved `umap_coordinates.csv` and `umap_plot.pdf` are also cleared; regenerate plots after the run.
-
-### Python module mode
-
-```bash
-python -m remag contigs.fasta -c alignments.bam
-```
-
-### Precomputed Coverage Formats
-
-Precomputed coverage files are supported as an alternative to BAM/CRAM. Use one file per sample. REMAG auto-detects the precomputed coverage layout from the file contents.
-
-#### Contig-level TSV/TXT
-
-Use this format when you have one average coverage value per contig.
-
-- Column 1: contig ID
-- Last column: coverage value for that contig
-- No header row
-
-Example:
+**Contig-level TSV/TXT:** provide whitespace-separated rows without a header: contig ID first, coverage value last. A two-column table avoids ambiguity with interval detection:
 
 ```tsv
 contig_1	12.4
@@ -195,19 +122,9 @@ contig_2	3.8
 contig_3	0.0
 ```
 
-Contig-level TSV/TXT input provides contig-level coverage only. REMAG cannot infer fragment-specific coverage for augmented fragments from this layout, so every fragment from the same contig gets the same coverage value.
+Every augmented fragment inherits its contig's coverage value; this format cannot provide fragment-specific coverage.
 
-#### Interval COV/bedGraph
-
-Use this format when you have per-interval coverage, such as output with run-length encoded coverage blocks.
-
-- Column 1: contig ID
-- Column 2: interval start, 0-based inclusive
-- Column 3: interval end, 0-based exclusive
-- Column 4: coverage value for that interval
-- No header row
-
-Example:
+**Interval COV/bedGraph:** provide non-overlapping intervals with four columns and no header: contig ID, start (0-based inclusive), end (exclusive), and coverage:
 
 ```tsv
 ctg0	0	256	1
@@ -216,53 +133,54 @@ ctg0	859	861	1
 ctg1	0	73	6
 ```
 
-Supported extensions include `.cov`, `.cov.gz`, `.bedgraph`, `.bedgraph.gz`, `.bg`, and `.bg.gz`. Missing intervals are treated as zero coverage. Interval coverage is used to compute fragment-specific mean and standard deviation coverage, so it supports REMAG's random augmentations.
+Missing intervals count as zero coverage. REMAG computes fragment-specific means and standard deviations from these intervals.
 
-Do not mix BAM/CRAM inputs with precomputed coverage inputs in the same run.
+Accepted precomputed extensions are `.tsv`, `.txt`, `.cov`, `.bedgraph`, and `.bg`, optionally followed by `.gz`. The layout is detected from the contents.
 
-BAM/CRAM coverage uses `--cores` readers and processes one alignment file at a time. More readers can improve speed but increase memory use, especially for CRAM. Queued work is bounded and can be reduced further with `--coverage-batch-size`. Memory or worker failures stop the run instead of producing zero coverage. If memory is exhausted, reduce `--cores` or allocate more RAM.
+### Reusing or replacing results
+
+REMAG validates saved training and clustering results against recorded settings and input identities. Compatible embeddings can be reused without saved model weights; rescue restarts from pre-rescue assignments. Incompatible or incomplete provenance requires `--force` or a new output directory.
+
+`--force` removes recognized REMAG outputs, including bins, caches, filtering results, logs, temporary miniprot directories, and UMAP plots. Other files are left in place. Cleanup stops before deletion if an input would be removed, `bins/` is a symlink, or a temporary directory contains symlinks. `--force --filter-only` also clears prior binning results.
+
+Cached filtered FASTA files are reused without reclassification, even when the recorded classifier policy differs or is unknown (a warning is logged). Use `--force` or a new output directory when changing inputs, analysis settings, or filtering policy.
 
 ## Common Options
 
-- `-c, --coverage`: one or more BAM, CRAM, contig-level TSV/TXT, or interval COV/bedGraph coverage inputs
-- `-o, --output`: output directory; defaults to `remag_output` next to the input FASTA
-- `-k, --keep-intermediate`: retain features, model weights, encoder embeddings, and other optional intermediate files; `embeddings.csv` is saved without this flag
-- `--force`: remove existing REMAG outputs and recompute results
-- `--filter-only`: stop after eukaryotic filtering and write filtered FASTA output
-- `--save-filtered-contigs`: also write classified contigs rejected by the eukaryotic filter
-- `--skip-bacterial-filter`: disable the HyenaDNA filter
-- `--graph-min-contig-length`: minimum length entering the Leiden graph; defaults to 1,000 bp with one coverage file, otherwise 3,000 bp
-- `--min-bin-size`: minimum bin size written to FASTA after rescue; defaults to 500,000 bp
+Use `remag -h` for a quick reference and `remag --help` for all options.
 
-Use `remag -h` for a quick reference and `remag --help` for the full CLI, including training, clustering, filtering, and rescue options.
+| Option | Purpose / default |
+| --- | --- |
+| `-c, --coverage` | One or more coverage files; optional |
+| `-o, --output` | Output directory; `remag_output` next to the input FASTA |
+| `-t, --threads` | CPU workers; 8 |
+| `-k, --keep-intermediate` | Retain features, model weights, and encoder embeddings |
+| `--force` | Remove recognized outputs and recompute |
+| `--filter-only` | Stop after eukaryotic filtering |
+| `--save-filtered-contigs` | Also save classified contigs rejected by the filter |
+| `--skip-bacterial-filter` | Disable HyenaDNA filtering |
+| `--min-contig-length` | Minimum admitted contig and training-fragment length; 1,000 bp |
+| `--graph-min-contig-length` | Minimum graph contig length; 1,000 bp with one coverage file, otherwise 3,000 bp |
+| `--min-bin-size` | Minimum bin size exported after rescue; 500,000 bp |
+| `--skip-rescue` | Skip both bin merging and unassigned-contig recruitment |
 
-REMAG defaults to a minimum contig and training-fragment length of 1,000 bp for every run. With exactly one coverage file, the initial graph also includes contigs from 1,000 bp. With multiple coverage files or no coverage, the graph starts at 3,000 bp, while admitted shorter contigs remain available for rescue. Use `--min-contig-length` and `--graph-min-contig-length` to override these settings. A default graph cutoff is raised to the admission cutoff if needed. Effective settings are logged and saved in `params.json`; reusing outputs requires compatible admission and graph cutoffs. Use `--force` or a new output directory when changing them.
+The graph cutoff must be at least the admission cutoff; its default is raised if necessary. Admitted contigs below the graph cutoff share the embedding space and remain eligible for rescue. The graph cutoff does not change filtering or training-fragment lengths.
 
-For example, the default settings with two coverage files are:
-
-```bash
-remag contigs.fasta -c sample1.bam -c sample2.bam
-```
-
-All admitted contigs share the same embedding space. The graph cutoff must be at least the admission cutoff; it does not change filtering or training-fragment length. After fragmented bins are merged, unassigned graph contigs and admitted shorter contigs are recruited together in embedding row order. `--skip-rescue` skips both merging and recruitment.
-
-The k-NN graph uses 15 neighbors, and HyenaDNA filtering is enabled. Use `--leiden-k-neighbors` and `--skip-bacterial-filter` to adjust these settings. Multiple coverage files lower the default base learning rate from `0.005` to `0.0005`; an explicitly supplied learning rate is preserved.
+Other defaults: 100 epochs, 256 embedding dimensions, 15 k-NN neighbors, and enabled HyenaDNA filtering. The base learning rate is `0.005`, or `0.0005` with multiple coverage files; explicit values take precedence. Effective settings are saved in `params.json`.
 
 ## How It Works
 
-REMAG recovers eukaryotic bins with a multi-stage pipeline:
+1. **Filter:** HyenaDNA identifies eukaryotic contigs (unless `--skip-bacterial-filter` is set).
+2. **Extract features:** combine 4-mer composition with optional coverage. Generate training fragments where lengths permit; contigs longer than 50 kb receive augmentations from each half.
+3. **Learn embeddings:** train a Siamese network with Barlow Twins on fragments from the same contig.
+4. **Annotate markers:** use miniprot to map eukaryotic single-copy core genes for clustering and quality checks.
+5. **Cluster and rescue:** run weighted Leiden clustering across multiple resolutions, merge fragmented bins, recruit unassigned contigs, then apply the minimum bin size.
 
-1. **Eukaryotic filtering**: By default, REMAG filters contigs with the integrated HyenaDNA classifier. This step can be disabled with `--skip-bacterial-filter`.
-2. **Feature extraction**: REMAG combines 4-mer composition with optional multi-sample coverage data. Contigs are augmented into fragments for training when their lengths permit; contigs longer than 50 kb receive augmentations from each half.
-3. **Contrastive learning**: A Siamese network trained with Barlow Twins learns embeddings that place fragments from the same contig close together.
-4. **Core gene annotation**: `miniprot` maps eukaryotic single-copy core genes to support clustering and quality checks. Multiple non-overlapping matches to a marker family within a contig are reported as separate copies; clustering and rescue still count that family once per contig.
-5. **Greedy clustering and rescue**: REMAG applies greedy Leiden clustering using cosine-similarity edge weights across multiple resolutions, merges fragmented bins, then recruits all eligible unassigned contigs in one pass. Bins below the minimum size remain available as seeds until the final size filter.
-
-With coverage, the network uses composition widths **136 → 128 → 64** and coverage widths **p → 64 → 32**, where `p` is the number of coverage features. Both encoders use BatchNorm, LeakyReLU and dropout 0.05. Coverage hidden widths are fixed for every positive `p`. Fusion uses bidirectional four-head cross-attention, three fusion scales, nonlinear compression, adaptive dropout and a final nonlinear MLP. Each modality uses a fixed 0.5 direct-versus-attended gate and a learned residual weight.
+With coverage, composition and coverage encoders feed cross-attention and multiscale fusion:
 
 ```mermaid
 flowchart LR
-    K["Composition: 136 → 128 → 64"] --> F["Cross-attention + fixed 0.5 gates<br/>Learned residual + multiscale nonlinear fusion"]
+    K["Composition: 136 → 128 → 64"] --> F["Cross-attention + fusion"]
     C["Coverage: p → 64 → 32"] --> F
     F --> E["D-dimensional embedding<br/>default D = 256"]
     E --> G["Graph and clustering"]
@@ -270,98 +188,73 @@ flowchart LR
     P --> L["Barlow Twins loss"]
 ```
 
-The projection head is used for training; graph construction uses the pre-projection `D`-dimensional embedding. A dedicated generator, seeded with `--random-seed`, is shared by the DataLoader and its sampler to make batch order independent of model initialization.
+Here `p` is the number of coverage features. Clustering uses the pre-projection embedding. Without coverage, the composition encoder uses **136 → 256 → 128**, followed by projection to `D` and a **D → 512 → 512** training head. See [models.py](remag/models.py) for architecture and training details.
 
-Without coverage, the composition encoder uses **136 → 256 → 128**, followed by a projection to `D` and a **D → 512 → 512** training head.
+Rescue uses length-weighted centroids and a cosine similarity threshold of 0.70. Centroids stay fixed during merging and are recomputed before recruitment. Each candidate tries only its nearest bin; whole-bin merges also require an original graph edge connecting the current bins. Smaller bins remain eligible seeds until final export.
 
-Rescue uses length-weighted centroids and a cosine similarity threshold of 0.70. Centroids stay fixed during merging and are recomputed once before recruitment. Each candidate tries its nearest bin only. With the default marker limits, a marker-bearing candidate must leave at most 5% duplicated marker families and increase duplication by strictly less than 5 percentage points. Counts update after each accepted contig; marker-free candidates have no marker veto. A whole-bin merge has one additional allowance: at similarity of at least 0.95, a target already above the duplication ceiling may accept a merge that does not worsen its duplication. This allowance does not apply to individual-contig recruitment. `--rescue-max-total-duplication` controls the ceiling (capped at 10% for whole-bin merges), and `--rescue-max-duplication-increase` controls the strict increase limit.
-
-Whole-bin merges also require at least one original clustering-graph edge between their current contigs, including contigs absorbed by earlier merges. If the nearest bin has no graph connection, the merge is rejected without trying another target. This safeguard also applies to the non-worsening marker allowance; individual-contig recruitment keeps its existing rule.
+By default, marker-bearing candidates must leave at most 5% duplicated marker families and increase duplication by strictly less than 5 percentage points. Counts update after each acceptance; marker-free candidates have no marker veto. At similarity ≥0.95, whole-bin merges may also join a target above the ceiling if duplication does not worsen. `--rescue-max-total-duplication` sets the ceiling (capped at 10% for merges), and `--rescue-max-duplication-increase` sets the strict increase limit. See [rescue.py](remag/rescue.py) for details.
 
 ## Output
 
-All runs retain `params.json` with the effective settings, including admission and graph cutoffs and the rescue settings. Matching reruns preserve the original record.
-
-Trained runs also save `training_provenance.json` with model dimensions, training/filter settings and input/output identities used to validate reuse. `siamese_model.pt` contains the PyTorch state dictionary; provenance is stored separately.
+All runs retain `params.json` and `remag.log`. Matching reruns preserve the original parameter record.
 
 ### Binning outputs
 
-- `bins/`: FASTA files for bins meeting `--min-bin-size`
-- `bins.csv`: Final assignments for contigs in saved bins; excludes noise and bins below the minimum size
-- `pre_rescue.csv`: Initial assignments for all admitted contigs; shorter contigs outside the graph are initially noise
-- `rescue_assignments.csv`: Assignments before the final size filter, including noise and small bins, with an `exported` flag
-- `clustering_provenance.json`: Clustering/rescue settings and input fingerprints used to check cache compatibility
-- `knn_graph_edges.csv`: Original k-NN graph edge list used for clustering and the merge safeguard
-- `knn_graph_contigs.csv`: Ordered graph contig IDs; edge indices refer to these rows, which may be a subset of `embeddings.csv`
-- `knn_graph_stats.json`: Graph construction statistics and fingerprints for cache validation
-- `embeddings.csv`: Embeddings for original contigs, including those that do not enter a saved bin
-- `fragments.pkl`: Fragment sequences and coordinates used by the pipeline; currently written even without `-k`
-- `remag.log`: Detailed log file
-- `gene_contig_mappings.json`: Cached gene mappings and positions; older caches without positions are regenerated when annotations are loaded
-- `core_gene_duplication_results.json`: Core gene duplication analysis for the final saved bins, after rescue and minimum-size filtering. Includes `within_contig_duplications`, identifying marker families with multiple locations on the same contig.
+| File | Contents |
+| --- | --- |
+| `bins/bin_*.fa` | Bins meeting `--min-bin-size` |
+| `bins.csv` | Assignments for contigs in exported bins; excludes noise and smaller bins |
+| `pre_rescue.csv` | Initial assignments for all admitted contigs; those outside the graph start as noise |
+| `rescue_assignments.csv` | Assignments before the final size filter, including noise and small bins, with an `exported` flag |
+| `embeddings.csv` | Embeddings for all admitted original contigs |
+| `training_provenance.json` | Model dimensions, training/filter settings, and identities used to validate reuse |
+| `clustering_provenance.json` | Clustering/rescue settings and input fingerprints |
+| `knn_graph_edges.csv` | Original graph edges used for clustering and merge validation |
+| `knn_graph_contigs.csv` | Ordered graph contig IDs; edge indices refer to these rows, not necessarily embedding rows |
+| `knn_graph_stats.json` | Graph statistics and cache fingerprints |
+| `gene_contig_mappings.json` | Cached marker mappings and positions |
+| `core_gene_duplication_results.json` | Marker statistics for final exported bins, including `within_contig_duplications` |
+| `fragments.pkl` | Fragment sequences and coordinates; retained even without `-k` |
 
-Binning stops with an error if required gene annotation fails. A successful search with no accepted matches still reports zero detected genes.
+Graph files and embeddings are retained without `-k`. Annotation failures stop binning; a successful search with no accepted matches reports zero detected genes. Multiple non-overlapping copies of a marker within one contig appear in the quality report, while clustering and rescue count that family once per contig.
 
-The original graph is retained even without `--keep-intermediate` and reused with compatible pre-rescue assignments. Older rescue versions or missing/changed graph evidence require a new output directory or `--force`; existing outputs are preserved until recomputation is requested.
-
-### Additional outputs with `-k` / `--keep-intermediate`
-
-- `siamese_model.pt`: Trained Siamese neural network model
-- `kmer_embeddings.csv`: K-mer encoder embeddings (before fusion)
-- `coverage_embeddings.csv`: Coverage encoder embeddings, when coverage features are present (before fusion)
-- `features.csv`: Extracted k-mer and coverage features
-- `temp_gene_mapping/`: Miniprot files used to generate gene mappings
-- `temp_miniprot/`: Per-bin miniprot files, when the fallback duplication-check path runs
+With `-k`, REMAG also retains `features.csv`, `siamese_model.pt` (a PyTorch state dictionary), `kmer_embeddings.csv`, and (when coverage is present) `coverage_embeddings.csv`. Miniprot intermediates are kept in `temp_gene_mapping/` and, when the fallback per-bin check runs, `temp_miniprot/`.
 
 ### Filtering outputs
 
-- `*_hyenadna_classification.tsv`: Predictions for contigs meeting `--min-contig-length`
-- `*_eukaryotic_filtered.fasta`: Contigs retained by the HyenaDNA filter
-- `*_non_eukaryotic.fasta`: Rejected contigs, when `--save-filtered-contigs` is used and at least one contig is rejected
+- `*_hyenadna_classification.tsv`: predictions for successfully classified contigs meeting `--min-contig-length`
+- `*_eukaryotic_filtered.fasta`: retained contigs
+- `*_non_eukaryotic.fasta`: rejected contigs, when `--save-filtered-contigs` is set and at least one contig is rejected
 
-`--filter-only` stops after this stage and does not produce binning outputs. Use it with filtering enabled; `--skip-bacterial-filter` disables that stage. Contigs below the minimum length are excluded from classification and the rejected-contig FASTA.
+`--filter-only` stops here. Keep filtering enabled: combining it with `--skip-bacterial-filter` produces no filtered FASTA. Contigs below the minimum length are excluded from classification and the rejected-contig file.
 
-Filtering uses the July 2026 single 4 kb HyenaDNA model for every eligible contig, including those shorter than 4 kb. Contigs up to 4,096 bp use one window. Longer contigs use up to 16 evenly spread 4,096 bp windows, including both endpoints. The window count is `min(16, 1 + ceil((length - 4096) / 2048))`; positions use Python's rounding. REMAG retains the entire original contig when the arithmetic mean of window probabilities is at least **0.30**. There is no random resampling or prediction early stopping.
+The July 2026 model uses one window for contigs up to 4,096 bp and up to 16 evenly spaced windows for longer contigs. The whole contig is retained when the mean eukaryote probability is **≥0.30**. Tokenization leaves room for up to 4,094 biological bases per window. Original FASTA headers, sequence content, and order are preserved. The `confidence` column is diagnostic; it does not control filtering. See [filter_policy.py](remag/filter_policy.py) for the checkpoint identity and exact settings.
 
-The tokenizer uses left padding and 4,096 tokens including CLS/SEP, so each window contributes at most 4,094 biological bases. Inference uppercases input and preserves unknown characters as UNK; retained and rejected FASTA records preserve the original headers, sequence content and order. The classification table retains its columns, reports probabilities at full precision, and always reports `resampled=False`; `confidence` is the native 0.5 window-agreement diagnostic, not a filtering rule.
+Filtering uses fixed batches of 64 contigs and up to 256 windows per inference call; nondefault `--hyenadna-batch-size` values are ignored with a warning. If no contigs pass, REMAG saves an empty filtered FASTA and finishes without training or binning.
 
-Filtering uses fixed batches of 64 eligible contigs and up to 256 windows per inference call. The legacy `--hyenadna-batch-size` option is accepted but other values are ignored with a warning. Automatic inference uses CUDA when available, otherwise CPU. All probabilities come directly from the selected device, including those near the cutoff. MPS is not used because equivalence has not been established.
-
-New runs record the policy, checkpoint SHA256, cutoff and execution settings in `params.json`. Reusing an older filtered FASTA does not rerun prediction; REMAG warns when its policy differs or is unknown and preserves the original provenance. Use `--force` or a new output directory to apply the current policy.
-
-If no contigs pass the classifier, REMAG saves an empty filtered FASTA and finishes successfully without training or producing bins. Classifier initialization failures still fall back to the input; consult `remag.log` for details.
+Checkpoint/prediction validation errors stop the run. Other classifier initialization failures fall back to the original FASTA; other batch-classification failures retain the affected contigs without prediction rows. Check `remag.log` for these fallbacks.
 
 ### Visualization
 
-The plotting helper currently runs from a REMAG source checkout. From the repository root, install the plotting dependencies and generate UMAP plots from `embeddings.csv` and `bins.csv`:
+From a source checkout, install the plotting extras and generate UMAP plots:
 
 ```bash
-pip install -e ".[plotting]"
-python scripts/plot_features.py --features output_directory/embeddings.csv --clusters output_directory/bins.csv --output output_directory
+python -m pip install -e ".[plotting]"
+python scripts/plot_features.py \
+  --features output_directory/embeddings.csv \
+  --clusters output_directory/bins.csv \
+  --output output_directory
 ```
 
-- `umap_coordinates.csv`: UMAP projections for visualization
-- `umap_plot.pdf`: UMAP visualization plot with cluster assignments
-
-## Requirements
-
-- Python 3.9+
-- `miniprot` on `PATH` for core gene analysis during binning; `--filter-only` does not require it. The Dockerfile includes miniprot; install it separately for PyPI and source installations.
-- Plotting extras are optional: `pip install "remag[plotting]"`
-
-The package includes the pre-trained July 2026 HyenaDNA classifier (4,096-token context; SHA256 `39d05fcecfdb0849fcf1822ffb0c816ee119e0436a19e0284e33e42f280f3689`) and the protein reference database used for core gene mapping.
+This writes `umap_coordinates.csv` and `umap_plot.pdf`. The helper script is available in the repository, not installed as a CLI command.
 
 ## Acknowledgments
 
-The integrated HyenaDNA classifier uses a pre-trained genomic foundation model:
-
-- **Repository**: [HazyResearch/hyena-dna](https://github.com/HazyResearch/hyena-dna)
-- **Paper**: Nguyen E, Poli M, Faizi M, et al. HyenaDNA: Long-Range Genomic Sequence Modeling at Single Nucleotide Resolution. NeurIPS 2023.
-
+The classifier builds on [HyenaDNA](https://github.com/HazyResearch/hyena-dna): Nguyen E, Poli M, Faizi M, et al. *HyenaDNA: Long-Range Genomic Sequence Modeling at Single Nucleotide Resolution.* NeurIPS 2023.
 
 ## License
 
-MIT License - see LICENSE file for details.
+[MIT](LICENSE).
 
 ## Citation
 

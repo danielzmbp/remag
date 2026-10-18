@@ -484,7 +484,7 @@ def validate_coverage_options(ctx, param, value):
     "--keep-intermediate",
     is_flag=True,
     default=False,
-    help="Keep intermediate files such as features, model weights, and graph artifacts. By default, only core outputs are kept.",
+    help="Keep features, model weights, and encoder embeddings. Graph files and contig embeddings are always retained.",
 )
 @click.option(
     "--force",
@@ -497,7 +497,7 @@ def validate_coverage_options(ctx, param, value):
     type=int,
     default=100000,
     show_default=True,
-    help="Maximum contigs queued for alignment coverage. Readers follow --cores, with up to 32 contigs queued per reader. Smaller values further limit queued work.",
+    help="Maximum contigs queued for alignment coverage. Readers follow --threads, with up to 32 contigs queued per reader. Smaller values further limit queued work.",
 )
 @click.option(
     "--hyenadna-batch-size",
@@ -565,7 +565,7 @@ def main_cli(
     ## Output
 
     - `bins/` - Directory containing binned FASTA files (one per genome)
-    - `bins.csv` - Cluster assignments for all contigs
+    - `bins.csv` - Assignments for contigs in exported bins; excludes noise and smaller bins
     - `embeddings.csv` - Learned contig embeddings
     """
     # Handle fasta input: accept either positional argument or --fasta flag
