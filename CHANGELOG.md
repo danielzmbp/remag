@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-10-20
+
+### Added
+- Add a methods guide covering model architecture, clustering, and rescue.
+- Add a portable architecture diagram with editable Graphviz source.
+- Add troubleshooting guidance for empty bin outputs, insufficient training
+  pairs, and memory use during coverage calculation.
+
+### Changed
+- Shorten the README and clarify installation, coverage inputs, quick-start
+  results, cache reuse, and output files.
+- Highlight the coverage-based workflow and primary result files, with detailed
+  output descriptions in an expandable section.
+- Make source installation self-contained, use absolute documentation links,
+  and document version recording and versioned container tags.
+
+### Fixed
+- Correct `--threads` references and output-retention descriptions in CLI help.
+- Clarify GPU support and distinguish filtering validation errors from fallbacks.
+
 ## [0.6.0] - 2026-10-12
 
 ### Added
