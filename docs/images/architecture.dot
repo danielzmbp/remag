@@ -1,0 +1,43 @@
+digraph REMAG {
+    graph [
+        rankdir=LR,
+        bgcolor="white",
+        pad=0.25,
+        nodesep=0.35,
+        ranksep=0.40,
+        dpi=144
+    ];
+    node [
+        shape=box,
+        style="rounded,filled",
+        fillcolor="#f1f5f9",
+        color="#64748b",
+        fontname="DejaVu Sans",
+        fontsize=18,
+        fontcolor="#0f172a",
+        margin="0.18,0.14",
+        penwidth=1.5
+    ];
+    edge [color="#475569", penwidth=1.8, arrowsize=0.8];
+
+    K [label="Composition\n136 → 128 → 64"];
+    C [label="Coverage\np → 64 → 32"];
+    F [label="Cross-attention\n+ fusion"];
+    E [
+        label="D-dimensional\nembedding\ndefault D = 256",
+        fillcolor="#dbeafe",
+        color="#2563eb"
+    ];
+    G [label="Graph and\nclustering"];
+    P [label="Training projection\nD → 128 → 512"];
+    L [label="Barlow Twins\nloss"];
+
+    { rank=same; K; C; }
+    { rank=same; G; P; }
+    K -> F;
+    C -> F;
+    F -> E;
+    E -> G;
+    E -> P;
+    P -> L;
+}

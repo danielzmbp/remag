@@ -5,7 +5,7 @@
 
 **R**ecovery of **E**ukaryotic **M**etagenome-**A**ssembled **G**enomes using contrastive learning. REMAG bins eukaryotic genomes from mixed prokaryotic–eukaryotic metagenomes using sequence composition and optional coverage data.
 
-[Installation](#installation) · [Quick Start](#quick-start) · [Usage](#usage) · [Common Options](#common-options) · [How It Works](#how-it-works) · [Output](#output) · [Citation](#citation)
+[Installation](#installation) · [Quick Start](#quick-start) · [Usage](#usage) · [Common Options](#common-options) · [How It Works](#how-it-works) · [Output](#output) · [Troubleshooting](#troubleshooting) · [Citation](#citation)
 
 ## Installation
 
@@ -30,9 +30,11 @@ python -m pip install remag
 
 ### From source
 
-Create and activate the environment above, then install from the repository:
+Create an environment with miniprot, then install from the repository:
 
 ```bash
+conda create -n remag -c conda-forge -c bioconda python=3.11 pip miniprot
+conda activate remag
 git clone https://github.com/danielzmbp/remag.git
 cd remag
 python -m pip install .
@@ -65,11 +67,15 @@ The relevant GPU check should report `True`.
 
 ## Quick Start
 
+Provide a contig FASTA and coordinate-sorted BAM/CRAM files containing reads mapped to that assembly. Use one alignment file per sample.
+
 ```bash
 remag contigs.fasta -c alignments.bam -o output_directory
 ```
 
-Coverage is optional. Omit `-c` to use sequence composition alone. Without `-o`, results go to `remag_output` next to the input FASTA. You can also invoke the CLI with `python -m remag`.
+Recovered genomes are saved in `output_directory/bins/`, with contig assignments in `output_directory/bins.csv`. Check `output_directory/remag.log` for progress and warnings.
+
+Without `-o`, results go to `remag_output` next to the input FASTA. You can also run REMAG with `python -m remag`.
 
 ### Docker
 
@@ -85,6 +91,8 @@ singularity build remag.sif docker://danielzmbp/remag:latest
 singularity run --bind "$(pwd):/data" remag.sif \
   /data/contigs.fasta -c /data/alignments.bam -o /data/output
 ```
+
+For reproducible runs, record the installed version with `remag --version` and use a versioned container image tag rather than `latest`.
 
 ## Usage
 
@@ -171,39 +179,35 @@ Other defaults: 100 epochs, 256 embedding dimensions, 15 k-NN neighbors, and ena
 ## How It Works
 
 1. **Filter:** HyenaDNA identifies eukaryotic contigs (unless `--skip-bacterial-filter` is set).
-2. **Extract features:** combine 4-mer composition with optional coverage. Generate training fragments where lengths permit; contigs longer than 50 kb receive augmentations from each half.
+2. **Extract features:** combine 4-mer composition with coverage. Generate training fragments where lengths permit; contigs longer than 50 kb receive augmentations from each half.
 3. **Learn embeddings:** train a Siamese network with Barlow Twins on fragments from the same contig.
 4. **Annotate markers:** use miniprot to map eukaryotic single-copy core genes for clustering and quality checks.
 5. **Cluster and rescue:** run weighted Leiden clustering across multiple resolutions, merge fragmented bins, recruit unassigned contigs, then apply the minimum bin size.
 
-With coverage, composition and coverage encoders feed cross-attention and multiscale fusion:
+Composition and coverage encoders feed cross-attention and multiscale fusion (`p` is the number of coverage features):
 
-```mermaid
-flowchart LR
-    K["Composition: 136 → 128 → 64"] --> F["Cross-attention + fusion"]
-    C["Coverage: p → 64 → 32"] --> F
-    F --> E["D-dimensional embedding<br/>default D = 256"]
-    E --> G["Graph and clustering"]
-    E --> P["Training projection: D → 128 → 512"]
-    P --> L["Barlow Twins loss"]
-```
+![Composition (136 → 128 → 64) and coverage (p → 64 → 32) feed cross-attention and fusion, producing a D-dimensional embedding (default 256). The embedding feeds graph clustering and a D → 128 → 512 training projection followed by Barlow Twins loss.](https://raw.githubusercontent.com/danielzmbp/remag/main/docs/images/architecture.png)
 
-Here `p` is the number of coverage features. Clustering uses the pre-projection embedding. Without coverage, the composition encoder uses **136 → 256 → 128**, followed by projection to `D` and a **D → 512 → 512** training head. See [models.py](remag/models.py) for architecture and training details.
-
-Rescue uses length-weighted centroids and a cosine similarity threshold of 0.70. Centroids stay fixed during merging and are recomputed before recruitment. Each candidate tries only its nearest bin; whole-bin merges also require an original graph edge connecting the current bins. Smaller bins remain eligible seeds until final export.
-
-By default, marker-bearing candidates must leave at most 5% duplicated marker families and increase duplication by strictly less than 5 percentage points. Counts update after each acceptance; marker-free candidates have no marker veto. At similarity ≥0.95, whole-bin merges may also join a target above the ceiling if duplication does not worsen. `--rescue-max-total-duplication` sets the ceiling (capped at 10% for merges), and `--rescue-max-duplication-increase` sets the strict increase limit. See [rescue.py](remag/rescue.py) for details.
+See the [methods guide](https://github.com/danielzmbp/remag/blob/main/docs/methods.md) for model architecture, clustering, and rescue details.
 
 ## Output
 
-All runs retain `params.json` and `remag.log`. Matching reruns preserve the original parameter record.
-
-### Binning outputs
+### Main results
 
 | File | Contents |
 | --- | --- |
 | `bins/bin_*.fa` | Bins meeting `--min-bin-size` |
 | `bins.csv` | Assignments for contigs in exported bins; excludes noise and smaller bins |
+| `remag.log` | Run progress, warnings, and errors |
+
+<details>
+<summary>Additional outputs</summary>
+
+All runs retain `params.json`. Matching reruns preserve the original parameter record.
+
+| File | Contents |
+| --- | --- |
+| `params.json` | Effective run settings |
 | `pre_rescue.csv` | Initial assignments for all admitted contigs; those outside the graph start as noise |
 | `rescue_assignments.csv` | Assignments before the final size filter, including noise and small bins, with an `exported` flag |
 | `embeddings.csv` | Embeddings for all admitted original contigs |
@@ -220,6 +224,8 @@ Graph files and embeddings are retained without `-k`. Annotation failures stop b
 
 With `-k`, REMAG also retains `features.csv`, `siamese_model.pt` (a PyTorch state dictionary), `kmer_embeddings.csv`, and (when coverage is present) `coverage_embeddings.csv`. Miniprot intermediates are kept in `temp_gene_mapping/` and, when the fallback per-bin check runs, `temp_miniprot/`.
 
+</details>
+
 ### Filtering outputs
 
 - `*_hyenadna_classification.tsv`: predictions for successfully classified contigs meeting `--min-contig-length`
@@ -228,7 +234,7 @@ With `-k`, REMAG also retains `features.csv`, `siamese_model.pt` (a PyTorch stat
 
 `--filter-only` stops here. Keep filtering enabled: combining it with `--skip-bacterial-filter` produces no filtered FASTA. Contigs below the minimum length are excluded from classification and the rejected-contig file.
 
-The July 2026 model uses one window for contigs up to 4,096 bp and up to 16 evenly spaced windows for longer contigs. The whole contig is retained when the mean eukaryote probability is **≥0.30**. Tokenization leaves room for up to 4,094 biological bases per window. Original FASTA headers, sequence content, and order are preserved. The `confidence` column is diagnostic; it does not control filtering. See [filter_policy.py](remag/filter_policy.py) for the checkpoint identity and exact settings.
+The July 2026 model uses one window for contigs up to 4,096 bp and up to 16 evenly spaced windows for longer contigs. The whole contig is retained when the mean eukaryote probability is **≥0.30**. Tokenization leaves room for up to 4,094 biological bases per window. Original FASTA headers, sequence content, and order are preserved. The `confidence` column is diagnostic; it does not control filtering. See [filter_policy.py](https://github.com/danielzmbp/remag/blob/main/remag/filter_policy.py) for the checkpoint identity and exact settings.
 
 Filtering uses fixed batches of 64 contigs and up to 256 windows per inference call; nondefault `--hyenadna-batch-size` values are ignored with a warning. If no contigs pass, REMAG saves an empty filtered FASTA and finishes without training or binning.
 
@@ -248,13 +254,23 @@ python scripts/plot_features.py \
 
 This writes `umap_coordinates.csv` and `umap_plot.pdf`. The helper script is available in the repository, not installed as a CLI command.
 
+## Troubleshooting
+
+Check `remag.log` for the stage reached and any warnings or errors.
+
+| Problem | What to check |
+| --- | --- |
+| No bins produced | Check whether filtering retained contigs, whether contigs remained unassigned, and whether any bins reached the default 500 kb export threshold (`--min-bin-size`). |
+| Too few training pairs | Training requires at least two positive fragment pairs; very small inputs may not generate enough usable fragments. |
+| Coverage calculation runs out of memory | Reduce `--threads`; use `--coverage-batch-size` to further limit queued work. |
+
 ## Acknowledgments
 
 The classifier builds on [HyenaDNA](https://github.com/HazyResearch/hyena-dna): Nguyen E, Poli M, Faizi M, et al. *HyenaDNA: Long-Range Genomic Sequence Modeling at Single Nucleotide Resolution.* NeurIPS 2023.
 
 ## License
 
-[MIT](LICENSE).
+[MIT](https://github.com/danielzmbp/remag/blob/main/LICENSE).
 
 ## Citation
 
