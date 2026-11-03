@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-11-03
+
+### Added
+- Add filtering, feature, training, and output-reuse sections to the methods
+  guide, and describe the greedy clustering loop step by step.
+
 ### Changed
 - Require Python 3.10 or newer; Python 3.9 is end-of-life. CI now tests
   Python 3.10 and 3.12.
@@ -19,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--embedding-dim`, `--max-positive-pairs`, and the coverage and HyenaDNA
   batch sizes, and negative `--min-bin-size`, `--num-augmentations`, and
   `--leiden-k-neighbors`.
+- Make the README more concise; detailed filtering and reuse behaviour now
+  lives in the methods guide.
 - Detect colour support for console logs instead of always writing colour
   codes, and keep tracebacks for fatal errors in `remag.log`.
 
@@ -577,7 +585,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Various bug fixes and improvements
 
-[Unreleased]: https://github.com/danielzmbp/remag/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/danielzmbp/remag/compare/v0.6.2...HEAD
+[0.6.2]: https://github.com/danielzmbp/remag/compare/v0.6.1...v0.6.2
+[0.6.1]: https://github.com/danielzmbp/remag/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/danielzmbp/remag/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/danielzmbp/remag/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/danielzmbp/remag/compare/v0.4.5...v0.5.0
