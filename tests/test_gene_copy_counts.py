@@ -218,9 +218,10 @@ def test_old_disk_cache_regenerates_annotations_only(tmp_path, with_hits):
             stdout.write(paf(0, 300) + paf(1000, 1300))
         return SimpleNamespace(returncode=0)
 
-    with patch(
-        "remag.miniprot_utils.check_miniprot_available", return_value=True
-    ), patch("remag.miniprot_utils.subprocess.run", side_effect=write_paf) as run:
+    with (
+        patch("remag.miniprot_utils.check_miniprot_available", return_value=True),
+        patch("remag.miniprot_utils.subprocess.run", side_effect=write_paf) as run,
+    ):
         mappings = load_or_generate_gene_mappings(
             {"contig": {"sequence": "A" * 10000}}, args
         )

@@ -114,15 +114,15 @@ def test_no_retained_contigs_finish_successfully_before_binning(
             for sequence in sequences
         ]
     )
-    with patch(
-        "remag.hyenadna_classifier.HyenaDNAClassifier", return_value=classifier
-    ) as initialize, patch("remag.core.get_features") as features, patch(
-        "remag.core.train_siamese_network"
-    ) as train, patch(
-        "remag.core.cluster_contigs"
-    ) as cluster, patch(
-        "remag.core.save_clusters_as_fasta"
-    ) as export:
+    with (
+        patch(
+            "remag.hyenadna_classifier.HyenaDNAClassifier", return_value=classifier
+        ) as initialize,
+        patch("remag.core.get_features") as features,
+        patch("remag.core.train_siamese_network") as train,
+        patch("remag.core.cluster_contigs") as cluster,
+        patch("remag.core.save_clusters_as_fasta") as export,
+    ):
         assert main(args) is None
     assert initialize.call_count == (0 if cached else 1)
     features.assert_not_called()
@@ -200,9 +200,10 @@ def test_cached_filtering_identifies_older_or_unknown_policy(tmp_path, policy):
             else json.dumps({"hyenadna_prediction_policy": policy})
         )
     before = {p.name: p.read_bytes() for p in output.iterdir()}
-    with patch("remag.hyenadna_classifier.HyenaDNAClassifier") as initialize, patch(
-        "remag.features.logger.warning"
-    ) as warning:
+    with (
+        patch("remag.hyenadna_classifier.HyenaDNAClassifier") as initialize,
+        patch("remag.features.logger.warning") as warning,
+    ):
         assert filter_bacterial_contigs(str(fasta), str(output)) == str(cached)
     initialize.assert_not_called()
     assert warning.call_count == (0 if policy == HYENADNA_PREDICTION_POLICY else 1)

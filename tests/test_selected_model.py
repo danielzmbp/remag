@@ -308,14 +308,16 @@ def test_core_reuses_verified_embeddings_without_optional_weights(tmp_path):
     embeddings = models.generate_embeddings(model, data, args)
     (tmp_path / "params.json").write_text(json.dumps({"min_contig_length": 1000}))
     assert not (tmp_path / "siamese_model.pt").exists()
-    with patch("remag.core.get_features", return_value=(data, {})), patch(
-        "remag.core.train_siamese_network"
-    ) as train, patch("remag.core.generate_embeddings") as generate, patch(
-        "remag.core.load_or_generate_gene_mappings", return_value={}
-    ), patch(
-        "remag.core.cluster_contigs",
-        side_effect=RuntimeError("stop after embedding reuse"),
-    ) as cluster:
+    with (
+        patch("remag.core.get_features", return_value=(data, {})),
+        patch("remag.core.train_siamese_network") as train,
+        patch("remag.core.generate_embeddings") as generate,
+        patch("remag.core.load_or_generate_gene_mappings", return_value={}),
+        patch(
+            "remag.core.cluster_contigs",
+            side_effect=RuntimeError("stop after embedding reuse"),
+        ) as cluster,
+    ):
         with pytest.raises(SystemExit):
             core.main(args)
     train.assert_not_called()

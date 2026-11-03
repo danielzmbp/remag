@@ -270,9 +270,11 @@ def test_corrupt_checkpoint_is_rejected(tmp_path):
 
 
 def test_auto_device_does_not_use_unvalidated_mps():
-    with patch.object(torch.cuda, "is_available", return_value=False), patch.object(
-        torch.backends.mps, "is_available", return_value=True
-    ), patch.object(torch, "load", return_value=torch.nn.Linear(1, 2)):
+    with (
+        patch.object(torch.cuda, "is_available", return_value=False),
+        patch.object(torch.backends.mps, "is_available", return_value=True),
+        patch.object(torch, "load", return_value=torch.nn.Linear(1, 2)),
+    ):
         assert HyenaDNAClassifier().device == "cpu"
     with pytest.raises(ClassifierPolicyError, match="MPS"):
         HyenaDNAClassifier(device="mps")

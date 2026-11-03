@@ -293,9 +293,11 @@ def filter_bacterial_contigs(
                 if filtered_out_file:
                     _write_fasta_record(filtered_out_file, header, sequence)
 
-    with open(classification_results, "w", encoding="utf-8") as results_file, open(
-        temp_fasta, "w", encoding="utf-8"
-    ) as fasta_out, (filtered_out_file or nullcontext()):
+    with (
+        open(classification_results, "w", encoding="utf-8") as results_file,
+        open(temp_fasta, "w", encoding="utf-8") as fasta_out,
+        filtered_out_file or nullcontext(),
+    ):
 
         results_file.write(
             "contig_id\tlength\tprediction\teukaryote_prob\tconfidence\tnum_windows\tresampled\n"

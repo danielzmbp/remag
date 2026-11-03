@@ -25,8 +25,9 @@ def test_load_or_generate_gene_mappings_reuses_cache(tmp_path):
     with open(cache_path, "w", encoding="utf-8") as cache_file:
         json.dump(expected, cache_file)
 
-    with patch("remag.miniprot_utils.subprocess.run") as run_miniprot, patch(
-        "remag.miniprot_utils.check_miniprot_available", return_value=False
+    with (
+        patch("remag.miniprot_utils.subprocess.run") as run_miniprot,
+        patch("remag.miniprot_utils.check_miniprot_available", return_value=False),
     ):
         result = load_or_generate_gene_mappings({}, args)
 
@@ -44,9 +45,10 @@ def test_load_or_generate_gene_mappings_returns_new_mappings(tmp_path):
         stdout.write("gene_1_1\t100\t0\t80\t+\tcontig_1\t1000\t0\t100\t70\t80\n")
         return SimpleNamespace(returncode=0)
 
-    with patch(
-        "remag.miniprot_utils.check_miniprot_available", return_value=True
-    ), patch("remag.miniprot_utils.subprocess.run", side_effect=write_paf):
+    with (
+        patch("remag.miniprot_utils.check_miniprot_available", return_value=True),
+        patch("remag.miniprot_utils.subprocess.run", side_effect=write_paf),
+    ):
         result = load_or_generate_gene_mappings(fragments, args)
 
     assert set(result) == {"contig_1"}
@@ -131,9 +133,10 @@ def test_miniprot_command_arguments(miniprot_inputs, tmp_path, directory_name):
 def test_miniprot_execution_error_is_reported(miniprot_inputs, error, stage):
     """Exercise and report each failure rather than accepting an untested path."""
     clusters, fragments, args = miniprot_inputs
-    with patch("remag.miniprot_utils.subprocess.run", side_effect=error) as run, patch(
-        "remag.miniprot_utils.logger.error"
-    ) as log_error:
+    with (
+        patch("remag.miniprot_utils.subprocess.run", side_effect=error) as run,
+        patch("remag.miniprot_utils.logger.error") as log_error,
+    ):
         with pytest.raises(type(error)) as caught:
             if stage == "mapping":
                 load_or_generate_gene_mappings(fragments, args)

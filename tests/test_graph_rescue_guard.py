@@ -168,12 +168,15 @@ def test_fresh_and_cached_graphs_survive_without_optional_intermediates(
     if core_count < 2:
         assert graph.ecount() == 0
     before = {p.name: p.read_bytes() for p in tmp_path.iterdir()}
-    with patch(
-        "remag.clustering.NearestNeighbors.fit",
-        side_effect=AssertionError("must not rebuild graph"),
-    ), patch(
-        "remag.clustering._greedy_leiden_clustering",
-        side_effect=AssertionError("must not recluster"),
+    with (
+        patch(
+            "remag.clustering.NearestNeighbors.fit",
+            side_effect=AssertionError("must not rebuild graph"),
+        ),
+        patch(
+            "remag.clustering._greedy_leiden_clustering",
+            side_effect=AssertionError("must not recluster"),
+        ),
     ):
         cached, loaded = cluster_contigs(emb, fragments, {}, args, return_graph=True)
     pd.testing.assert_frame_equal(fresh, cached)
@@ -244,10 +247,13 @@ def test_missing_incompatible_or_replaced_graph_preserves_cached_outputs(
         data["settings"]["rescue_algorithm"] = "unified-v1"
         path.write_text(json.dumps(data))
     before = {p.name: p.read_bytes() for p in tmp_path.iterdir()}
-    with patch(
-        "remag.clustering.NearestNeighbors.fit",
-        side_effect=AssertionError("must not rebuild"),
-    ), pytest.raises(ValueError, match="new output directory.*--force"):
+    with (
+        patch(
+            "remag.clustering.NearestNeighbors.fit",
+            side_effect=AssertionError("must not rebuild"),
+        ),
+        pytest.raises(ValueError, match="new output directory.*--force"),
+    ):
         cluster_contigs(emb, fragments, {}, args)
     assert {p.name: p.read_bytes() for p in tmp_path.iterdir()} == before
 
@@ -271,16 +277,17 @@ def test_core_uses_clustering_assignments_for_graph_guard(tmp_path):
         cores=1,
         skip_bacterial_filter=True,
     )
-    with patch("remag.core.setup_logging"), patch(
-        "remag.core.get_features", return_value=(pd.DataFrame([[1]]), fragments)
-    ), patch("remag.core.train_siamese_network"), patch(
-        "remag.core.generate_embeddings", return_value=emb
-    ), patch(
-        "remag.core.load_or_generate_gene_mappings", return_value={}
-    ), patch(
-        "remag.core.cluster_contigs",
-        return_value=(clusters, named_graph(names, [(0, 1)])),
-    ) as cluster:
+    with (
+        patch("remag.core.setup_logging"),
+        patch("remag.core.get_features", return_value=(pd.DataFrame([[1]]), fragments)),
+        patch("remag.core.train_siamese_network"),
+        patch("remag.core.generate_embeddings", return_value=emb),
+        patch("remag.core.load_or_generate_gene_mappings", return_value={}),
+        patch(
+            "remag.core.cluster_contigs",
+            return_value=(clusters, named_graph(names, [(0, 1)])),
+        ) as cluster,
+    ):
         core.main(args)
     assert cluster.call_args.kwargs["return_graph"] is True
     saved = pd.read_csv(tmp_path / "out/bins.csv", dtype=str, keep_default_na=False)

@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Require Python 3.10 or newer; Python 3.9 is end-of-life. CI now tests
+  Python 3.10 and 3.12.
 - Stop the run with a coverage error when an alignment or precomputed coverage
   file cannot be read, indexed, or parsed, instead of using zero coverage for
   that sample. Empty TSV coverage files are now an error.

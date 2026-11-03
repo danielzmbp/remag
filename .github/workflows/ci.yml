@@ -23,8 +23,8 @@ jobs:
       fail-fast: false
       matrix:
         python-version:
-          - '3.9'
-          - '3.11'
+          - '3.10'
+          - '3.12'
 
     steps:
     - uses: actions/checkout@v7
@@ -45,7 +45,7 @@ jobs:
       run: pytest
 
     - name: Run code quality checks
-      if: matrix.python-version == '3.11'
+      if: matrix.python-version == '3.12'
       run: |
         flake8 remag tests
         black --check remag tests

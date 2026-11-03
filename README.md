@@ -9,7 +9,7 @@
 
 ## Installation
 
-Requires Python 3.9+ and `miniprot` on `PATH` for binning. `--filter-only` does not require miniprot. The package includes the July 2026 HyenaDNA classifier and the protein reference database.
+Requires Python 3.10+ and `miniprot` on `PATH` for binning. `--filter-only` does not require miniprot. The package includes the July 2026 HyenaDNA classifier and the protein reference database.
 
 ### Conda (recommended)
 
