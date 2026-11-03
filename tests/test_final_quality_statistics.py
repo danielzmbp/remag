@@ -10,13 +10,10 @@ import pandas as pd
 import pytest
 
 from remag.core import main
-from remag.miniprot_utils import check_core_gene_duplications_from_cache
 from remag.utils import fasta_iter
 
 
-@pytest.mark.parametrize(
-    "scenario", ["merged", "skip_rescue", "below_size", "no_hits", "fallback"]
-)
+@pytest.mark.parametrize("scenario", ["merged", "skip_rescue", "below_size", "no_hits"])
 def test_quality_statistics_match_final_saved_bins(tmp_path, scenario):
     """Keep real rescue/output code while supplying controlled upstream results."""
     lengths = {"small": 1000, "large": 4000, "tiny": 400, "unbinned": 1000}
@@ -55,13 +52,6 @@ def test_quality_statistics_match_final_saved_bins(tmp_path, scenario):
         skip_rescue=scenario == "skip_rescue",
     )
 
-    def full_annotation(cluster_frame, _fragments, run_args, **_kwargs):
-        # Preserve the fallback's role of populating mappings before rescue.
-        run_args._gene_mappings_cache = mappings
-        return check_core_gene_duplications_from_cache(
-            cluster_frame, mappings, run_args
-        )
-
     with (
         patch("remag.core.setup_logging"),
         patch(
@@ -72,8 +62,7 @@ def test_quality_statistics_match_final_saved_bins(tmp_path, scenario):
         patch("remag.core.generate_embeddings", return_value=embeddings),
         patch(
             "remag.core.load_or_generate_gene_mappings",
-            # A failed cached-statistics check can still retry full annotation.
-            return_value={"large": None} if scenario == "fallback" else mappings,
+            return_value=mappings,
         ),
         patch(
             "remag.core.cluster_contigs",
@@ -82,13 +71,9 @@ def test_quality_statistics_match_final_saved_bins(tmp_path, scenario):
                 ig.Graph(n=4, edges=[(0, 1)], vertex_attrs={"name": list(lengths)}),
             ),
         ),
-        patch(
-            "remag.core.check_core_gene_duplications", side_effect=full_annotation
-        ) as fallback,
     ):
         main(args)
 
-    assert fallback.call_count == (1 if scenario == "fallback" else 0)
     output = tmp_path / "output"
     saved = pd.read_csv(output / "bins.csv")
     if scenario == "below_size":
@@ -110,7 +95,7 @@ def test_quality_statistics_match_final_saved_bins(tmp_path, scenario):
     if scenario == "below_size":
         expected_stats = {}
     else:
-        merged = scenario in {"merged", "fallback"}
+        merged = scenario == "merged"
         expected_stats = {
             "bin_large": {
                 "has_duplications": merged,

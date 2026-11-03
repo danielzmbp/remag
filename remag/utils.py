@@ -30,7 +30,6 @@ def setup_logging(output_dir=None, verbose=False):
         sys.stdout,
         level=log_level,
         format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <level>{message}</level>",
-        colorize=True,
     )
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)

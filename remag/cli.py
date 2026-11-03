@@ -41,8 +41,23 @@ def run_remag(args):
     return core_main(args)
 
 
+def _is_extra_coverage_value(token):
+    """Whether a token after a coverage path is another coverage path or glob."""
+    if token.startswith("-"):
+        return False
+    return (
+        is_alignment_coverage_file(token)
+        or is_precomputed_coverage_file(token)
+        or any(char in token for char in "*?[")
+    )
+
+
 def normalize_coverage_args(args):
-    """Expand `-c/--coverage` followed by multiple paths into repeated options."""
+    """Expand `-c/--coverage` followed by multiple paths into repeated options.
+
+    Only tokens that look like coverage files are consumed, so a positional
+    FASTA may follow the coverage paths.
+    """
     normalized_args = []
     i = 0
 
@@ -63,7 +78,7 @@ def normalize_coverage_args(args):
         normalized_args.append(args[i])
         i += 1
 
-        while i < len(args) and not args[i].startswith("-"):
+        while i < len(args) and _is_extra_coverage_value(args[i]):
             normalized_args.extend([token, args[i]])
             i += 1
 
@@ -344,14 +359,14 @@ def validate_coverage_options(ctx, param, value):
 )
 @click.option(
     "--batch-size",
-    type=int,
+    type=click.IntRange(min=2),
     default=2048,
     show_default=True,
     help="Batch size for contrastive learning training.",
 )
 @click.option(
     "--embedding-dim",
-    type=int,
+    type=click.IntRange(min=1),
     default=256,
     show_default=True,
     help="Dimensionality of contig embeddings in contrastive learning.",
@@ -397,7 +412,7 @@ def validate_coverage_options(ctx, param, value):
 )
 @click.option(
     "--max-positive-pairs",
-    type=int,
+    type=click.IntRange(min=1),
     default=5000000,
     show_default=True,
     help="Maximum number of positive pairs for contrastive learning training.",
@@ -405,14 +420,14 @@ def validate_coverage_options(ctx, param, value):
 @click.option(
     "-t",
     "--threads",
-    type=int,
+    type=click.IntRange(min=1),
     default=8,
     show_default=True,
     help="Number of CPU cores to use for parallel processing.",
 )
 @click.option(
     "--min-bin-size",
-    type=int,
+    type=click.IntRange(min=0),
     default=500000,
     show_default=True,
     help="Minimum total bin size in base pairs for output.",
@@ -453,7 +468,7 @@ def validate_coverage_options(ctx, param, value):
 )
 @click.option(
     "--num-augmentations",
-    type=int,
+    type=click.IntRange(min=0),
     default=8,
     show_default=True,
     help="Number of random fragments per contig for data augmentation.",
@@ -467,7 +482,7 @@ def validate_coverage_options(ctx, param, value):
 )
 @click.option(
     "--leiden-k-neighbors",
-    type=int,
+    type=click.IntRange(min=0),
     default=15,
     show_default=True,
     help="Number of nearest neighbors for k-NN graph construction in Leiden clustering.",
@@ -494,14 +509,14 @@ def validate_coverage_options(ctx, param, value):
 )
 @click.option(
     "--coverage-batch-size",
-    type=int,
+    type=click.IntRange(min=1),
     default=100000,
     show_default=True,
     help="Maximum contigs queued for alignment coverage. Readers follow --threads, with up to 32 contigs queued per reader. Smaller values further limit queued work.",
 )
 @click.option(
     "--hyenadna-batch-size",
-    type=int,
+    type=click.IntRange(min=1),
     default=INFERENCE_BATCH_SIZE,
     show_default=True,
     help="Legacy option. The validated filter uses fixed batches of 256 windows; other values are ignored with a warning.",
@@ -586,10 +601,12 @@ def main_cli(
         output = os.path.join(fasta_dir, "remag_output")
         click.echo(f"Output directory not specified, using: {output}", err=True)
 
-    # Validate resource parameters
-    import multiprocessing
-
-    max_cores = multiprocessing.cpu_count()
+    # Validate resource parameters against the CPUs this process may use
+    # (e.g. a SLURM allocation), not the whole node.
+    if hasattr(os, "sched_getaffinity"):
+        max_cores = len(os.sched_getaffinity(0))
+    else:
+        max_cores = os.cpu_count() or 1
     if threads > max_cores:
         click.echo(
             f"Warning: Requested {threads} threads but only {max_cores} available. Using {max_cores}.",

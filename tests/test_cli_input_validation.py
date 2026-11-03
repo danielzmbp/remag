@@ -8,7 +8,18 @@ from click.testing import CliRunner
 from remag.cli import main_cli
 
 
-@pytest.mark.parametrize("option", ["--epochs", "--min-contig-length"])
+@pytest.mark.parametrize(
+    "option",
+    [
+        "--epochs",
+        "--min-contig-length",
+        "--threads",
+        "--batch-size",
+        "--embedding-dim",
+        "--max-positive-pairs",
+        "--coverage-batch-size",
+    ],
+)
 @pytest.mark.parametrize("value", [0, -1])
 @pytest.mark.parametrize("force", [False, True])
 def test_nonpositive_values_leave_existing_results_untouched(
@@ -45,3 +56,22 @@ def test_positive_values_are_forwarded_unchanged(tmp_path, epochs, minimum):
     args = run.call_args.args[0]
     assert args.epochs == epochs
     assert args.min_contig_length == minimum
+
+
+@pytest.mark.parametrize("position", ["before", "after"])
+def test_positional_fasta_may_follow_coverage_paths(tmp_path, position):
+    fasta = tmp_path / "input.fa"
+    fasta.write_text(">c\n" + "A" * 1200 + "\n")
+    bams = [tmp_path / "s1.bam", tmp_path / "s2.bam"]
+    for bam in bams:
+        bam.touch()
+    coverage = ["-c", *map(str, bams)]
+    command = (
+        [str(fasta), *coverage] if position == "before" else [*coverage, str(fasta)]
+    )
+    with patch("remag.cli.run_remag") as run:
+        result = CliRunner().invoke(main_cli, command)
+    assert result.exit_code == 0, result.output
+    args = run.call_args.args[0]
+    assert args.fasta == str(fasta)
+    assert args.bam == sorted(map(str, bams))

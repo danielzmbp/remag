@@ -252,14 +252,13 @@ def test_missing_incompatible_or_replaced_graph_preserves_cached_outputs(
     assert {p.name: p.read_bytes() for p in tmp_path.iterdir()} == before
 
 
-def test_core_uses_assignments_after_duplication_check_for_graph_guard(tmp_path):
+def test_core_uses_clustering_assignments_for_graph_guard(tmp_path):
     from remag import core
 
     names = ["s", "t"]
     emb = pd.DataFrame([[1, 0]] * 2, index=names)
     fragments = {"s": {"sequence": "A" * 1000}, "t": {"sequence": "C" * 4000}}
-    initial = pd.DataFrame({"contig": names, "cluster": ["old", "old"]})
-    checked = initial.assign(cluster=["S", "T"])
+    clusters = pd.DataFrame({"contig": names, "cluster": ["S", "T"]})
     args = Namespace(
         output=str(tmp_path / "out"),
         fasta=str(tmp_path / "input.fa"),
@@ -280,10 +279,8 @@ def test_core_uses_assignments_after_duplication_check_for_graph_guard(tmp_path)
         "remag.core.load_or_generate_gene_mappings", return_value={}
     ), patch(
         "remag.core.cluster_contigs",
-        return_value=(initial, named_graph(names, [(0, 1)])),
-    ) as cluster, patch(
-        "remag.core.check_core_gene_duplications_from_cache", return_value=checked
-    ):
+        return_value=(clusters, named_graph(names, [(0, 1)])),
+    ) as cluster:
         core.main(args)
     assert cluster.call_args.kwargs["return_graph"] is True
     saved = pd.read_csv(tmp_path / "out/bins.csv", dtype=str, keep_default_na=False)

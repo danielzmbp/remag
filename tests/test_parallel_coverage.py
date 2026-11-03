@@ -147,22 +147,25 @@ def test_all_unmatched_fragments_are_zero_filled(alignment, fragments):
     )
 
 
-def test_worker_read_error_retains_zero_fallback(fragments):
+def test_worker_read_error_is_not_zero_coverage(fragments):
     reader = Mock()
     reader.count_coverage.side_effect = OSError("bad contig")
-    means, stds, _ = F._read_contig_coverage(
-        ("chr.1", [("chr.1", fragments["chr.1"])], 12000), reader
-    )
-    assert list(means) == fragments["chr.1"]["fragments"]
-    assert all(value == 0 for value in means.values())
-    assert means == stds
+    with pytest.raises(F.CoverageError, match="chr.1: bad contig"):
+        F._read_contig_coverage(
+            ("chr.1", [("chr.1", fragments["chr.1"])], 12000), reader
+        )
 
 
-def test_invalid_alignment_retains_empty_result(tmp_path, fragments):
-    assert F.calculate_fragment_coverage(str(tmp_path / "absent.bam"), fragments) == (
-        {},
-        {},
-    )
+def test_invalid_alignment_is_not_zero_coverage(tmp_path, fragments):
+    with pytest.raises(F.CoverageError, match="missing or unusable"):
+        F.calculate_fragment_coverage(str(tmp_path / "absent.bam"), fragments)
+
+
+def test_alignment_failure_stops_samples(tmp_path, alignment, fragments):
+    with pytest.raises(F.CoverageError, match="missing or unusable"):
+        F.calculate_coverage_from_multiple_bams(
+            [str(tmp_path / "absent.bam"), alignment], fragments, cores=1
+        )
 
 
 def test_missing_index_is_created(alignment, fragments):
@@ -173,6 +176,24 @@ def test_missing_index_is_created(alignment, fragments):
     )
     assert os.path.isfile(alignment + suffix)
     assert any(v > 0 for v in means.values())
+
+
+def test_missing_index_does_not_change_normalisation(alignment, fragments):
+    indexed = F.calculate_coverage_from_multiple_bams([alignment], fragments, cores=1)
+    suffix = ".bai" if alignment.endswith("bam") else ".crai"
+    os.unlink(alignment + suffix)
+    unindexed = F.calculate_coverage_from_multiple_bams([alignment], fragments, cores=1)
+    assert indexed.to_numpy().max() > 0
+    np.testing.assert_allclose(unindexed.to_numpy(), indexed.to_numpy())
+
+
+def test_csi_index_is_accepted(tmp_path, alignment, fragments):
+    if not alignment.endswith("bam"):
+        pytest.skip("CSI applies to BAM")
+    os.unlink(alignment + ".bai")
+    pysam.index("-c", alignment)
+    assert F._validate_alignment_file(alignment)
+    assert not os.path.exists(alignment + ".bai")
 
 
 def test_sequence_strings_are_not_sent_to_workers(alignment, fragments, monkeypatch):
@@ -352,7 +373,7 @@ def test_memory_failure_stops_samples(alignment, fragments, monkeypatch, cores):
         F.calculate_coverage_from_multiple_bams(
             [alignment, "must-not-be-processed.bam"], fragments, cores=cores
         )
-    counts.assert_called_once_with(alignment)
+    counts.assert_not_called()
 
 
 @pytest.mark.parametrize(

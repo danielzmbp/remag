@@ -136,11 +136,16 @@ def _calculate_kmer_composition(
     return df
 
 
-def get_classification_results_path(fasta_file, output_dir):
+def get_fasta_stem(fasta_file):
+    """Return the FASTA file name without its extension, ignoring a trailing .gz."""
     base_name = os.path.basename(fasta_file)
-    name_without_ext = os.path.splitext(base_name)[0]
-    if name_without_ext.endswith(".gz"):
-        name_without_ext = os.path.splitext(name_without_ext)[0]
+    if base_name.endswith(".gz"):
+        base_name = base_name[:-3]
+    return os.path.splitext(base_name)[0]
+
+
+def get_classification_results_path(fasta_file, output_dir):
+    name_without_ext = get_fasta_stem(fasta_file)
     return os.path.join(output_dir, f"{name_without_ext}_hyenadna_classification.tsv")
 
 
@@ -169,10 +174,7 @@ def filter_bacterial_contigs(
     Returns:
         str: Path to filtered FASTA file
     """
-    base_name = os.path.basename(fasta_file)
-    name_without_ext = os.path.splitext(base_name)[0]
-    if name_without_ext.endswith(".gz"):
-        name_without_ext = os.path.splitext(name_without_ext)[0]
+    name_without_ext = get_fasta_stem(fasta_file)
 
     filtered_fasta = os.path.join(
         output_dir, f"{name_without_ext}_eukaryotic_filtered.fasta"
@@ -841,11 +843,15 @@ def _validate_alignment_file(alignment_file: str) -> bool:
     file_ext = alignment_file.lower().split(".")[-1]
 
     if file_ext == "bam":
-        # Check for .bai index file (both .bam.bai and .bai extensions)
+        # Accept .bai or .csi indexes, next to the BAM or replacing its extension
         bai_filepath = alignment_file + ".bai"
-        alt_bai_filepath = os.path.splitext(alignment_file)[0] + ".bai"
+        index_paths = [
+            stem + ext
+            for stem in (alignment_file, os.path.splitext(alignment_file)[0])
+            for ext in (".bai", ".csi")
+        ]
 
-        if not os.path.exists(bai_filepath) and not os.path.exists(alt_bai_filepath):
+        if not any(os.path.exists(path) for path in index_paths):
             logger.info(
                 f"BAM index (.bai) not found for {alignment_file}, creating index..."
             )
@@ -1185,8 +1191,9 @@ def _read_contig_coverage(task, reader=None):
     except Exception as error:
         if getattr(error, "errno", None) == errno.ENOMEM:
             raise
-        logger.warning(f"Error loading coverage for contig {name}: {error}")
-        depth = None
+        raise CoverageError(
+            f"Error loading coverage for contig {name}: {error}"
+        ) from error
     return _process_contig_coverage_worker((name, records, depth, length))
 
 
@@ -1228,7 +1235,7 @@ def calculate_fragment_coverage(
     fragment_coverage_std: CoverageDict = {}
 
     if not _validate_alignment_file(bam_file):
-        return {}, {}
+        raise CoverageError(f"Alignment file {bam_file} is missing or unusable.")
 
     try:
         if cores < 1 or coverage_batch_size < 1:
@@ -1239,8 +1246,9 @@ def calculate_fragment_coverage(
             bam_lengths = dict(zip(bamfile.references, bamfile.lengths))
 
         if not bam_references:
-            logger.error("Alignment file contains no reference sequences.")
-            return {}, {}
+            raise CoverageError(
+                f"Alignment file {bam_file} contains no reference sequences."
+            )
 
         bam_ref_map, unmapped_headers = _map_fasta_to_bam_refs(
             fragments_dict, bam_references, disable_progress=disable_progress
@@ -1301,6 +1309,8 @@ def calculate_fragment_coverage(
                 fragment_coverage[fragment_header] = 0.0
                 fragment_coverage_std[fragment_header] = 0.0
 
+    except CoverageError:
+        raise
     except Exception as e:
         if (
             isinstance(e, (MemoryError, BrokenProcessPool))
@@ -1316,27 +1326,7 @@ def calculate_fragment_coverage(
                 "Check the worker/job logs; if memory is exhausted, "
                 "reduce --cores or allocate more RAM."
             ) from e
-        import traceback
-
-        logger.error(f"Error processing alignment file {bam_file}: {e}")
-        logger.debug(f"Traceback: {traceback.format_exc()}")
-
-        # Check if BAM file is empty or corrupted
-        try:
-            if bamfile:
-                total_mapped = bamfile.mapped
-                total_unmapped = bamfile.unmapped
-                logger.error(
-                    f"BAM file stats: {total_mapped} mapped reads, {total_unmapped} unmapped reads"
-                )
-                if total_mapped == 0:
-                    logger.error(
-                        f"BAM file {bam_file} has NO mapped reads - cannot calculate coverage"
-                    )
-        except Exception:
-            logger.error(f"Could not read BAM file stats for {bam_file}")
-
-        return {}, {}
+        raise CoverageError(f"Error processing alignment file {bam_file}: {e}") from e
 
     # Assign zero coverage to any missing fragments
     all_fragment_headers = {
@@ -1549,7 +1539,7 @@ def _calculate_interval_file_coverage(
 
 def _calculate_contig_tsv_coverage(
     tsv_file: str, fragments_dict: FragmentDict
-) -> Optional[pd.Series]:
+) -> pd.Series:
     """Calculate coverage from contig-level TSV/TXT files."""
     try:
         coverage_df = pd.read_csv(
@@ -1560,8 +1550,7 @@ def _calculate_contig_tsv_coverage(
             compression="infer",
         )
         if len(coverage_df.columns) < 2:
-            logger.error(f"TSV file {tsv_file} has fewer than 2 columns")
-            return None
+            raise CoverageError(f"TSV file {tsv_file} has fewer than 2 columns")
 
         header_coverage = dict(zip(coverage_df[0], coverage_df.iloc[:, -1]))
 
@@ -1586,12 +1575,12 @@ def _calculate_contig_tsv_coverage(
         col_name = _coverage_sample_name(tsv_file)
         return pd.Series(fragment_coverage, name=col_name, dtype=float)
 
-    except pd.errors.EmptyDataError:
-        logger.error(f"TSV file {tsv_file} is empty. Skipping.")
+    except CoverageError:
+        raise
+    except pd.errors.EmptyDataError as e:
+        raise CoverageError(f"TSV file {tsv_file} is empty.") from e
     except Exception as e:
-        logger.error(f"Error processing TSV file {tsv_file}: {e}. Skipping.")
-
-    return None
+        raise CoverageError(f"Error processing TSV file {tsv_file}: {e}") from e
 
 
 # Coverage calculation functions
@@ -1618,16 +1607,17 @@ def calculate_coverage_from_tsv(
                 all_coverage_series.extend([mean_series, std_series])
             else:
                 logger.debug(f"Detected contig-level coverage format for {tsv_file}")
-                coverage_series = _calculate_contig_tsv_coverage(
-                    tsv_file, fragments_dict
+                all_coverage_series.append(
+                    _calculate_contig_tsv_coverage(tsv_file, fragments_dict)
                 )
-                if coverage_series is not None:
-                    all_coverage_series.append(coverage_series)
+        except CoverageError:
+            raise
         except Exception as e:
-            logger.error(
-                f"Error processing precomputed coverage file {tsv_file}: {e}. Skipping."
-            )
-            continue
+            if isinstance(e, MemoryError) or getattr(e, "errno", None) == errno.ENOMEM:
+                raise
+            raise CoverageError(
+                f"Error processing precomputed coverage file {tsv_file}: {e}"
+            ) from e
 
     if not all_coverage_series:
         logger.warning("No coverage data could be loaded from precomputed files.")
@@ -1660,8 +1650,7 @@ def _get_total_mapped_reads(bam_file: str) -> int:
     except Exception as e:
         if getattr(e, "errno", None) == errno.ENOMEM:
             raise
-        logger.error(f"Error calculating mapped reads for {bam_file}: {e}")
-        return 1  # Avoid division by zero
+        raise CoverageError(f"Could not count mapped reads in {bam_file}: {e}") from e
 
 
 def calculate_coverage_from_multiple_bams(
@@ -1727,10 +1716,8 @@ def calculate_coverage_from_multiple_bams(
         )
 
         try:
-            # Calculate total mapped reads for normalization
-            total_mapped_reads = _get_total_mapped_reads(bam_file)
-
-            # Calculate coverage for this alignment file
+            # Calculate coverage first: it creates any missing index, which
+            # the mapped-read count below needs.
             coverage, coverage_std = calculate_fragment_coverage(
                 bam_file,
                 fragments_dict,
@@ -1738,6 +1725,9 @@ def calculate_coverage_from_multiple_bams(
                 coverage_batch_size,
                 disable_progress=disable_inner_progress,
             )
+
+            # Calculate total mapped reads for normalization
+            total_mapped_reads = _get_total_mapped_reads(bam_file)
             if total_mapped_reads <= 0:
                 logger.warning(
                     f"Alignment file {os.path.basename(bam_file)} has no mapped reads; assigning zero coverage."
@@ -1778,16 +1768,9 @@ def calculate_coverage_from_multiple_bams(
                     f"Coverage ran out of memory for {bam_file}; "
                     "reduce --cores or allocate more RAM."
                 ) from e
-            logger.error(f"Error processing alignment file {bam_file}: {e}")
-            sample_name = sample_names_map[bam_file]
-            mean_col_name = f"{sample_name}_coverage"
-            std_col_name = f"{sample_name}_coverage_std"
-
-            zero_coverage = {fh: 0.0 for fh in all_fragment_headers}
-            mean_series = pd.Series(zero_coverage, name=mean_col_name, dtype=float)
-            std_series = pd.Series(zero_coverage, name=std_col_name, dtype=float)
-
-            all_coverage_series.extend([mean_series, std_series])
+            raise CoverageError(
+                f"Error processing alignment file {bam_file}: {e}"
+            ) from e
 
     if not all_coverage_series:
         logger.warning("No coverage data could be loaded from any alignment files.")

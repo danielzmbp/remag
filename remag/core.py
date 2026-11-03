@@ -17,7 +17,6 @@ from .features import (
 )
 from .filter_policy import HYENADNA_FILTER_CONFIG, INFERENCE_BATCH_SIZE
 from .miniprot_utils import (
-    check_core_gene_duplications,
     check_core_gene_duplications_from_cache,
     load_or_generate_gene_mappings,
 )
@@ -36,6 +35,13 @@ from .output import (
 )
 from .rescue import rescue_fragmented_bins
 from .utils import default_graph_min_contig_length, setup_logging
+
+
+def _exit_with_error(message, error):
+    """Log a fatal error, keeping its traceback in the debug log, and exit."""
+    logger.error(f"{message}: {error}")
+    logger.opt(exception=error).debug("Traceback:")
+    sys.exit(1)
 
 
 def main(args):
@@ -68,8 +74,7 @@ def main(args):
         # Log the exact command used
         logger.info(f"Command: {' '.join(sys.argv)}")
     except Exception as e:
-        logger.error(f"Failed to initialize output directory: {e}")
-        sys.exit(1)
+        _exit_with_error("Failed to initialize output directory", e)
 
     logger.info(
         f"Minimum contig and training-fragment length: {args.min_contig_length:,} bp."
@@ -147,8 +152,7 @@ def main(args):
             args,  # Pass args for keep_intermediate check
         )
     except Exception as e:
-        logger.error(f"Failed to generate features: {e}")
-        sys.exit(1)
+        _exit_with_error("Failed to generate features", e)
 
     if features_df.empty:
         logger.error("No features generated. Exiting.")
@@ -163,8 +167,7 @@ def main(args):
         else:
             logger.info("Using verified cached embeddings; training is not rerun.")
     except Exception as e:
-        logger.error(f"Failed to train model or generate embeddings: {e}")
-        sys.exit(1)
+        _exit_with_error("Failed to train model or generate embeddings", e)
 
     # Generate gene mappings for greedy clustering
     logger.info("Generating gene mappings for greedy clustering...")
@@ -176,53 +179,14 @@ def main(args):
         args._gene_mappings_cache = gene_mappings
 
     except Exception as e:
-        logger.error(f"Failed to generate gene mappings: {e}")
-        sys.exit(1)
+        _exit_with_error("Failed to generate gene mappings", e)
 
     try:
         clusters_df, graph = cluster_contigs(
             embeddings_df, fragments_dict, gene_mappings, args, return_graph=True
         )
     except Exception as e:
-        logger.error(f"Failed to cluster contigs: {e}")
-        sys.exit(1)
-
-    # Check for duplicated core genes using miniprot (using compleasm-style thresholds)
-    logger.info("Checking for duplicated core genes...")
-
-    # Use the gene mappings we already loaded for greedy clustering
-    gene_mappings_cache = (
-        args._gene_mappings_cache if hasattr(args, "_gene_mappings_cache") else None
-    )
-
-    try:
-        # Use cached approach if available, otherwise run miniprot
-        if gene_mappings_cache is not None:
-            try:
-                clusters_df = check_core_gene_duplications_from_cache(
-                    clusters_df, gene_mappings_cache, args
-                )
-            except Exception as e:
-                logger.warning(f"Cache-based duplication check failed: {e}")
-                logger.warning("Falling back to full miniprot run")
-                clusters_df = check_core_gene_duplications(
-                    clusters_df,
-                    fragments_dict,
-                    args,
-                    target_coverage_threshold=0.55,
-                    identity_threshold=0.35,
-                )
-        else:
-            clusters_df = check_core_gene_duplications(
-                clusters_df,
-                fragments_dict,
-                args,
-                target_coverage_threshold=0.55,
-                identity_threshold=0.35,
-            )
-    except Exception as e:
-        logger.error(f"Failed to check core gene duplications: {e}")
-        sys.exit(1)
+        _exit_with_error("Failed to cluster contigs", e)
 
     # --- Run rescue step ---
     if not getattr(args, "skip_rescue", False):

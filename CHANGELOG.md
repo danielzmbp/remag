@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Stop the run with a coverage error when an alignment or precomputed coverage
+  file cannot be read, indexed, or parsed, instead of using zero coverage for
+  that sample. Empty TSV coverage files are now an error.
+- Cap `--threads` at the CPUs available to the process (for example a SLURM
+  allocation) rather than all CPUs on the node.
+- Reject zero or negative values for `--threads`, `--batch-size`,
+  `--embedding-dim`, `--max-positive-pairs`, and the coverage and HyenaDNA
+  batch sizes, and negative `--min-bin-size`, `--num-augmentations`, and
+  `--leiden-k-neighbors`.
+- Detect colour support for console logs instead of always writing colour
+  codes, and keep tracebacks for fatal errors in `remag.log`.
+
+### Fixed
+- Count mapped reads after creating a missing BAM index, so unindexed BAMs are
+  no longer normalised as if they had one mapped read.
+- Accept existing `.csi` BAM indexes instead of re-indexing to `.bai`.
+- Allow the positional FASTA to follow `-c` coverage paths.
+- Drop gzip and FASTA extensions together when naming filtering outputs, so
+  `contigs.fa.gz` produces `contigs_*` rather than `contigs.fa_*`.
+
+### Removed
+- Remove the pre-rescue duplication check, whose results were discarded and
+  whose miniprot fallback could replace the marker set used by rescue.
+
 ## [0.6.1] - 2026-10-20
 
 ### Added

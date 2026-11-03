@@ -121,5 +121,6 @@ def test_mapped_count_preserves_error_handling(
             _get_total_mapped_reads("sample.cram")
         assert caught.value is error
     else:
-        assert _get_total_mapped_reads("sample.cram") == 1
-        logger.error.assert_called_once()
+        with pytest.raises(features.CoverageError, match="sample.cram") as caught:
+            _get_total_mapped_reads("sample.cram")
+        assert caught.value.__cause__ is error

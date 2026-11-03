@@ -88,16 +88,18 @@ def test_added_bam_coverage_matches_fresh_features(tmp_path, cached_input):
     pd.testing.assert_frame_equal(recalculated, fresh, atol=1e-12, rtol=1e-12)
 
 
-def test_empty_added_coverage_preserves_cached_kmers(tmp_path, cached_input):
-    fasta, output, kmer_only = cached_input
+def test_empty_added_coverage_fails_and_preserves_cache(tmp_path, cached_input):
+    fasta, output, _ = cached_input
+    before = (output / "features.csv").read_bytes()
     coverage = tmp_path / "sample.tsv"
     coverage.write_text("")
     with patch(
         "remag.features._calculate_kmer_composition",
         side_effect=AssertionError("K-mers must be reused"),
     ):
-        actual = features(fasta, output, tsv_files=[str(coverage)])
-    pd.testing.assert_frame_equal(actual, kmer_only, atol=1e-12, rtol=1e-12)
+        with pytest.raises(CoverageError, match="is empty"):
+            features(fasta, output, tsv_files=[str(coverage)])
+    assert (output / "features.csv").read_bytes() == before
 
 
 def test_recalculated_coverage_uses_cached_feature_rows(tmp_path, cached_input):
@@ -125,7 +127,6 @@ def test_recalculated_coverage_uses_cached_feature_rows(tmp_path, cached_input):
         (["sampleA.tsv"], ["sampleB.cov"]),
         (["sampleA.cov"], ["sampleB.tsv"]),
         (["sampleA_coverage.tsv"], ["sampleB.tsv"]),
-        (["sampleA.tsv"], ["empty.tsv"]),
     ],
     ids=[
         "add-sample",
@@ -133,7 +134,6 @@ def test_recalculated_coverage_uses_cached_feature_rows(tmp_path, cached_input):
         "plain-to-interval",
         "interval-to-plain",
         "coverage-name",
-        "empty-replacement",
     ],
 )
 def test_recalculation_replaces_all_cached_coverage(
@@ -144,8 +144,6 @@ def test_recalculation_replaces_all_cached_coverage(
         content = "c0\t0\nc1\t9\nc2\t99\n"
         if name.endswith(".cov"):
             content = "c0\t0\t120\t0\nc1\t0\t120\t9\nc2\t0\t120\t99\n"
-        elif name == "empty.tsv":
-            content = ""
         (tmp_path / name).write_text(content)
     features(fasta, output, tsv_files=[str(tmp_path / name) for name in old_names])
     inputs = {"tsv_files": [str(tmp_path / name) for name in new_names]}
@@ -185,6 +183,8 @@ def test_recalculation_removes_columns_duplicated_by_older_runs(tmp_path, cached
 def test_failed_coverage_preserves_cache_without_regenerating(tmp_path, cached_input):
     fasta, output, _ = cached_input
     before = (output / "features.csv").read_bytes()
+    for name in ("sample.bam", "sample.bam.bai"):
+        (tmp_path / name).touch()
     with (
         patch("remag.features.pysam.AlignmentFile", side_effect=MemoryError()),
         patch("remag.features._calculate_kmer_composition") as kmers,

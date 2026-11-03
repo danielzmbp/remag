@@ -47,8 +47,7 @@ def test_filtering_receives_save_filtered_contigs_flag(tmp_path, graph_minimum):
     )
 
 
-@pytest.mark.parametrize("failure_stage", ["mapping", "fallback"])
-def test_annotation_failure_stops_pipeline(tmp_path, failure_stage):
+def test_annotation_failure_stops_pipeline(tmp_path):
     from remag.core import main
 
     args = Namespace(
@@ -70,22 +69,9 @@ def test_annotation_failure_stops_pipeline(tmp_path, failure_stage):
         patch("remag.core.generate_embeddings"),
         patch(
             "remag.core.load_or_generate_gene_mappings",
-            return_value={},
-            side_effect=(
-                RuntimeError("annotation failed")
-                if failure_stage == "mapping"
-                else None
-            ),
+            side_effect=RuntimeError("annotation failed"),
         ),
         patch("remag.core.cluster_contigs", return_value=(clusters, None)) as cluster,
-        patch(
-            "remag.core.check_core_gene_duplications_from_cache",
-            side_effect=ValueError("cache check failed"),
-        ),
-        patch(
-            "remag.core.check_core_gene_duplications",
-            side_effect=RuntimeError("annotation failed"),
-        ) as fallback,
         patch("remag.core.rescue_fragmented_bins") as rescue,
         patch("remag.core.save_clusters_as_fasta") as save,
     ):
@@ -93,8 +79,7 @@ def test_annotation_failure_stops_pipeline(tmp_path, failure_stage):
             main(args)
 
     assert caught.value.code == 1
-    assert cluster.call_count == (1 if failure_stage == "fallback" else 0)
-    assert fallback.call_count == (1 if failure_stage == "fallback" else 0)
+    cluster.assert_not_called()
     rescue.assert_not_called()
     save.assert_not_called()
     assert not (tmp_path / "core_gene_duplication_results.json").exists()
